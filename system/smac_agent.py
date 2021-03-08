@@ -104,6 +104,9 @@ class SMACAgent(Agent):
         if not self.use_centralized_V:
             share_obs = obs
 
+        print('-' * 20)
+        print('insert')
+        print('-' * 20)
         self.buffer.insert(actor_id, split_id, share_obs, obs, rnn_states, rnn_states_critic, actions, action_log_probs,
                            values, rewards, masks, bad_masks, active_masks, available_actions)
 
@@ -119,7 +122,16 @@ class SMACAgent(Agent):
             # dones has shape [B, A]
             dones_env = np.all(dones, axis=1, keepdims=True)
             masks = np.broadcast_to(np.expand_dims(dones_env, 2), shape=(self.env_per_split, self.num_agents, 1))
-        self.self.all_agent0_infos[actor_id][split_id] = infos[0]
+        if infos is not None:
+            merged_info = {}
+            for all_agent_info in infos:
+                for k, v in all_agent_info[0].items():
+                    if not isinstance(v, bool):
+                        if k not in merged_info.keys():
+                            merged_info[k] = v
+                        else:
+                            merged_info[k] += v
+            self.all_agent0_infos[actor_id][split_id] = merged_info
         # replay buffer
         if not self.use_centralized_V:
             share_obs = obs
@@ -140,6 +152,7 @@ class SMACAgent(Agent):
         action_fut = self.future_outputs.then(_insert)
 
         with self.lock:
+            print(self.model_input_queue.qsize())
             if self.model_input_queue.qsize() >= self.num_actors:
                 model_inputs = []
                 for _ in range(self.num_actors):

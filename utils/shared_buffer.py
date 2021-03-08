@@ -90,7 +90,7 @@ class SharedReplayBuffer:
 
         self.episode_length = ep_l = args.episode_length
         self.hidden_size = hs = args.hidden_size
-        self.recurrent_n = rec_n = args.recurrent_n
+        self.recurrent_N = rec_n = args.recurrent_N
 
         self.data_chunk_length = args.data_chunk_length
         self.num_mini_batch = args.num_mini_batch
@@ -141,10 +141,10 @@ class SharedReplayBuffer:
         self.advantages = np.zeros_like(self.rewards)
 
         # queue index
-        self._prev_q_idx = -np.ones((num_actors, num_split), dtype=np.uint8)
+        self._prev_q_idx = -np.ones((num_actors, num_split), dtype=np.int16)
         self._q_idx = np.zeros((num_actors, num_split), dtype=np.uint8)
 
-        self._used_times = np.zeros((num_actors * num_split, ), dtype=np.uint8)
+        self._used_times = np.zeros((num_slots, ), dtype=np.uint8)
 
         # episode step record
         self._ep_step = np.zeros((num_actors, num_split), dtype=np.int32)
@@ -212,11 +212,11 @@ class SharedReplayBuffer:
         self.rnn_states[slot_id, ep_step + 1, env_slice] = rnn_states
         self.rnn_states_critic[slot_id, ep_step + 1, env_slice] = rnn_states_critic
 
-        self._ep_step[actor_id, slot_id] += 1
+        self._ep_step[actor_id, split_id] += 1
 
         # section of this actor in current slot is full except for bootstrap step
         if ep_step == self.episode_length - 1:
-            self._ep_step[actor_id, slot_id] = 0
+            self._ep_step[actor_id, split_id] = 0
 
             # move global queue pointer to next corresponding slot
             cur_q_idx = self._q_idx[actor_id, split_id]
@@ -284,7 +284,11 @@ class SharedReplayBuffer:
             self._is_writable[slot_id] = 0
             # if reader is waiting for data, notify it
             if no_availble_before:
-                self._read_ready.notify(1)
+                print('-' * 20)
+                print('notify')
+                print('-' * 20)
+                with self._read_ready:
+                    self._read_ready.notify(1)
 
     # def chooseinsert(self,
     #                  share_obs,
@@ -320,6 +324,9 @@ class SharedReplayBuffer:
     def get(self, recur=True):
         with self._read_ready:
             self._read_ready.wait_for(lambda: np.any(self._is_readable))
+            print('-' * 20)
+            print('after getting wait')
+            print('-' * 20)
             slot_id = np.nonzero(self._is_readable)[0][0]
             # indicator readable -> being-read
             self._is_readable[slot_id] = 0
@@ -352,7 +359,7 @@ class SharedReplayBuffer:
             gae = 0
             for step in reversed(range(self.episode_length)):
                 if self._use_popart:
-                    bootstrap_v = value_normalizer.denormalize(self.value_preds[slot_id, step + 1], env_slice)
+                    bootstrap_v = value_normalizer.denormalize(self.value_preds[slot_id, step + 1, env_slice])
                     cur_v = value_normalizer.denormalize(self.value_preds[slot_id, step, env_slice])
                 else:
                     bootstrap_v = self.value_preds[slot_id, step + 1, env_slice]
@@ -385,12 +392,13 @@ class SharedReplayBuffer:
                 self.returns[slot_id, step, env_slice] = discount_r * bad_mask + (1 - bad_mask) * cur_v
                 self.advantages[slot_id, step, env_slice] = self.returns[slot_id, step, env_slice] - cur_v
 
-        adv = self.advantages[slot_id, :, env_slice]
+        adv = self.advantages[slot_id, :, env_slice].copy()
         adv[self.active_masks[slot_id, :-1, env_slice] == 0.0] = np.nan
         if adv_normalization:
             mean_advantages = np.nanmean(adv)
             std_advantages = np.nanstd(adv)
-            self.advantages[slot_id, :, env_slice] = (adv - mean_advantages) / (std_advantages + 1e-5)
+            self.advantages[slot_id, :, env_slice] = (self.advantages[slot_id, :, env_slice] -
+                                                      mean_advantages) / (std_advantages + 1e-5)
 
     def feed_forward_generator(self, slot_id):
         num_mini_batch = self.num_mini_batch
@@ -455,7 +463,7 @@ class SharedReplayBuffer:
         num_mini_batch = self.num_mini_batch
         assert self.episode_length % data_chunk_length == 0
         assert self.batch_size >= num_mini_batch and self.batch_size % num_mini_batch == 0
-        num_chunks = self.episdoe_length // data_chunk_length
+        num_chunks = self.episode_length // data_chunk_length
         batch_size = self.batch_size * self.num_agents * num_chunks
         mini_batch_size = batch_size // num_mini_batch
 
@@ -489,19 +497,23 @@ class SharedReplayBuffer:
         rnn_states_critic = _cast_h(self.rnn_states_critic[slot_id, :-1])
 
         for indices in sampler:
-            share_obs_batch = share_obs[:, indices]
-            obs_batch = obs[:, indices]
-            rnn_states_batch = rnn_states[:, indices]
-            rnn_states_critic_batch = rnn_states_critic[:, indices]
-            actions_batch = actions[:, indices]
-            available_actions_batch = None if self.available_actions is None else available_actions[:, indices]
-            value_preds_batch = value_preds[:, indices]
-            return_batch = returns[:, indices]
-            masks_batch = masks[:, indices]
-            active_masks_batch = active_masks[:, indices]
-            old_action_log_probs_batch = action_log_probs[:, indices]
-            adv_targ = advantages[:, indices]
+            share_obs_batch = _flatten(share_obs[:, indices], 2)
+            obs_batch = _flatten(obs[:, indices], 2)
+            rnn_states_batch = np.swapaxes(rnn_states[:, indices], 0, 1)
+            rnn_states_critic_batch = np.swapaxes(rnn_states_critic[:, indices], 0, 1)
+            actions_batch = _flatten(actions[:, indices], 2)
+            available_actions_batch = None if self.available_actions is None else _flatten(
+                available_actions[:, indices], 2)
+            value_preds_batch = _flatten(value_preds[:, indices], 2)
+            return_batch = _flatten(returns[:, indices], 2)
+            masks_batch = _flatten(masks[:, indices], 2)
+            active_masks_batch = _flatten(active_masks[:, indices], 2)
+            old_action_log_probs_batch = _flatten(action_log_probs[:, indices], 2)
+            adv_targ = _flatten(advantages[:, indices], 2)
 
-            yield (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch,
-                   value_preds_batch, return_batch, masks_batch, active_masks_batch, old_action_log_probs_batch,
-                   adv_targ, available_actions_batch)
+            outputs = (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch,
+                       value_preds_batch, return_batch, masks_batch, active_masks_batch, old_action_log_probs_batch,
+                       adv_targ, available_actions_batch)
+            for i, item in enumerate(outputs):
+                assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
+            yield outputs

@@ -173,25 +173,13 @@ def get_config():
                         default=True,
                         help="by default, make sure random seed effective. if set, bypass such function.")
     parser.add_argument("--n_training_threads", type=int, default=1, help="Number of torch threads for training")
-    parser.add_argument("--n_rollout_threads",
-                        type=int,
-                        default=32,
-                        help="Number of parallel envs for training rollouts")
-    parser.add_argument("--n_eval_rollout_threads",
-                        type=int,
-                        default=1,
-                        help="Number of parallel envs for evaluating rollouts")
-    parser.add_argument("--n_render_rollout_threads",
-                        type=int,
-                        default=1,
-                        help="Number of parallel envs for rendering rollouts")
     parser.add_argument("--num_env_steps",
                         type=int,
                         default=10e6,
                         help='Number of environment steps to train (default: 10e6)')
     parser.add_argument("--user_name",
                         type=str,
-                        default='marl',
+                        default='garrett4wade',
                         help="[for wandb usage], to specify user's name for simply collecting training data.")
     parser.add_argument(
         "--use_wandb",
@@ -204,6 +192,7 @@ def get_config():
     parser.add_argument("--num_actors", type=int, default=4)
     parser.add_argument("--env_per_actor", type=int, default=2)
     parser.add_argument("--num_split", type=int, default=2)
+    parser.add_argument("--qsize", type=int, default=8)
 
     # env parameters
     parser.add_argument("--env_name", type=str, default='StarCraft2', help="specify the name of environment")

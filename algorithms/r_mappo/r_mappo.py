@@ -1,9 +1,9 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from onpolicy.utils.util import get_gard_norm, huber_loss, mse_loss
-from onpolicy.utils.popart import PopArt
-from onpolicy.algorithms.utils.util import check
+from utils.util import get_gard_norm, huber_loss, mse_loss
+from utils.popart import PopArt
+from algorithms.utils.util import check
 
 
 class R_MAPPO():
@@ -13,11 +13,12 @@ class R_MAPPO():
     :param policy: (R_MAPPO_Policy) policy to update.
     :param device: (torch.device) specifies the device to run on (cpu/gpu).
     """
-    def __init__(self, args, policy, device=torch.device("cpu")):
+    def __init__(self, args, policy, rollout_policy, device=torch.device("cpu")):
 
         self.device = device
         self.tpdv = dict(dtype=torch.float32, device=device)
         self.policy = policy
+        self.rollout_policy = rollout_policy
 
         self.clip_param = args.clip_param
         self.ppo_epoch = args.ppo_epoch
@@ -171,7 +172,13 @@ class R_MAPPO():
         train_info['ratio'] = 0
 
         for i in range(self.ppo_epoch):
+            print('-' * 20)
+            print('ready to get')
+            print('-' * 20)
             slot_id, data_generator = buffer.get(self._use_recurrent_policy)
+            print('-' * 20)
+            print('get something from buffer')
+            print('-' * 20)
 
             for sample in data_generator:
 
@@ -202,5 +209,5 @@ class R_MAPPO():
         self.policy.critic.train()
 
     def prep_rollout(self):
-        self.policy.actor.eval()
-        self.policy.critic.eval()
+        self.rollout_policy.actor.eval()
+        self.rollout_policy.critic.eval()

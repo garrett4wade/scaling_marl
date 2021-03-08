@@ -23,7 +23,8 @@ class Agent:
     def __init__(self, config):
         self.all_args = config['all_args']
 
-        self.env_fns = config['env_fns']
+        self.env_fn = config['env_fn']
+        self.example_env = config['example_env']
         # self.eval_envs = config['eval_envs']
         self.device = config['device']
         self.rollout_device = config['rollout_device']
@@ -78,34 +79,35 @@ class Agent:
         from algorithms.r_mappo.r_mappo import R_MAPPO as TrainAlgo
         from algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
 
-        share_observation_space = self.envs.share_observation_space[
-            0] if self.use_centralized_V else self.envs.observation_space[0]
+        share_observation_space = self.example_env.share_observation_space[
+            0] if self.use_centralized_V else self.example_env.observation_space[0]
 
         # policy network
         self.policy = Policy(self.all_args,
-                             self.envs.observation_space[0],
+                             self.example_env.observation_space[0],
                              share_observation_space,
-                             self.envs.action_space[0],
+                             self.example_env.action_space[0],
                              device=self.device)
         if self.rollout_device != self.device:
-            self.rollouot_policy = Policy(self.all_args,
-                                          self.envs.observation_space[0],
-                                          share_observation_space,
-                                          self.envs.action_space[0],
-                                          device=self.rollout_device)
-            self.rollouot_policy.load_weights(self.policy)
+            self.rollout_policy = Policy(self.all_args,
+                                         self.example_env.observation_space[0],
+                                         share_observation_space,
+                                         self.example_env.action_space[0],
+                                         device=self.rollout_device)
+            self.rollout_policy.load_weights(self.policy)
         else:
-            self.rollouot_policy = self.policy
+            self.rollout_policy = self.policy
 
         if self.model_dir is not None:
             self.restore()
 
         # algorithm
-        self.trainer = TrainAlgo(self.all_args, self.policy, device=self.device)
+        self.trainer = TrainAlgo(self.all_args, self.policy, self.rollout_policy, device=self.device)
 
         # buffer
-        self.buffer = SharedReplayBuffer(self.all_args, self.num_agents, self.envs.observation_space[0],
-                                         share_observation_space, self.envs.action_space[0])
+        self.buffer = SharedReplayBuffer(self.all_args, self.num_agents, self.example_env.observation_space[0],
+                                         share_observation_space, self.example_env.action_space[0],
+                                         self.trainer.value_normalizer)
 
         # actors
         self.rref = rpc.RRef(self)
@@ -141,8 +143,7 @@ class Agent:
         for i in range(self.num_actors):
             # id+1 because rpc_id=0 is the agent process
             name = 'actor_' + str(i)
-            env_slice = slice(i * self.env_per_actor, (i + 1) * self.env_per_actor)
-            actor_rref = rpc.remote(name, Actor, args=(i, self.env_fns[env_slice], self.rref, self.all_args))
+            actor_rref = rpc.remote(name, Actor, args=(i, self.env_fn, self.rref, self.all_args))
             self.actor_job_rrefs.append(actor_rref.remote().run())
             self.actor_rrefs.append(actor_rref)
 
@@ -150,8 +151,8 @@ class Agent:
         """Train policies with data in buffer. """
         self.trainer.prep_training()
         train_infos = self.trainer.train(self.buffer)
-        if self.policy is not self.rollouot_policy:
-            self.rollouot_policy.load_weights(self.policy)
+        if self.policy is not self.rollout_policy:
+            self.rollout_policy.load_weights(self.policy)
         return train_infos
 
     def save(self):
