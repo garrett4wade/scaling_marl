@@ -146,6 +146,9 @@ class Agent:
             actor_rref = rpc.remote(name, Actor, args=(i, self.env_fn, self.rref, self.all_args))
             self.actor_job_rrefs.append(actor_rref.remote().run())
             self.actor_rrefs.append(actor_rref)
+        print('-' * 20)
+        print('Actors set up successfully!')
+        print('-' * 20)
 
     def train(self):
         """Train policies with data in buffer. """

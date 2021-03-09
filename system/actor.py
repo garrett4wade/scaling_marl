@@ -31,13 +31,11 @@ class Actor:
         while True:
             for i, env in enumerate(self.envs):
                 actions = self.action_futures[i].wait()
-                print(11)
                 model_inputs = env.step(actions)
-                print(22)
                 # obs, state, reward, done, infos, avail_action
-                assert len(model_inputs) == 6, 33
+                assert len(model_inputs) == 6
                 self.action_futures[i] = self.agent_rref.rpc_async().select_action(self.id, i, model_inputs)
-                print(44)
+
 
 class LocalActor:
     def __init__(self, actor_id, env_fn, agent, args):

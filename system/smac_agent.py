@@ -16,7 +16,7 @@ class SMACAgent(Agent):
     """Runner class to perform training, evaluation. and data collection for SMAC. See parent class for details."""
     def __init__(self, config):
         super().__init__(config)
-        self.all_agent0_infos = [[{}] for _ in range(self.num_split) for _ in range(self.num_actors)]
+        self.all_agent0_infos = [[{} for _ in range(self.num_split)] for _ in range(self.num_actors)]
 
     def run(self):
         self.setup_actors()
@@ -104,9 +104,6 @@ class SMACAgent(Agent):
         if not self.use_centralized_V:
             share_obs = obs
 
-        print('-' * 20)
-        print('insert')
-        print('-' * 20)
         self.buffer.insert(actor_id, split_id, share_obs, obs, rnn_states, rnn_states_critic, actions, action_log_probs,
                            values, rewards, masks, bad_masks, active_masks, available_actions)
 
@@ -152,7 +149,6 @@ class SMACAgent(Agent):
         action_fut = self.future_outputs.then(_insert)
 
         with self.lock:
-            print(self.model_input_queue.qsize())
             if self.model_input_queue.qsize() >= self.num_actors:
                 model_inputs = []
                 for _ in range(self.num_actors):
@@ -166,7 +162,7 @@ class SMACAgent(Agent):
                 def to_numpy(x):
                     return np.array(np.split(_t2n(x), self.env_per_split * self.num_actors))
 
-                model_outputs = map(to_numpy, rollout_outputs)
+                model_outputs = tuple(map(to_numpy, rollout_outputs))
                 cur_future_outputs = self.future_outputs
                 self.future_outputs = torch.futures.Future()
                 cur_future_outputs.set_result(model_outputs)
