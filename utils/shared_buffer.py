@@ -386,9 +386,9 @@ class SharedReplayBuffer:
                 self.returns[slot_id, step, env_slice] = discount_r * bad_mask + (1 - bad_mask) * cur_v
                 self.advantages[slot_id, step, env_slice] = self.returns[slot_id, step, env_slice] - cur_v
 
-        adv = self.advantages[slot_id, :, env_slice].copy()
-        adv[self.active_masks[slot_id, :-1, env_slice] == 0.0] = np.nan
         if adv_normalization:
+            adv = self.advantages[slot_id, :, env_slice].copy()
+            adv[self.active_masks[slot_id, :-1, env_slice] == 0.0] = np.nan
             mean_advantages = np.nanmean(adv)
             std_advantages = np.nanstd(adv)
             self.advantages[slot_id, :, env_slice] = (self.advantages[slot_id, :, env_slice] -

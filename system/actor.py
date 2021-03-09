@@ -20,6 +20,7 @@ class Actor:
                     for j in range(self.env_per_split)
                 ]))
         self.action_futures = []
+        print('-' * 8 + ' Actor {} set up successfully! '.format(self.id) + '-' * 8)
 
     def run(self):
         for i, env in enumerate(self.envs):

@@ -117,7 +117,7 @@ class SMACAgent(Agent):
             obs, share_obs, rewards, dones, infos, available_actions = model_inputs
             # dones has shape [B, A]
             dones_env = np.all(dones, axis=1, keepdims=True)
-            masks = np.broadcast_to(np.expand_dims(dones_env, 2), shape=(self.env_per_split, self.num_agents, 1))
+            masks = np.broadcast_to(np.expand_dims(1 - dones_env, 2), shape=(self.env_per_split, self.num_agents, 1))
         if infos is not None:
             merged_info = {}
             for all_agent_info in infos:
