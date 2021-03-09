@@ -5,6 +5,10 @@ algo="rmappo"
 exp="test"
 seed_max=1
 
+pkill -9 Main_Thread
+pkill -9 python3.8
+pkill -9 rmappo
+
 echo "env is ${env}, map is ${map}, algo is ${algo}, exp is ${exp}, max seed is ${seed_max}"
 for seed in `seq ${seed_max}`;
 do
@@ -14,9 +18,9 @@ do
                                --experiment_name ${exp} \
                                --map_name ${map} \
                                --seed 50 \
-                               --num_actors 2 \
-                               --env_per_actor 3 \
-                               --num_split 3 \
+                               --num_actors 4 \
+                               --env_per_actor 4 \
+                               --num_split 4 \
                                --n_training_threads 8 \
                                --num_mini_batch 1 \
                                --episode_length 60 \

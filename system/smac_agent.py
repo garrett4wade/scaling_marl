@@ -103,7 +103,6 @@ class SMACAgent(Agent):
 
         if not self.use_centralized_V:
             share_obs = obs
-
         self.buffer.insert(actor_id, split_id, share_obs, obs, rnn_states, rnn_states_critic, actions, action_log_probs,
                            values, rewards, masks, bad_masks, active_masks, available_actions)
 
@@ -138,17 +137,17 @@ class SMACAgent(Agent):
             unpack_idx = self.model_input_queue.qsize() % self.num_actors
             self.model_input_queue.put((share_obs, obs, rnn_states, rnn_states_critic, masks, available_actions))
 
-        def _insert(future_outputs):
-            values, actions, action_log_probs, rnn_states, rnn_states_critic = future_outputs.wait()
-            batch_slice = slice(unpack_idx * self.env_per_split, (unpack_idx + 1) * self.env_per_split)
-            data = (obs, share_obs, rewards, dones, infos, available_actions, values[batch_slice], actions[batch_slice],
-                    action_log_probs[batch_slice], rnn_states[batch_slice], rnn_states_critic[batch_slice], masks)
-            self.insert(actor_id, split_id, data)
-            return actions[batch_slice]
+            def _insert(future_outputs):
+                values, actions, action_log_probs, rnn_states, rnn_states_critic = future_outputs.wait()
+                batch_slice = slice(unpack_idx * self.env_per_split, (unpack_idx + 1) * self.env_per_split)
+                data = (obs, share_obs, rewards, dones, infos, available_actions, values[batch_slice],
+                        actions[batch_slice], action_log_probs[batch_slice], rnn_states[batch_slice],
+                        rnn_states_critic[batch_slice], masks)
+                self.insert(actor_id, split_id, data)
+                return actions[batch_slice]
 
-        action_fut = self.future_outputs.then(_insert)
+            action_fut = self.future_outputs.then(_insert)
 
-        with self.lock:
             if self.model_input_queue.qsize() >= self.num_actors:
                 model_inputs = []
                 for _ in range(self.num_actors):

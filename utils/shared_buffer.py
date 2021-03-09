@@ -284,9 +284,6 @@ class SharedReplayBuffer:
             self._is_writable[slot_id] = 0
             # if reader is waiting for data, notify it
             if no_availble_before:
-                print('-' * 20)
-                print('notify')
-                print('-' * 20)
                 with self._read_ready:
                     self._read_ready.notify(1)
 
@@ -324,9 +321,6 @@ class SharedReplayBuffer:
     def get(self, recur=True):
         with self._read_ready:
             self._read_ready.wait_for(lambda: np.any(self._is_readable))
-            print('-' * 20)
-            print('after getting wait')
-            print('-' * 20)
             slot_id = np.nonzero(self._is_readable)[0][0]
             # indicator readable -> being-read
             self._is_readable[slot_id] = 0

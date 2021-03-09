@@ -172,13 +172,7 @@ class R_MAPPO():
         train_info['ratio'] = 0
 
         for i in range(self.ppo_epoch):
-            print('-' * 20)
-            print('ready to get')
-            print('-' * 20)
             slot_id, data_generator = buffer.get(self._use_recurrent_policy)
-            print('-' * 20)
-            print('get something from buffer')
-            print('-' * 20)
 
             for sample in data_generator:
 
