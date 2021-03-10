@@ -18,9 +18,6 @@ do
                                --experiment_name ${exp} \
                                --map_name ${map} \
                                --seed 50 \
-                               --num_actors 4 \
-                               --env_per_actor 4 \
-                               --num_split 4 \
                                --n_training_threads 8 \
                                --num_mini_batch 1 \
                                --episode_length 60 \
@@ -30,5 +27,9 @@ do
                                --add_center_xy \
                                --use_state_agent \
                                --use_recurrent_policy \
-                               --use_wandb
+                               --use_wandb \
+                               --num_actors 4 \
+                               --env_per_actor 2 \
+                               --num_split 2 \
+                               --rollout_batch_size 4
 done

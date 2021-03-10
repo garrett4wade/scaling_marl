@@ -52,6 +52,7 @@ class Agent:
         assert self.env_per_actor % self.num_split == 0
         self.episode_length = self.all_args.episode_length
         self.num_env_steps = self.all_args.num_env_steps
+        self.rollout_batch_size = self.all_args.rollout_batch_size
         # interval
         self.save_interval = self.all_args.save_interval
         self.use_eval = self.all_args.use_eval
@@ -117,6 +118,7 @@ class Agent:
         self.lock = threading.Lock()
         self.future_outputs = torch.futures.Future()
         self.model_input_queue = Queue(self.num_actors * self.env_per_actor)
+        # self.model_input_queues = [Queue(self.num_actors * self.env_per_split) for _ in range(self.num_split)]
 
     def run(self):
         """Collect training data, perform training updates, and evaluate policy."""

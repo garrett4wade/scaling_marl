@@ -1,4 +1,6 @@
+import time
 from envs.env_wrappers import ShareDummyVecEnv
+from numpy import mean
 
 
 class Actor:
@@ -8,6 +10,8 @@ class Actor:
         self.env_per_actor = env_per_actor = args.env_per_actor
         assert env_per_actor % num_split == 0
         self.env_per_split = env_per_actor // num_split
+
+        self.verbose_time = args.verbose_time
 
         self.episode_length = args.episode_length
         self.agent_rref = agent_rref
@@ -30,9 +34,17 @@ class Actor:
             action_fut = self.agent_rref.rpc_async().select_action(self.id, i, model_inputs, init=True)
             self.action_futures.append(action_fut)
         while True:
+            wait_times = []
+            delays = []
             for i, env in enumerate(self.envs):
-                actions = self.action_futures[i].wait()
+                wait_tik = time.time()
+                delay_tik, actions = self.action_futures[i].wait()
+                tok = time.time()
+                wait_times.append((tok - wait_tik) * 1e3)
+                delays.append((tok - delay_tik) * 1e3)
                 model_inputs = env.step(actions)
                 # obs, state, reward, done, infos, avail_action
                 assert len(model_inputs) == 6
                 self.action_futures[i] = self.agent_rref.rpc_async().select_action(self.id, i, model_inputs)
+            if self.verbose_time:
+                print('actor {} wait time {}ms, delay {}ms'.format(self.id, mean(wait_times), mean(delays)))

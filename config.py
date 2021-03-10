@@ -192,7 +192,9 @@ def get_config():
     parser.add_argument("--num_actors", type=int, default=4)
     parser.add_argument("--env_per_actor", type=int, default=2)
     parser.add_argument("--num_split", type=int, default=2)
-    parser.add_argument("--qsize", type=int, default=8)
+    parser.add_argument("--qsize", type=int, default=4)
+    parser.add_argument("--rollout_batch_size", type=int, default=4)
+    parser.add_argument("--verbose_time", action='store_true', default=False)
 
     # env parameters
     parser.add_argument("--env_name", type=str, default='StarCraft2', help="specify the name of environment")

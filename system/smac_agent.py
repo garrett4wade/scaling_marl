@@ -144,13 +144,13 @@ class SMACAgent(Agent):
                         actions[batch_slice], action_log_probs[batch_slice], rnn_states[batch_slice],
                         rnn_states_critic[batch_slice], masks)
                 self.insert(actor_id, split_id, data)
-                return actions[batch_slice]
+                return time.time(), actions[batch_slice]
 
             action_fut = self.future_outputs.then(_insert)
 
-            if self.model_input_queue.qsize() >= self.num_actors:
+            if self.model_input_queue.qsize() >= self.rollout_batch_size:
                 model_inputs = []
-                for _ in range(self.num_actors):
+                for _ in range(self.rollout_batch_size):
                     model_inputs.append(self.model_input_queue.get())
                 model_inputs = map(np.concatenate, zip(*model_inputs))
                 with torch.no_grad():
@@ -159,7 +159,7 @@ class SMACAgent(Agent):
 
                 # [self.envs, agents, dim]
                 def to_numpy(x):
-                    return np.array(np.split(_t2n(x), self.env_per_split * self.num_actors))
+                    return np.array(np.split(_t2n(x), self.env_per_split * self.rollout_batch_size))
 
                 model_outputs = tuple(map(to_numpy, rollout_outputs))
                 cur_future_outputs = self.future_outputs
