@@ -134,7 +134,8 @@ class SMACAgent(Agent):
         rnn_states, rnn_states_critic = self.buffer.get_rnn_states(actor_id, split_id)
 
         with self.lock:
-            unpack_idx = self.model_input_queue.qsize() % self.num_actors
+            # model_input_queue = self.model_input_queues[split_id]
+            unpack_idx = self.model_input_queue.qsize() % self.rollout_batch_size
             self.model_input_queue.put((share_obs, obs, rnn_states, rnn_states_critic, masks, available_actions))
 
             def _insert(future_outputs):

@@ -118,7 +118,7 @@ class Agent:
         self.lock = threading.Lock()
         self.future_outputs = torch.futures.Future()
         self.model_input_queue = Queue(self.num_actors * self.env_per_actor)
-        # self.model_input_queues = [Queue(self.num_actors * self.env_per_split) for _ in range(self.num_split)]
+        # self.model_input_queues = [Queue(self.num_actors * self.env_per_actor) for _ in range(self.num_split)]
 
     def run(self):
         """Collect training data, perform training updates, and evaluate policy."""
