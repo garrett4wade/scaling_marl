@@ -21,11 +21,13 @@ class SMACAgent(Agent):
     def run(self):
         self.setup_actors()
 
-        start = time.time()
+        global_start = time.time()
+        local_start = time.time()
         episodes = int(self.num_env_steps) // self.episode_length // (self.num_actors * self.env_per_split)
 
         last_battles_game = np.zeros(self.num_actors * self.num_split, dtype=np.float32)
         last_battles_won = np.zeros(self.num_actors * self.num_split, dtype=np.float32)
+        last_total_num_steps = 0
 
         for episode in range(episodes):
             if self.use_linear_lr_decay:
@@ -42,9 +44,12 @@ class SMACAgent(Agent):
             # log information
             if episode % self.log_interval == 0:
                 end = time.time()
-                print("\n Map {} Algo {} Exp {} updates {}/{} episodes, total num timesteps {}/{}, FPS {}.\n".format(
-                    self.all_args.map_name, self.algorithm_name, self.experiment_name, episode, episodes,
-                    total_num_steps, self.num_env_steps, int(total_num_steps / (end - start))))
+                print("\n Map {} Algo {} Exp {} updates {}/{} episodes, total num timesteps {}/{}, "
+                      "recent FPS {}, global average FPS {}.\n".format(
+                          self.all_args.map_name, self.algorithm_name, self.experiment_name, episode, episodes,
+                          total_num_steps, self.num_env_steps,
+                          int((total_num_steps - last_total_num_steps) / (end - local_start)),
+                          int(total_num_steps / (end - global_start))))
 
                 if self.env_name == "StarCraft2":
                     battles_won = []
@@ -70,6 +75,8 @@ class SMACAgent(Agent):
 
                     last_battles_game = battles_game
                     last_battles_won = battles_won
+                    last_total_num_steps = total_num_steps
+                    local_start = time.time()
 
                 # train_infos['dead_ratio'] = 1 - self.buffer.active_masks.sum() / reduce(
                 #     lambda x, y: x * y, list(self.buffer.active_masks.shape))
@@ -133,10 +140,10 @@ class SMACAgent(Agent):
             share_obs = obs
         rnn_states, rnn_states_critic = self.buffer.get_rnn_states(actor_id, split_id)
 
-        with self.lock:
-            # model_input_queue = self.model_input_queues[split_id]
-            unpack_idx = self.model_input_queue.qsize() % self.rollout_batch_size
-            self.model_input_queue.put((share_obs, obs, rnn_states, rnn_states_critic, masks, available_actions))
+        with self.locks[split_id]:
+            model_input_queue = self.model_input_queues[split_id]
+            unpack_idx = model_input_queue.qsize() % self.rollout_batch_size
+            model_input_queue.put((share_obs, obs, rnn_states, rnn_states_critic, masks, available_actions))
 
             def _insert(future_outputs):
                 values, actions, action_log_probs, rnn_states, rnn_states_critic = future_outputs.wait()
@@ -147,12 +154,12 @@ class SMACAgent(Agent):
                 self.insert(actor_id, split_id, data)
                 return time.time(), actions[batch_slice]
 
-            action_fut = self.future_outputs.then(_insert)
+            action_fut = self.future_outputs[split_id].then(_insert)
 
-            if self.model_input_queue.qsize() >= self.rollout_batch_size:
+            if model_input_queue.qsize() >= self.rollout_batch_size:
                 model_inputs = []
                 for _ in range(self.rollout_batch_size):
-                    model_inputs.append(self.model_input_queue.get())
+                    model_inputs.append(model_input_queue.get())
                 model_inputs = map(np.concatenate, zip(*model_inputs))
                 with torch.no_grad():
                     self.trainer.prep_rollout()
@@ -163,8 +170,8 @@ class SMACAgent(Agent):
                     return np.array(np.split(_t2n(x), self.env_per_split * self.rollout_batch_size))
 
                 model_outputs = tuple(map(to_numpy, rollout_outputs))
-                cur_future_outputs = self.future_outputs
-                self.future_outputs = torch.futures.Future()
+                cur_future_outputs = self.future_outputs[split_id]
+                self.future_outputs[split_id] = torch.futures.Future()
                 cur_future_outputs.set_result(model_outputs)
         return action_fut
 

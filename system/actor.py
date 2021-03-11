@@ -1,6 +1,6 @@
 import time
 from envs.env_wrappers import ShareDummyVecEnv
-from numpy import mean
+import numpy as np
 
 
 class Actor:
@@ -47,4 +47,4 @@ class Actor:
                 assert len(model_inputs) == 6
                 self.action_futures[i] = self.agent_rref.rpc_async().select_action(self.id, i, model_inputs)
             if self.verbose_time:
-                print('actor {} wait time {}ms, delay {}ms'.format(self.id, mean(wait_times), mean(delays)))
+                print('actor {} wait time {}ms, delay {}ms'.format(self.id, np.mean(wait_times), np.mean(delays)))

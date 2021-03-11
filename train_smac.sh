@@ -30,6 +30,5 @@ do
                                --use_wandb \
                                --num_actors 4 \
                                --env_per_actor 2 \
-                               --num_split 2 \
-                               --rollout_batch_size 4
+                               --num_split 2
 done

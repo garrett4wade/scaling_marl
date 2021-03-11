@@ -63,7 +63,7 @@ def make_example_env(all_args):
 
 def main(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12345'
+    os.environ['MASTER_PORT'] = '23456'
     if rank == 0:
 
         rpc.init_rpc('agent',
