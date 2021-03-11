@@ -232,7 +232,7 @@ class SharedReplayBuffer:
 
             self._opening(actor_id, split_id, rnn_states, rnn_states_critic)
 
-        self.total_timesteps += 1
+        self.total_timesteps += self.env_per_split
 
     def _opening(self, actor_id, split_id, rnn_states, rnn_states_critic):
         new_slot_id = self._q_idx[actor_id, split_id] * self.num_split + split_id
@@ -336,6 +336,7 @@ class SharedReplayBuffer:
             if self._used_times[slot_id] >= self.sample_reuse:
                 self._is_writable[slot_id] = 1
                 self._is_full[slot_id, :] = 0
+                self._used_times[slot_id] = 0
             else:
                 self._is_readable[slot_id] = 1
             assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
