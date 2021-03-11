@@ -3,7 +3,7 @@ import os
 import numpy as np
 import torch
 import threading
-from queue import Queue
+# from queue import Queue
 from system.actor import Actor
 from torch.distributed import rpc
 from tensorboardX import SummaryWriter
@@ -118,8 +118,8 @@ class Agent:
 
         self.locks = [threading.Lock() for _ in range(self.num_split)]
         self.future_outputs = [torch.futures.Future() for _ in range(self.num_split)]
-        # self.model_input_queue = Queue(self.rollout_batch_size * self.num_split)
-        self.model_input_queues = [Queue(self.rollout_batch_size) for _ in range(self.num_split)]
+        self.queued_cnt = np.zeros((self.num_split, ), dtype=np.float32)
+        # self.model_input_queues = [Queue(self.rollout_batch_size) for _ in range(self.num_split)]
 
     def run(self):
         """Collect training data, perform training updates, and evaluate policy."""
