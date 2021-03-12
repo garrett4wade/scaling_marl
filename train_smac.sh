@@ -27,7 +27,7 @@ do
                             --add_center_xy \
                             --use_state_agent \
                             --use_recurrent_policy \
-                            --num_actors 8 \
+                            --num_actors 32 \
                             --env_per_actor 6 \
                             --num_split 2 \
                             --use_wandb

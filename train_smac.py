@@ -65,11 +65,8 @@ def main(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '23457'
     if rank == 0:
-
-        rpc.init_rpc('agent',
-                     rank=rank,
-                     world_size=world_size,
-                     rpc_backend_options=rpc.TensorPipeRpcBackendOptions(rpc_timeout=300))
+        rpc_opt = rpc.TensorPipeRpcBackendOptions(num_worker_threads=max(16, all_args.num_actors), rpc_timeout=300)
+        rpc.init_rpc('agent', rank=rank, world_size=world_size, rpc_backend_options=rpc_opt)
 
         if all_args.algorithm_name == "rmappo":
             assert (all_args.use_recurrent_policy or all_args.use_naive_recurrent_policy), ("check recurrent policy!")
@@ -153,10 +150,8 @@ def main(rank, world_size):
         if all_args.use_wandb:
             run.finish()
     else:
-        rpc.init_rpc('actor_' + str(rank - 1),
-                     rank=rank,
-                     world_size=world_size,
-                     rpc_backend_options=rpc.TensorPipeRpcBackendOptions(rpc_timeout=300))
+        rpc_opt = rpc.TensorPipeRpcBackendOptions(rpc_timeout=300)
+        rpc.init_rpc('actor_' + str(rank - 1), rank=rank, world_size=world_size, rpc_backend_options=rpc_opt)
     rpc.shutdown()
 
 
