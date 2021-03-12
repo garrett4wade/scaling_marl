@@ -27,8 +27,9 @@ do
                             --add_center_xy \
                             --use_state_agent \
                             --use_recurrent_policy \
-                            --num_actors 16 \
+                            --num_actors 8 \
                             --env_per_actor 6 \
-                            --num_split 2
+                            --num_split 2 \
+                            --use_wandb
     bash clean.sh
 done

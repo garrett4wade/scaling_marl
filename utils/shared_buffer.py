@@ -381,56 +381,47 @@ class SharedReplayBuffer:
         assert batch_size >= num_mini_batch and batch_size % num_mini_batch == 0
         mini_batch_size = batch_size // num_mini_batch
 
-        rand = torch.randperm(batch_size).numpy()
-        sampler = [rand[i * mini_batch_size:(i + 1) * mini_batch_size] for i in range(num_mini_batch)]
-
-        def flatten(x):
-            # flatten first 3 dims
-            # [T, B, A, D] -> [T*B*A, D]
-            return _flatten(x, 3)
-
-        share_obs = flatten(self.share_obs[slot_id, :-1])
-        obs = flatten(self.obs[slot_id, :-1])
-        actions = flatten(self.actions[slot_id])
+        # flatten first 3 dims
+        # [T, B, A, D] -> [T * B * A, D]
+        share_obs = _flatten(self.share_obs[slot_id, :-1], 3)
+        obs = _flatten(self.obs[slot_id, :-1], 3)
+        actions = _flatten(self.actions[slot_id], 3)
         if self.available_actions is not None:
-            available_actions = flatten(self.available_actions[slot_id, :-1])
+            available_actions = _flatten(self.available_actions[slot_id, :-1], 3)
             assert available_actions.shape[0] == batch_size
-        value_preds = flatten(self.value_preds[slot_id, :-1])
-        returns = flatten(self.returns[slot_id, :-1])
-        masks = flatten(self.masks[slot_id, :-1])
-        active_masks = flatten(self.active_masks[slot_id, :-1])
-        action_log_probs = flatten(self.action_log_probs[slot_id])
-        advantages = flatten(self.advantages[slot_id])
-        assert share_obs[0] == batch_size
-        assert obs.shape[0] == batch_size
-        assert actions.shape[0] == batch_size
-        assert value_preds.shape[0] == batch_size
-        assert returns.shape[0] == batch_size
-        assert masks.shape[0] == batch_size
-        assert active_masks.shape[0] == batch_size
-        assert action_log_probs.shape[0] == batch_size
-        assert advantages.shape[0] == batch_size
+        value_preds = _flatten(self.value_preds[slot_id, :-1], 3)
+        returns = _flatten(self.returns[slot_id, :-1], 3)
+        masks = _flatten(self.masks[slot_id, :-1], 3)
+        active_masks = _flatten(self.active_masks[slot_id, :-1], 3)
+        action_log_probs = _flatten(self.action_log_probs[slot_id], 3)
+        advantages = _flatten(self.advantages[slot_id], 3)
 
-        for indices in sampler:
-            share_obs_batch = share_obs[indices]
-            obs_batch = obs[indices]
-            actions_batch = actions[indices]
-            if self.available_actions is not None:
-                available_actions_batch = available_actions[indices]
-            else:
-                available_actions_batch = None
-            value_preds_batch = value_preds[indices]
-            return_batch = returns[indices]
-            masks_batch = masks[indices]
-            active_masks_batch = active_masks[indices]
-            old_action_log_probs_batch = action_log_probs[indices]
-            if advantages is None:
-                adv_targ = None
-            else:
-                adv_targ = advantages[indices]
+        if num_mini_batch == 1:
+            yield (share_obs, obs, actions, value_preds, returns, masks, active_masks, action_log_probs, advantages,
+                   available_actions)
+        else:
+            rand = torch.randperm(batch_size).numpy()
+            sampler = [rand[i * mini_batch_size:(i + 1) * mini_batch_size] for i in range(num_mini_batch)]
+            for indices in sampler:
+                share_obs_batch = share_obs[indices]
+                obs_batch = obs[indices]
+                actions_batch = actions[indices]
+                if self.available_actions is not None:
+                    available_actions_batch = available_actions[indices]
+                else:
+                    available_actions_batch = None
+                value_preds_batch = value_preds[indices]
+                return_batch = returns[indices]
+                masks_batch = masks[indices]
+                active_masks_batch = active_masks[indices]
+                old_action_log_probs_batch = action_log_probs[indices]
+                if advantages is None:
+                    adv_targ = None
+                else:
+                    adv_targ = advantages[indices]
 
-            yield (share_obs_batch, obs_batch, actions_batch, value_preds_batch, return_batch, masks_batch,
-                   active_masks_batch, old_action_log_probs_batch, adv_targ, available_actions_batch)
+                yield (share_obs_batch, obs_batch, actions_batch, value_preds_batch, return_batch, masks_batch,
+                       active_masks_batch, old_action_log_probs_batch, adv_targ, available_actions_batch)
 
     def recurrent_generator(self, slot_id):
         data_chunk_length = self.data_chunk_length
@@ -440,9 +431,6 @@ class SharedReplayBuffer:
         num_chunks = self.episode_length // data_chunk_length
         batch_size = self.batch_size * self.num_agents * num_chunks
         mini_batch_size = batch_size // num_mini_batch
-
-        rand = torch.randperm(batch_size).numpy()
-        sampler = [rand[i * mini_batch_size:(i + 1) * mini_batch_size] for i in range(num_mini_batch)]
 
         def _cast(x):
             # B' = T * B * A / L
@@ -470,20 +458,19 @@ class SharedReplayBuffer:
         rnn_states = _cast_h(self.rnn_states[slot_id, :-1])
         rnn_states_critic = _cast_h(self.rnn_states_critic[slot_id, :-1])
 
-        for indices in sampler:
-            share_obs_batch = _flatten(share_obs[:, indices], 2)
-            obs_batch = _flatten(obs[:, indices], 2)
-            rnn_states_batch = np.swapaxes(rnn_states[:, indices], 0, 1)
-            rnn_states_critic_batch = np.swapaxes(rnn_states_critic[:, indices], 0, 1)
-            actions_batch = _flatten(actions[:, indices], 2)
-            available_actions_batch = None if self.available_actions is None else _flatten(
-                available_actions[:, indices], 2)
-            value_preds_batch = _flatten(value_preds[:, indices], 2)
-            return_batch = _flatten(returns[:, indices], 2)
-            masks_batch = _flatten(masks[:, indices], 2)
-            active_masks_batch = _flatten(active_masks[:, indices], 2)
-            old_action_log_probs_batch = _flatten(action_log_probs[:, indices], 2)
-            adv_targ = _flatten(advantages[:, indices], 2)
+        if num_mini_batch == 1:
+            share_obs_batch = _flatten(share_obs, 2)
+            obs_batch = _flatten(obs, 2)
+            rnn_states_batch = np.swapaxes(rnn_states, 0, 1)
+            rnn_states_critic_batch = np.swapaxes(rnn_states_critic, 0, 1)
+            actions_batch = _flatten(actions, 2)
+            available_actions_batch = None if self.available_actions is None else _flatten(available_actions, 2)
+            value_preds_batch = _flatten(value_preds, 2)
+            return_batch = _flatten(returns, 2)
+            masks_batch = _flatten(masks, 2)
+            active_masks_batch = _flatten(active_masks, 2)
+            old_action_log_probs_batch = _flatten(action_log_probs, 2)
+            adv_targ = _flatten(advantages, 2)
 
             outputs = (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch,
                        value_preds_batch, return_batch, masks_batch, active_masks_batch, old_action_log_probs_batch,
@@ -491,3 +478,28 @@ class SharedReplayBuffer:
             for i, item in enumerate(outputs):
                 assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
             yield outputs
+        else:
+            rand = torch.randperm(batch_size).numpy()
+            sampler = [rand[i * mini_batch_size:(i + 1) * mini_batch_size] for i in range(num_mini_batch)]
+
+            for indices in sampler:
+                share_obs_batch = _flatten(share_obs[:, indices], 2)
+                obs_batch = _flatten(obs[:, indices], 2)
+                rnn_states_batch = np.swapaxes(rnn_states[:, indices], 0, 1)
+                rnn_states_critic_batch = np.swapaxes(rnn_states_critic[:, indices], 0, 1)
+                actions_batch = _flatten(actions[:, indices], 2)
+                available_actions_batch = None if self.available_actions is None else _flatten(
+                    available_actions[:, indices], 2)
+                value_preds_batch = _flatten(value_preds[:, indices], 2)
+                return_batch = _flatten(returns[:, indices], 2)
+                masks_batch = _flatten(masks[:, indices], 2)
+                active_masks_batch = _flatten(active_masks[:, indices], 2)
+                old_action_log_probs_batch = _flatten(action_log_probs[:, indices], 2)
+                adv_targ = _flatten(advantages[:, indices], 2)
+
+                outputs = (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch,
+                           value_preds_batch, return_batch, masks_batch, active_masks_batch, old_action_log_probs_batch,
+                           adv_targ, available_actions_batch)
+                for i, item in enumerate(outputs):
+                    assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
+                yield outputs
