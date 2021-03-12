@@ -1,6 +1,7 @@
 import torch
+import time
 import numpy as np
-import torch.multiprocessing as mp
+from threading import Lock, Condition
 
 from utils.util import get_shape_from_obs_space, get_shape_from_act_space
 
@@ -141,56 +142,44 @@ class SharedReplayBuffer:
         self.advantages = np.zeros_like(self.rewards)
 
         # queue index
-        self._prev_q_idx = -np.ones((num_actors, num_split), dtype=np.int16)
-        self._q_idx = np.zeros((num_actors, num_split), dtype=np.uint8)
-
-        self._used_times = np.zeros((num_slots, ), dtype=np.uint8)
+        self._prev_q_idx = -np.ones((num_split, ), dtype=np.int16)
+        self._q_idx = np.zeros((num_split, ), dtype=np.uint8)
 
         # episode step record
-        self._ep_step = np.zeros((num_actors, num_split), dtype=np.int32)
+        self._ep_step = np.zeros((num_split, ), dtype=np.int32)
 
         # buffer indicators
-        self._is_full = np.zeros((num_slots, num_actors), dtype=np.uint8)
+        self._used_times = np.zeros((num_slots, ), dtype=np.uint8)
         self._is_readable = np.zeros((num_slots, ), dtype=np.uint8)
         self._is_being_read = np.zeros((num_slots, ), dtype=np.uint8)
         self._is_writable = np.ones((num_slots, ), dtype=np.uint8)
         assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
 
-        self._read_ready = mp.Condition(mp.Lock())
+        self._read_ready = Condition(Lock())
 
         self.total_timesteps = 0
 
-    def get_rnn_states(self, actor_id, split_id):
-        slot_id = self._q_idx[actor_id, split_id] * self.num_split + split_id
-        ep_step = self._ep_step[actor_id, split_id]
+    def get_policy_inputs(self, split_id):
+        slot_id = self._q_idx[split_id] * self.num_split + split_id
+        ep_step = self._ep_step[split_id]
+
+        return (self.share_obs[slot_id, ep_step], self.obs[slot_id, ep_step], self.rnn_states[slot_id, ep_step],
+                self.rnn_states_critic[slot_id, ep_step], self.masks[slot_id, ep_step], self.available_actions[slot_id,
+                                                                                                               ep_step])
+
+    def insert_before_inference(self,
+                                actor_id,
+                                split_id,
+                                share_obs,
+                                obs,
+                                rewards,
+                                masks,
+                                bad_masks=None,
+                                active_masks=None,
+                                available_actions=None):
+        slot_id = self._q_idx[split_id] * self.num_split + split_id
+        ep_step = self._ep_step[split_id]
         env_slice = slice(actor_id * self.env_per_split, (actor_id + 1) * self.env_per_split)
-
-        return self.rnn_states[slot_id, ep_step, env_slice], self.rnn_states_critic[slot_id, ep_step, env_slice]
-
-    def insert(self,
-               actor_id,
-               split_id,
-               share_obs,
-               obs,
-               rnn_states,
-               rnn_states_critic,
-               actions,
-               action_log_probs,
-               value_preds,
-               rewards,
-               masks,
-               bad_masks=None,
-               active_masks=None,
-               available_actions=None,
-               infos=None):
-        slot_id = self._q_idx[actor_id, split_id] * self.num_split + split_id
-        ep_step = self._ep_step[actor_id, split_id]
-        env_slice = slice(actor_id * self.env_per_split, (actor_id + 1) * self.env_per_split)
-
-        if ep_step == 0 and self._prev_q_idx[actor_id, split_id] >= 0:
-            # fill bootstrap data in previous slot
-            self._closure(actor_id, split_id, value_preds, share_obs, obs, rewards, masks, bad_masks, active_masks,
-                          available_actions)
 
         # env step returns
         self.share_obs[slot_id, ep_step, env_slice] = share_obs
@@ -205,87 +194,81 @@ class SharedReplayBuffer:
         if available_actions is not None:
             self.available_actions[slot_id, ep_step, env_slice] = available_actions
 
-        # model inference returns
-        self.actions[slot_id, ep_step, env_slice] = actions
-        self.action_log_probs[slot_id, ep_step, env_slice] = action_log_probs
-        self.value_preds[slot_id, ep_step, env_slice] = value_preds
-        self.rnn_states[slot_id, ep_step + 1, env_slice] = rnn_states
-        self.rnn_states_critic[slot_id, ep_step + 1, env_slice] = rnn_states_critic
+        self.total_timesteps += self.env_per_split
 
-        self._ep_step[actor_id, split_id] += 1
+    def insert_after_inference(self, split_id, value_preds, actions, action_log_probs, rnn_states, rnn_states_critic):
+        slot_id = self._q_idx[split_id] * self.num_split + split_id
+        ep_step = self._ep_step[split_id]
+
+        if ep_step == 0 and self._prev_q_idx[split_id] >= 0:
+            # fill bootstrap data in previous slot
+            self._closure(split_id, value_preds)
+
+        # model inference returns
+        self.actions[slot_id, ep_step] = actions
+        self.action_log_probs[slot_id, ep_step] = action_log_probs
+        self.value_preds[slot_id, ep_step] = value_preds
+        self.rnn_states[slot_id, ep_step + 1] = rnn_states
+        self.rnn_states_critic[slot_id, ep_step + 1] = rnn_states_critic
+
+        self._ep_step[split_id] += 1
 
         # section of this actor in current slot is full except for bootstrap step
         if ep_step == self.episode_length - 1:
-            self._ep_step[actor_id, split_id] = 0
+            self._ep_step[split_id] = 0
 
             # move global queue pointer to next corresponding slot
-            cur_q_idx = self._q_idx[actor_id, split_id]
-            self._q_idx[actor_id, split_id] += 1
-            self._q_idx[actor_id, split_id] %= self.qsize
-            new_slot_id = self._q_idx[actor_id, split_id] * self.num_split + split_id
+            cur_q_idx = self._q_idx[split_id]
+            self._q_idx[split_id] += 1
+            self._q_idx[split_id] %= self.qsize
+            new_slot_id = self._q_idx[split_id] * self.num_split + split_id
             # find next slot which is not busy
             while self._is_being_read[new_slot_id]:
-                self._q_idx[actor_id, split_id] += 1
-                self._q_idx[actor_id, split_id] %= self.qsize
-                new_slot_id = self._q_idx[actor_id, split_id] * self.num_split + split_id
-            self._prev_q_idx[actor_id, split_id] = cur_q_idx
+                self._q_idx[split_id] += 1
+                self._q_idx[split_id] %= self.qsize
+                new_slot_id = self._q_idx[split_id] * self.num_split + split_id
+            self._prev_q_idx[split_id] = cur_q_idx
 
-            self._opening(actor_id, split_id, rnn_states, rnn_states_critic)
+            self._opening(new_slot_id, rnn_states, rnn_states_critic)
 
-        self.total_timesteps += self.env_per_split
+    def _opening(self, new_slot_id, rnn_states, rnn_states_critic):
+        self.rnn_states[new_slot_id, 0] = rnn_states
+        self.rnn_states_critic[new_slot_id, 0] = rnn_states_critic
 
-    def _opening(self, actor_id, split_id, rnn_states, rnn_states_critic):
-        new_slot_id = self._q_idx[actor_id, split_id] * self.num_split + split_id
-        env_slice = slice(actor_id * self.env_per_split, (actor_id + 1) * self.env_per_split)
-
-        self.rnn_states[new_slot_id, 0, env_slice] = rnn_states
-        self.rnn_states_critic[new_slot_id, 0, env_slice] = rnn_states_critic
-
-        # if the next corresponding slot is readable, overwrite it
-        if self._is_readable[new_slot_id]:
-            # reset indicator for overwriting
-            self._is_readable[new_slot_id] = 0
-            self._is_full[new_slot_id, :] = 0
-            self._is_writable[new_slot_id] = 1
+        with self._read_ready:
+            # if the next corresponding slot is readable, overwrite it
+            if self._is_readable[new_slot_id]:
+                # reset indicator for overwriting
+                self._is_readable[new_slot_id] = 0
+                self._is_writable[new_slot_id] = 1
         assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
 
-    def _closure(self,
-                 actor_id,
-                 split_id,
-                 value_preds,
-                 share_obs,
-                 obs,
-                 rewards,
-                 masks,
-                 bad_masks=None,
-                 active_masks=None,
-                 available_actions=None):
-        slot_id = self._prev_q_idx[actor_id, split_id] * self.num_split + split_id
-        env_slice = slice(actor_id * self.env_per_split, (actor_id + 1) * self.env_per_split)
+    def _closure(self, split_id, value_preds):
+        slot_id = self._prev_q_idx[split_id] * self.num_split + split_id
+        cur_slot_id = self._q_idx[split_id] * self.num_split + split_id
 
-        self.share_obs[slot_id, -1, env_slice] = share_obs
-        self.obs[slot_id, -1, env_slice] = obs
-        self.masks[slot_id, -1, env_slice] = masks
-        self.rewards[slot_id, -1, env_slice] = rewards
-        if bad_masks is not None:
-            self.bad_masks[slot_id, -1, env_slice] = bad_masks
-        if active_masks is not None:
-            self.active_masks[slot_id, -1, env_slice] = active_masks
-        if available_actions is not None:
-            self.available_actions[slot_id, -1, env_slice] = available_actions
+        self.share_obs[slot_id, -1] = self.share_obs[cur_slot_id, 0]
+        self.obs[slot_id, -1] = self.obs[cur_slot_id, 0]
+        self.masks[slot_id, -1] = self.masks[cur_slot_id, 0]
+        self.rewards[slot_id, -1] = self.rewards[cur_slot_id, 0]
+        if self.bad_masks is not None:
+            self.bad_masks[slot_id, -1] = self.bad_masks[cur_slot_id, 0]
+        if self.active_masks is not None:
+            self.active_masks[slot_id, -1] = self.active_masks[cur_slot_id, 0]
+        if self.available_actions is not None:
+            self.available_actions[slot_id, -1] = self.available_actions[cur_slot_id, 0]
 
-        self._compute_returns(slot_id, env_slice, value_preds)
+        self.value_preds[slot_id, -1] = value_preds
+        self._compute_returns(slot_id)
 
-        # update indicator of current slot
-        self._is_full[slot_id, actor_id] = 1
-        if np.all(self._is_full[slot_id, :]):
+        with self._read_ready:
+            # update indicator of current slot
             no_availble_before = not np.any(self._is_readable)
             self._is_readable[slot_id] = 1
             self._is_writable[slot_id] = 0
             # if reader is waiting for data, notify it
             if no_availble_before:
-                with self._read_ready:
-                    self._read_ready.notify(1)
+                self._read_ready.notify(1)
 
     # def chooseinsert(self,
     #                  share_obs,
@@ -325,7 +308,7 @@ class SharedReplayBuffer:
             # indicator readable -> being-read
             self._is_readable[slot_id] = 0
             self._is_being_read[slot_id] = 1
-            assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
+        assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
         return slot_id, self.recurrent_generator(slot_id) if recur else self.feed_forward_generator(slot_id)
 
     def after_training_step(self, slot_id):
@@ -335,11 +318,10 @@ class SharedReplayBuffer:
             self._used_times[slot_id] += 1
             if self._used_times[slot_id] >= self.sample_reuse:
                 self._is_writable[slot_id] = 1
-                self._is_full[slot_id, :] = 0
                 self._used_times[slot_id] = 0
             else:
                 self._is_readable[slot_id] = 1
-            assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
+        assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
 
     # def chooseafter_update(self):
     #     self.rnn_states[0] = self.rnn_states[-1]
@@ -347,53 +329,50 @@ class SharedReplayBuffer:
     #     self.masks[0] = self.masks[-1]
     #     self.bad_masks[0] = self.bad_masks[-1]
 
-    def _compute_returns(self, slot_id, env_slice, next_value, adv_normalization=True):
+    def _compute_returns(self, slot_id, adv_normalization=True):
+        tik = time.time()
         value_normalizer = self.value_normalizer
         if self._use_gae:
-            self.value_preds[slot_id, -1, env_slice] = next_value
             gae = 0
             for step in reversed(range(self.episode_length)):
                 if self._use_popart:
-                    bootstrap_v = value_normalizer.denormalize(self.value_preds[slot_id, step + 1, env_slice])
-                    cur_v = value_normalizer.denormalize(self.value_preds[slot_id, step, env_slice])
+                    bootstrap_v = value_normalizer.denormalize(self.value_preds[slot_id, step + 1])
+                    cur_v = value_normalizer.denormalize(self.value_preds[slot_id, step])
                 else:
-                    bootstrap_v = self.value_preds[slot_id, step + 1, env_slice]
-                    cur_v = self.value_preds[slot_id, step, env_slice]
+                    bootstrap_v = self.value_preds[slot_id, step + 1]
+                    cur_v = self.value_preds[slot_id, step]
 
-                one_step_td = self.rewards[
-                    slot_id, step, env_slice] + self.gamma * bootstrap_v * self.masks[slot_id, step + 1, env_slice]
+                one_step_td = self.rewards[slot_id, step] + self.gamma * bootstrap_v * self.masks[slot_id, step + 1]
                 delta = one_step_td - cur_v
-                gae = delta + self.gamma * self.gae_lambda * gae * self.masks[slot_id, step + 1, env_slice]
+                gae = delta + self.gamma * self.gae_lambda * gae * self.masks[slot_id, step + 1]
                 if self._use_proper_time_limits:
-                    gae = gae * self.bad_masks[slot_id, step + 1, env_slice]
-                self.returns[slot_id, step, env_slice] = gae + cur_v
-                self.advantages[slot_id, step, env_slice] = gae
+                    gae = gae * self.bad_masks[slot_id, step + 1]
+                self.returns[slot_id, step] = gae + cur_v
+                self.advantages[slot_id, step] = gae
         else:
-            self.returns[slot_id, -1, env_slice] = next_value
             for step in reversed(range(self.rewards.shape[0])):
                 if self._use_popart:
-                    cur_v = value_normalizer.denormalize(self.value_preds[slot_id, step, env_slice])
+                    cur_v = value_normalizer.denormalize(self.value_preds[slot_id, step])
                 else:
-                    cur_v = self.value_preds[slot_id, step, env_slice]
+                    cur_v = self.value_preds[slot_id, step]
 
                 if self._use_proper_time_limits:
-                    bad_mask = self.bad_masks[slot_id, step + 1, env_slice]
+                    bad_mask = self.bad_masks[slot_id, step + 1]
                 else:
                     bad_mask = 1
 
-                discount_r = (
-                    self.returns[slot_id, step + 1, env_slice] * self.gamma * self.masks[slot_id, step + 1, env_slice] +
-                    self.rewards[slot_id, step, env_slice])
-                self.returns[slot_id, step, env_slice] = discount_r * bad_mask + (1 - bad_mask) * cur_v
-                self.advantages[slot_id, step, env_slice] = self.returns[slot_id, step, env_slice] - cur_v
+                discount_r = (self.returns[slot_id, step + 1] * self.gamma * self.masks[slot_id, step + 1] +
+                              self.rewards[slot_id, step])
+                self.returns[slot_id, step] = discount_r * bad_mask + (1 - bad_mask) * cur_v
+                self.advantages[slot_id, step] = self.returns[slot_id, step] - cur_v
 
         if adv_normalization:
-            adv = self.advantages[slot_id, :, env_slice].copy()
-            adv[self.active_masks[slot_id, :-1, env_slice] == 0.0] = np.nan
+            adv = self.advantages[slot_id, :].copy()
+            adv[self.active_masks[slot_id, :-1] == 0.0] = np.nan
             mean_advantages = np.nanmean(adv)
             std_advantages = np.nanstd(adv)
-            self.advantages[slot_id, :, env_slice] = (self.advantages[slot_id, :, env_slice] -
-                                                      mean_advantages) / (std_advantages + 1e-5)
+            self.advantages[slot_id, :] = (self.advantages[slot_id, :] - mean_advantages) / (std_advantages + 1e-5)
+        print(time.time() - tik)
 
     def feed_forward_generator(self, slot_id):
         num_mini_batch = self.num_mini_batch

@@ -44,12 +44,13 @@ class SMACAgent(Agent):
             # log information
             if episode % self.log_interval == 0:
                 end = time.time()
+                recent_fps = int((total_num_steps - last_total_num_steps) / (end - local_start))
+                global_avg_fps = int(total_num_steps / (end - global_start))
                 print("\n Map {} Algo {} Exp {} updates {}/{} episodes, total num timesteps {}/{}, "
-                      "recent FPS {}, global average FPS {}.\n".format(
-                          self.all_args.map_name, self.algorithm_name, self.experiment_name, episode, episodes,
-                          total_num_steps, self.num_env_steps,
-                          int((total_num_steps - last_total_num_steps) / (end - local_start)),
-                          int(total_num_steps / (end - global_start))))
+                      "recent FPS {}, global average FPS {}.\n".format(self.all_args.map_name, self.algorithm_name,
+                                                                       self.experiment_name, episode, episodes,
+                                                                       total_num_steps, self.num_env_steps, recent_fps,
+                                                                       global_avg_fps))
 
                 if self.env_name == "StarCraft2":
                     battles_won = []
@@ -69,7 +70,14 @@ class SMACAgent(Agent):
                         incre_battles_game) > 0 else 0.0
                     print("incre win rate is {}.".format(incre_win_rate))
                     if self.use_wandb:
-                        wandb.log({"incre_win_rate": incre_win_rate}, step=total_num_steps)
+                        wandb.log(
+                            {
+                                "incre_win_rate": incre_win_rate,
+                                'avg_reward': train_infos["average_step_rewards"],
+                                'total_env_steps': total_num_steps,
+                                'fps': recent_fps,
+                            },
+                            step=total_num_steps)
                     else:
                         self.writter.add_scalars("incre_win_rate", {"incre_win_rate": incre_win_rate}, total_num_steps)
 
@@ -87,18 +95,19 @@ class SMACAgent(Agent):
             if episode % self.eval_interval == 0 and self.use_eval:
                 self.eval(total_num_steps)
 
-    def insert(self, actor_id, split_id, data):
-        (obs, share_obs, rewards, dones, infos, available_actions, values, actions, action_log_probs, rnn_states,
-         rnn_states_critic, masks) = data
-
-        if dones is None:
-            assert rewards is None and infos is None
-            bad_masks = active_masks = None
+    @rpc.functions.async_execution
+    def select_action(self, actor_id, split_id, model_inputs, init=False):
+        if init:
+            # reset env
+            obs, share_obs, available_actions = model_inputs
+            rewards = dones = infos = active_masks = bad_masks = None
+            masks = np.ones((self.env_per_split, self.num_agents, 1), dtype=np.float32)
         else:
+            obs, share_obs, rewards, dones, infos, available_actions = model_inputs
+            # dones has shape [B, A]
             dones_env = np.all(dones, axis=1)
-
-            rnn_states[dones_env] = 0
-            rnn_states_critic[dones_env] = 0
+            masks = np.broadcast_to(np.expand_dims(1 - np.all(dones, axis=1, keepdims=True), 2),
+                                    shape=(self.env_per_split, self.num_agents, 1))
 
             active_masks = np.ones((self.env_per_split, self.num_agents, 1), dtype=np.float32)
             active_masks[dones] = 0
@@ -107,24 +116,11 @@ class SMACAgent(Agent):
 
             bad_masks = np.array([[[0.0] if info[agent_id]['bad_transition'] else [1.0]
                                    for agent_id in range(self.num_agents)] for info in infos])
-
+        # replay buffer
         if not self.use_centralized_V:
             share_obs = obs
-        self.buffer.insert(actor_id, split_id, share_obs, obs, rnn_states, rnn_states_critic, actions, action_log_probs,
-                           values, rewards, masks, bad_masks, active_masks, available_actions)
-
-    @rpc.functions.async_execution
-    def select_action(self, actor_id, split_id, model_inputs, init=False):
-        if init:
-            # reset env
-            obs, share_obs, available_actions = model_inputs
-            rewards = dones = infos = None
-            masks = np.ones((self.env_per_split, self.num_agents, 1), dtype=np.float32)
-        else:
-            obs, share_obs, rewards, dones, infos, available_actions = model_inputs
-            # dones has shape [B, A]
-            dones_env = np.all(dones, axis=1, keepdims=True)
-            masks = np.broadcast_to(np.expand_dims(1 - dones_env, 2), shape=(self.env_per_split, self.num_agents, 1))
+        self.buffer.insert_before_inference(actor_id, split_id, share_obs, obs, rewards, masks, bad_masks, active_masks,
+                                            available_actions)
         if infos is not None:
             merged_info = {}
             for all_agent_info in infos:
@@ -135,44 +131,34 @@ class SMACAgent(Agent):
                         else:
                             merged_info[k] += v
             self.all_agent0_infos[actor_id][split_id] = merged_info
-        # replay buffer
-        if not self.use_centralized_V:
-            share_obs = obs
-        rnn_states, rnn_states_critic = self.buffer.get_rnn_states(actor_id, split_id)
+
+        def _unpack(action_batch_futures):
+            action_batch = action_batch_futures.wait()
+            batch_slice = slice(actor_id * self.env_per_split, (actor_id + 1) * self.env_per_split)
+            return time.time(), action_batch[batch_slice]
+
+        action_fut = self.future_outputs[split_id].then(_unpack)
 
         with self.locks[split_id]:
-            model_input_queue = self.model_input_queues[split_id]
-            unpack_idx = model_input_queue.qsize() % self.rollout_batch_size
-            model_input_queue.put((share_obs, obs, rnn_states, rnn_states_critic, masks, available_actions))
-
-            def _insert(future_outputs):
-                values, actions, action_log_probs, rnn_states, rnn_states_critic = future_outputs.wait()
-                batch_slice = slice(unpack_idx * self.env_per_split, (unpack_idx + 1) * self.env_per_split)
-                data = (obs, share_obs, rewards, dones, infos, available_actions, values[batch_slice],
-                        actions[batch_slice], action_log_probs[batch_slice], rnn_states[batch_slice],
-                        rnn_states_critic[batch_slice], masks)
-                self.insert(actor_id, split_id, data)
-                return time.time(), actions[batch_slice]
-
-            action_fut = self.future_outputs[split_id].then(_insert)
-
-            if model_input_queue.qsize() >= self.rollout_batch_size:
-                model_inputs = []
-                for _ in range(self.rollout_batch_size):
-                    model_inputs.append(model_input_queue.get())
-                model_inputs = map(np.concatenate, zip(*model_inputs))
+            self.queued_cnt[split_id] += 1
+            if self.queued_cnt[split_id] >= self.num_actors:
+                policy_inputs = self.buffer.get_policy_inputs(split_id)
                 with torch.no_grad():
                     self.trainer.prep_rollout()
-                    rollout_outputs = self.trainer.rollout_policy.get_actions(*map(np.concatenate, model_inputs))
+                    rollout_outputs = self.trainer.rollout_policy.get_actions(*map(np.concatenate, policy_inputs))
 
                 # [self.envs, agents, dim]
                 def to_numpy(x):
-                    return np.array(np.split(_t2n(x), self.env_per_split * self.rollout_batch_size))
+                    return np.array(np.split(_t2n(x), self.env_per_split * self.num_actors))
 
-                model_outputs = tuple(map(to_numpy, rollout_outputs))
+                values, actions, action_log_probs, rnn_states, rnn_states_critic = tuple(map(to_numpy, rollout_outputs))
+                self.buffer.insert_after_inference(split_id, values, actions, action_log_probs, rnn_states,
+                                                   rnn_states_critic)
+                self.queued_cnt[split_id] = 0
                 cur_future_outputs = self.future_outputs[split_id]
                 self.future_outputs[split_id] = torch.futures.Future()
-                cur_future_outputs.set_result(model_outputs)
+                cur_future_outputs.set_result(actions)
+
         return action_fut
 
     def log_train(self, train_infos, total_num_steps):
