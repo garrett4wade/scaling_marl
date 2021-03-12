@@ -1,34 +1,34 @@
 #!/bin/sh
 env="StarCraft2"
-map="3m"
 algo="rmappo"
-exp="test"
-seed_max=1
+bash clean.sh
 
-pkill -9 Main_Thread
-pkill -9 python3.8
-pkill -9 rmappo
+map="6h_vs_8z"
+episode_length=100
 
-echo "env is ${env}, map is ${map}, algo is ${algo}, exp is ${exp}, max seed is ${seed_max}"
-for seed in `seq ${seed_max}`;
+seeds=(64579 7860)
+num_env_steps=10000000
+
+for seed in ${seeds[@]};
 do
-    echo "seed is ${seed}:"
+    exp="SEED-RL_"${map}
+    echo "env is ${env}, map is ${map}, algo is ${algo}, exp is ${exp}, seed is ${seed}"
     python3.8 train_smac.py --env_name ${env} \
-                               --algorithm_name ${algo} \
-                               --experiment_name ${exp} \
-                               --map_name ${map} \
-                               --seed 50 \
-                               --n_training_threads 8 \
-                               --num_mini_batch 1 \
-                               --episode_length 60 \
-                               --num_env_steps 10000000 \
-                               --ppo_epoch 5 --use_value_active_masks \
-                               --use_eval \
-                               --add_center_xy \
-                               --use_state_agent \
-                               --use_recurrent_policy \
-                               --use_wandb \
-                               --num_actors 4 \
-                               --env_per_actor 2 \
-                               --num_split 2
+                            --algorithm_name ${algo} \
+                            --experiment_name ${exp} \
+                            --map_name ${map} \
+                            --seed ${seed} \
+                            --n_training_threads 8 \
+                            --num_mini_batch 1 \
+                            --episode_length ${episode_length} \
+                            --num_env_steps ${num_env_steps} \
+                            --ppo_epoch 5 --use_value_active_masks \
+                            --use_eval \
+                            --add_center_xy \
+                            --use_state_agent \
+                            --use_recurrent_policy \
+                            --num_actors 16 \
+                            --env_per_actor 6 \
+                            --num_split 2
+    bash clean.sh
 done

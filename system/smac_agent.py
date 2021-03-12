@@ -44,12 +44,13 @@ class SMACAgent(Agent):
             # log information
             if episode % self.log_interval == 0:
                 end = time.time()
+                recent_fps = int((total_num_steps - last_total_num_steps) / (end - local_start))
+                global_avg_fps = int(total_num_steps / (end - global_start))
                 print("\n Map {} Algo {} Exp {} updates {}/{} episodes, total num timesteps {}/{}, "
-                      "recent FPS {}, global average FPS {}.\n".format(
-                          self.all_args.map_name, self.algorithm_name, self.experiment_name, episode, episodes,
-                          total_num_steps, self.num_env_steps,
-                          int((total_num_steps - last_total_num_steps) / (end - local_start)),
-                          int(total_num_steps / (end - global_start))))
+                      "recent FPS {}, global average FPS {}.\n".format(self.all_args.map_name, self.algorithm_name,
+                                                                       self.experiment_name, episode, episodes,
+                                                                       total_num_steps, self.num_env_steps, recent_fps,
+                                                                       global_avg_fps))
 
                 if self.env_name == "StarCraft2":
                     battles_won = []
@@ -69,7 +70,14 @@ class SMACAgent(Agent):
                         incre_battles_game) > 0 else 0.0
                     print("incre win rate is {}.".format(incre_win_rate))
                     if self.use_wandb:
-                        wandb.log({"incre_win_rate": incre_win_rate}, step=total_num_steps)
+                        wandb.log(
+                            {
+                                "incre_win_rate": incre_win_rate,
+                                'avg_reward': train_infos["average_step_rewards"],
+                                'total_env_steps': total_num_steps,
+                                'fps': recent_fps,
+                            },
+                            step=total_num_steps)
                     else:
                         self.writter.add_scalars("incre_win_rate", {"incre_win_rate": incre_win_rate}, total_num_steps)
 

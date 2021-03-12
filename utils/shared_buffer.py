@@ -1,7 +1,7 @@
 import torch
 import time
 import numpy as np
-import torch.multiprocessing as mp
+from threading import Lock, Condition
 
 from utils.util import get_shape_from_obs_space, get_shape_from_act_space
 
@@ -155,7 +155,7 @@ class SharedReplayBuffer:
         self._is_writable = np.ones((num_slots, ), dtype=np.uint8)
         assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
 
-        self._read_ready = mp.Condition(mp.Lock())
+        self._read_ready = Condition(Lock())
 
         self.total_timesteps = 0
 
@@ -235,11 +235,12 @@ class SharedReplayBuffer:
         self.rnn_states[new_slot_id, 0] = rnn_states
         self.rnn_states_critic[new_slot_id, 0] = rnn_states_critic
 
-        # if the next corresponding slot is readable, overwrite it
-        if self._is_readable[new_slot_id]:
-            # reset indicator for overwriting
-            self._is_readable[new_slot_id] = 0
-            self._is_writable[new_slot_id] = 1
+        with self._read_ready:
+            # if the next corresponding slot is readable, overwrite it
+            if self._is_readable[new_slot_id]:
+                # reset indicator for overwriting
+                self._is_readable[new_slot_id] = 0
+                self._is_writable[new_slot_id] = 1
         assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
 
     def _closure(self, split_id, value_preds):
@@ -257,15 +258,16 @@ class SharedReplayBuffer:
         if self.available_actions is not None:
             self.available_actions[slot_id, -1] = self.available_actions[cur_slot_id, 0]
 
-        self._compute_returns(slot_id, value_preds)
+        self.value_preds[slot_id, -1] = value_preds
+        self._compute_returns(slot_id)
 
-        # update indicator of current slot
-        no_availble_before = not np.any(self._is_readable)
-        self._is_readable[slot_id] = 1
-        self._is_writable[slot_id] = 0
-        # if reader is waiting for data, notify it
-        if no_availble_before:
-            with self._read_ready:
+        with self._read_ready:
+            # update indicator of current slot
+            no_availble_before = not np.any(self._is_readable)
+            self._is_readable[slot_id] = 1
+            self._is_writable[slot_id] = 0
+            # if reader is waiting for data, notify it
+            if no_availble_before:
                 self._read_ready.notify(1)
 
     # def chooseinsert(self,
@@ -306,7 +308,7 @@ class SharedReplayBuffer:
             # indicator readable -> being-read
             self._is_readable[slot_id] = 0
             self._is_being_read[slot_id] = 1
-            assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
+        assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
         return slot_id, self.recurrent_generator(slot_id) if recur else self.feed_forward_generator(slot_id)
 
     def after_training_step(self, slot_id):
@@ -319,7 +321,7 @@ class SharedReplayBuffer:
                 self._used_times[slot_id] = 0
             else:
                 self._is_readable[slot_id] = 1
-            assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
+        assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
 
     # def chooseafter_update(self):
     #     self.rnn_states[0] = self.rnn_states[-1]
@@ -327,11 +329,10 @@ class SharedReplayBuffer:
     #     self.masks[0] = self.masks[-1]
     #     self.bad_masks[0] = self.bad_masks[-1]
 
-    def _compute_returns(self, slot_id, next_value, adv_normalization=True):
+    def _compute_returns(self, slot_id, adv_normalization=True):
         tik = time.time()
         value_normalizer = self.value_normalizer
         if self._use_gae:
-            self.value_preds[slot_id, -1] = next_value
             gae = 0
             for step in reversed(range(self.episode_length)):
                 if self._use_popart:
@@ -349,7 +350,6 @@ class SharedReplayBuffer:
                 self.returns[slot_id, step] = gae + cur_v
                 self.advantages[slot_id, step] = gae
         else:
-            self.returns[slot_id, -1] = next_value
             for step in reversed(range(self.rewards.shape[0])):
                 if self._use_popart:
                     cur_v = value_normalizer.denormalize(self.value_preds[slot_id, step])
