@@ -53,7 +53,7 @@ class Agent:
         self.episode_length = self.all_args.episode_length
         self.num_env_steps = self.all_args.num_env_steps
         # TODO: support arbitrary rollout batch size
-        self.rollout_batch_size = self.num_actors
+        self.rollout_batch_size = self.num_actors * self.env_per_split
         # interval
         self.save_interval = self.all_args.save_interval
         self.use_eval = self.all_args.use_eval
@@ -119,7 +119,6 @@ class Agent:
         self.locks = [threading.Lock() for _ in range(self.num_split)]
         self.future_outputs = [torch.futures.Future() for _ in range(self.num_split)]
         self.queued_cnt = np.zeros((self.num_split, ), dtype=np.float32)
-        # self.model_input_queues = [Queue(self.rollout_batch_size) for _ in range(self.num_split)]
 
     def run(self):
         """Collect training data, perform training updates, and evaluate policy."""

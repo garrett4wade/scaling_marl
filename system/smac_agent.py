@@ -128,13 +128,13 @@ class SMACAgent(Agent):
                 policy_inputs = self.buffer.get_policy_inputs(split_id)
                 with torch.no_grad():
                     self.trainer.prep_rollout()
-                    rollout_outputs = self.trainer.rollout_policy.get_actions(*map(np.concatenate, policy_inputs))
+                    rollout_outputs = self.trainer.rollout_policy.get_actions(*map(
+                        lambda x: x.reshape(self.rollout_batch_size * self.num_agents, *x.shape[2:]), policy_inputs))
 
-                # [self.envs, agents, dim]
-                def to_numpy(x):
-                    return np.array(np.split(_t2n(x), self.env_per_split * self.num_actors))
+                values, actions, action_log_probs, rnn_states, rnn_states_critic = tuple(
+                    map(lambda x: _t2n(x).reshape(self.rollout_batch_size, self.num_agents, *x.shape[1:]),
+                        rollout_outputs))
 
-                values, actions, action_log_probs, rnn_states, rnn_states_critic = tuple(map(to_numpy, rollout_outputs))
                 self.buffer.insert_after_inference(split_id, values, actions, action_log_probs, rnn_states,
                                                    rnn_states_critic)
                 self.queued_cnt[split_id] = 0

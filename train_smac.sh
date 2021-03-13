@@ -28,7 +28,7 @@ do
                             --use_state_agent \
                             --use_recurrent_policy \
                             --num_actors 4 \
-                            --env_per_actor 2 \
+                            --env_per_actor 4 \
                             --num_split 2 \
                             --use_wandb
     bash clean.sh
