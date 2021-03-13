@@ -173,9 +173,8 @@ class SharedReplayBuffer:
                                 share_obs,
                                 obs,
                                 rewards,
-                                masks,
+                                dones,
                                 bad_masks=None,
-                                active_masks=None,
                                 available_actions=None):
         slot_id = self._q_idx[split_id] * self.num_split + split_id
         ep_step = self._ep_step[split_id]
@@ -184,15 +183,18 @@ class SharedReplayBuffer:
         # env step returns
         self.share_obs[slot_id, ep_step, env_slice] = share_obs
         self.obs[slot_id, ep_step, env_slice] = obs
-        self.masks[slot_id, ep_step, env_slice] = masks
         if ep_step >= 1:
             self.rewards[slot_id, ep_step - 1, env_slice] = rewards
-        if bad_masks is not None:
-            self.bad_masks[slot_id, ep_step, env_slice] = bad_masks
-        if active_masks is not None:
-            self.active_masks[slot_id, ep_step, env_slice] = active_masks
         if available_actions is not None:
             self.available_actions[slot_id, ep_step, env_slice] = available_actions
+        if bad_masks is not None:
+            self.bad_masks[slot_id, ep_step, env_slice] = bad_masks
+
+        if dones is not None:
+            self.masks[slot_id, ep_step, env_slice] = 1 - np.all(dones, axis=1, keepdims=True)
+            if self.active_masks is not None:
+                dones[np.all(dones, axis=1).squeeze(-1)] = 0
+                self.active_masks[slot_id, ep_step, env_slice] = 1 - dones
 
         self.total_timesteps += self.env_per_split
 

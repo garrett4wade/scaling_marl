@@ -100,26 +100,13 @@ class SMACAgent(Agent):
         if init:
             # reset env
             obs, share_obs, available_actions = model_inputs
-            rewards = dones = infos = active_masks = bad_masks = None
-            masks = np.ones((self.env_per_split, self.num_agents, 1), dtype=np.float32)
+            rewards = dones = infos = bad_masks = None
         else:
-            obs, share_obs, rewards, dones, infos, available_actions = model_inputs
-            # dones has shape [B, A]
-            dones_env = np.all(dones, axis=1)
-            masks = np.broadcast_to(np.expand_dims(1 - np.all(dones, axis=1, keepdims=True), 2),
-                                    shape=(self.env_per_split, self.num_agents, 1))
-
-            active_masks = np.ones((self.env_per_split, self.num_agents, 1), dtype=np.float32)
-            active_masks[dones] = 0
-            # env auto reset
-            active_masks[dones_env] = 1
-
-            bad_masks = np.array([[[0.0] if info[agent_id]['bad_transition'] else [1.0]
-                                   for agent_id in range(self.num_agents)] for info in infos])
+            obs, share_obs, rewards, dones, infos, available_actions, bad_masks = model_inputs
         # replay buffer
         if not self.use_centralized_V:
             share_obs = obs
-        self.buffer.insert_before_inference(actor_id, split_id, share_obs, obs, rewards, masks, bad_masks, active_masks,
+        self.buffer.insert_before_inference(actor_id, split_id, share_obs, obs, rewards, dones, bad_masks,
                                             available_actions)
         if infos is not None:
             merged_info = {}
