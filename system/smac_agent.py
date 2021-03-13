@@ -131,9 +131,8 @@ class SMACAgent(Agent):
                     rollout_outputs = self.trainer.rollout_policy.get_actions(*map(
                         lambda x: x.reshape(self.rollout_batch_size * self.num_agents, *x.shape[2:]), policy_inputs))
 
-                values, actions, action_log_probs, rnn_states, rnn_states_critic = tuple(
-                    map(lambda x: _t2n(x).reshape(self.rollout_batch_size, self.num_agents, *x.shape[1:]),
-                        rollout_outputs))
+                values, actions, action_log_probs, rnn_states, rnn_states_critic = map(
+                    lambda x: _t2n(x).reshape(self.rollout_batch_size, self.num_agents, *x.shape[1:]), rollout_outputs)
 
                 self.buffer.insert_after_inference(split_id, values, actions, action_log_probs, rnn_states,
                                                    rnn_states_critic)
