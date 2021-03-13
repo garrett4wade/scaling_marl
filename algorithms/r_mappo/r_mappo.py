@@ -188,6 +188,8 @@ class R_MAPPO():
 
             if i == self.ppo_epoch - 1:
                 train_info["average_step_rewards"] = np.mean(buffer.rewards[slot_id])
+                train_info['dead_ratio'] = 1 - buffer.active_masks[slot_id].sum() / np.prod(
+                    buffer.active_masks[slot_id].shape)
             buffer.after_training_step(slot_id)
 
         num_updates = self.ppo_epoch * self.num_mini_batch

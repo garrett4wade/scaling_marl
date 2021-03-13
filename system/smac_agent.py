@@ -1,7 +1,6 @@
 import time
 import wandb
 import numpy as np
-# from functools import reduce
 import torch
 import itertools
 from torch.distributed import rpc
@@ -85,9 +84,6 @@ class SMACAgent(Agent):
                     last_battles_won = battles_won
                     last_total_num_steps = total_num_steps
                     local_start = time.time()
-
-                # train_infos['dead_ratio'] = 1 - self.buffer.active_masks.sum() / reduce(
-                #     lambda x, y: x * y, list(self.buffer.active_masks.shape))
 
                 self.log_train(train_infos, total_num_steps)
 
