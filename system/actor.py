@@ -44,7 +44,7 @@ class Actor:
                 delays.append((tok - delay_tik) * 1e3)
                 model_inputs = env.step(actions)
                 # obs, state, reward, done, infos, avail_action
-                assert len(model_inputs) == 7
+                assert len(model_inputs) == 6
                 self.action_futures[i] = self.agent_rref.rpc_async().select_action(self.id, i, model_inputs)
             if self.verbose_time:
                 print('actor {} wait time {}ms, delay {}ms'.format(self.id, np.mean(wait_times), np.mean(delays)))

@@ -96,14 +96,13 @@ class SMACAgent(Agent):
         if init:
             # reset env
             obs, share_obs, available_actions = model_inputs
-            rewards = dones = infos = bad_masks = None
+            rewards = dones = infos = None
         else:
-            obs, share_obs, rewards, dones, infos, available_actions, bad_masks = model_inputs
+            obs, share_obs, rewards, dones, infos, available_actions = model_inputs
         # replay buffer
         if not self.use_centralized_V:
             share_obs = obs
-        self.buffer.insert_before_inference(actor_id, split_id, share_obs, obs, rewards, dones, bad_masks,
-                                            available_actions)
+        self.buffer.insert_before_inference(actor_id, split_id, share_obs, obs, rewards, dones, available_actions)
         if infos is not None:
             merged_info = {}
             for all_agent_info in infos:
@@ -174,8 +173,8 @@ class SMACAgent(Agent):
                 lambda x: _t2n(x).reshape(self.n_eval_rollout_threads, self.num_agents, *x.shape[1:]), policy_outputs)
 
             # Observe reward and next obs
-            (eval_obs, _, eval_rewards, eval_dones, eval_infos, eval_available_actions,
-             _) = self.eval_envs.step(eval_actions)
+            (eval_obs, _, eval_rewards, eval_dones, eval_infos,
+             eval_available_actions) = self.eval_envs.step(eval_actions)
 
             # smac is shared-env, just record reward of agent 0
             one_episode_rewards += eval_rewards[:, 0]

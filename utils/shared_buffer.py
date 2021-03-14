@@ -102,7 +102,6 @@ class SharedReplayBuffer:
         self.sample_reuse = args.ppo_epoch
         self._use_gae = args.use_gae
         self._use_popart = args.use_popart
-        self._use_proper_time_limits = args.use_proper_time_limits
 
         self.value_normalizer = value_normalizer
 
@@ -133,7 +132,6 @@ class SharedReplayBuffer:
         self.rnn_states_critic = np.zeros_like(self.rnn_states)
 
         self.masks = np.ones((num_slots, ep_l + 1, bs, num_agents, 1), dtype=np.float32)
-        self.bad_masks = np.ones_like(self.masks)
         self.active_masks = np.ones_like(self.masks)
 
         self.rewards = np.zeros((num_slots, ep_l, bs, num_agents, 1), dtype=np.float32)
@@ -174,7 +172,6 @@ class SharedReplayBuffer:
                                 obs,
                                 rewards,
                                 dones,
-                                bad_masks=None,
                                 available_actions=None):
         slot_id = self._q_idx[split_id] * self.num_split + split_id
         ep_step = self._ep_step[split_id]
@@ -187,8 +184,6 @@ class SharedReplayBuffer:
             self.rewards[slot_id, ep_step - 1, env_slice] = rewards
         if available_actions is not None:
             self.available_actions[slot_id, ep_step, env_slice] = available_actions
-        if bad_masks is not None:
-            self.bad_masks[slot_id, ep_step, env_slice] = bad_masks
 
         if dones is not None:
             self.masks[slot_id, ep_step, env_slice] = 1 - np.all(dones, axis=1, keepdims=True)
@@ -255,8 +250,6 @@ class SharedReplayBuffer:
         self.obs[slot_id, -1] = self.obs[cur_slot_id, 0]
         self.masks[slot_id, -1] = self.masks[cur_slot_id, 0]
         self.rewards[slot_id, -1] = self.rewards[cur_slot_id, 0]
-        if self.bad_masks is not None:
-            self.bad_masks[slot_id, -1] = self.bad_masks[cur_slot_id, 0]
         if self.active_masks is not None:
             self.active_masks[slot_id, -1] = self.active_masks[cur_slot_id, 0]
         if self.available_actions is not None:
@@ -284,7 +277,6 @@ class SharedReplayBuffer:
     #                  value_preds,
     #                  rewards,
     #                  masks,
-    #                  bad_masks=None,
     #                  active_masks=None,
     #                  available_actions=None):
     #     self.share_obs[self.step] = share_obs
@@ -296,8 +288,6 @@ class SharedReplayBuffer:
     #     self.value_preds[self.step] = value_preds
     #     self.rewards[self.step] = rewards
     #     self.masks[self.step + 1] = masks
-    #     if bad_masks is not None:
-    #         self.bad_masks[self.step + 1] = bad_masks
     #     if active_masks is not None:
     #         self.active_masks[self.step] = active_masks
     #     if available_actions is not None:
@@ -331,7 +321,6 @@ class SharedReplayBuffer:
     #     self.rnn_states[0] = self.rnn_states[-1]
     #     self.rnn_states_critic[0] = self.rnn_states_critic[-1]
     #     self.masks[0] = self.masks[-1]
-    #     self.bad_masks[0] = self.bad_masks[-1]
 
     def _compute_returns(self, slot_id, adv_normalization=True):
         tik = time.time()
@@ -346,11 +335,9 @@ class SharedReplayBuffer:
                     bootstrap_v = self.value_preds[slot_id, step + 1]
                     cur_v = self.value_preds[slot_id, step]
 
-                one_step_td = self.rewards[slot_id, step] + self.gamma * bootstrap_v * self.masks[slot_id, step + 1]
-                delta = one_step_td - cur_v
+                one_step_return = self.rewards[slot_id, step] + self.gamma * bootstrap_v * self.masks[slot_id, step + 1]
+                delta = one_step_return - cur_v
                 gae = delta + self.gamma * self.gae_lambda * gae * self.masks[slot_id, step + 1]
-                if self._use_proper_time_limits:
-                    gae = gae * self.bad_masks[slot_id, step + 1]
                 self.returns[slot_id, step] = gae + cur_v
                 self.advantages[slot_id, step] = gae
         else:
@@ -360,14 +347,9 @@ class SharedReplayBuffer:
                 else:
                     cur_v = self.value_preds[slot_id, step]
 
-                if self._use_proper_time_limits:
-                    bad_mask = self.bad_masks[slot_id, step + 1]
-                else:
-                    bad_mask = 1
-
                 discount_r = (self.returns[slot_id, step + 1] * self.gamma * self.masks[slot_id, step + 1] +
                               self.rewards[slot_id, step])
-                self.returns[slot_id, step] = discount_r * bad_mask + (1 - bad_mask) * cur_v
+                self.returns[slot_id, step] = discount_r
                 self.advantages[slot_id, step] = self.returns[slot_id, step] - cur_v
 
         if adv_normalization:

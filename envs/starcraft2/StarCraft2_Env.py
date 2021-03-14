@@ -452,7 +452,6 @@ class StarCraft2Env(MultiAgentEnv):
         infos = [{} for i in range(self.n_agents)]
         rewards = np.zeros((self.n_agents, 1), dtype=np.float32)
         dones = np.zeros((self.n_agents, 1), dtype=np.bool)
-        bad_masks = np.zeros((self.n_agents, 1), dtype=np.uint8)
 
         actions_int = [int(a) for a in actions]
 
@@ -491,11 +490,11 @@ class StarCraft2Env(MultiAgentEnv):
                     "battles_game": self.battles_game,
                     "battles_draw": self.timeouts,
                     "restarts": self.force_restarts,
-                    "won": self.win_counted
+                    "won": self.win_counted,
+                    "bad_transition": bad_transition
                 }
                 # termination
                 dones[i] = True
-                bad_masks[i] = 1 - bad_transition
 
             if self.use_state_agent:
                 global_state = [self.get_state_agent(agent_id) for agent_id in range(self.n_agents)]
@@ -514,7 +513,7 @@ class StarCraft2Env(MultiAgentEnv):
                 local_obs = self.stacked_local_obs.reshape(self.n_agents, -1)
                 global_state = self.stacked_global_state.reshape(self.n_agents, -1)
 
-            return local_obs, global_state, rewards, dones, infos, available_actions, bad_masks
+            return local_obs, global_state, rewards, dones, infos, available_actions
 
         self._total_steps += 1
         self._episode_steps += 1
@@ -562,10 +561,10 @@ class StarCraft2Env(MultiAgentEnv):
                 "battles_game": self.battles_game,
                 "battles_draw": self.timeouts,
                 "restarts": self.force_restarts,
-                "won": self.win_counted
+                "won": self.win_counted,
+                "bad_transition": bad_transition
             }
             dones[i] = terminated or self.death_tracker_ally[i]
-            bad_masks[i] = 1 - bad_transition
 
         if self.debug:
             logging.debug("Reward = {}".format(reward).center(60, '-'))
@@ -595,7 +594,7 @@ class StarCraft2Env(MultiAgentEnv):
             local_obs = self.stacked_local_obs.reshape(self.n_agents, -1)
             global_state = self.stacked_global_state.reshape(self.n_agents, -1)
 
-        return local_obs, global_state, rewards, dones, infos, available_actions, bad_masks
+        return local_obs, global_state, rewards, dones, infos, available_actions
 
     def get_agent_action(self, a_id, action):
         """Construct the action for agent a_id."""

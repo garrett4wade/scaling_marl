@@ -95,9 +95,9 @@ def main(rank, world_size):
         # cuda
         if all_args.cuda and torch.cuda.is_available():
             print("choose to use gpu...")
-            device = torch.device("cuda:2")
+            device = torch.device("cuda:0")
             if torch.cuda.device_count() > 1:
-                rollout_device = torch.device("cuda:3")
+                rollout_device = torch.device("cuda:1")
             else:
                 rollout_device = device
             torch.set_num_threads(all_args.n_training_threads)

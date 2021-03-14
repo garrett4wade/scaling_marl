@@ -6,9 +6,8 @@ bash clean.sh
 map="3m"
 episode_length=50
 
-# 64579 7860 
-seeds=(58598 1325)
-num_env_steps=10000000
+seeds=(58598 64579 7860 1325)
+num_env_steps=15000000
 
 for seed in ${seeds[@]};
 do
@@ -23,7 +22,7 @@ do
                             --num_mini_batch 1 \
                             --episode_length ${episode_length} \
                             --num_env_steps ${num_env_steps} \
-                            --ppo_epoch 5 --use_value_active_masks \
+                            --ppo_epoch 10 --use_value_active_masks \
                             --use_eval \
                             --add_center_xy \
                             --use_state_agent \
@@ -31,6 +30,7 @@ do
                             --num_actors 4 \
                             --env_per_actor 2 \
                             --num_split 2 \
+                            --eval_interval 5 \
                             --use_wandb
     bash clean.sh
 done

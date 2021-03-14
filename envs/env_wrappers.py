@@ -301,7 +301,7 @@ def shareworker(remote, parent_remote, env_fn_wrapper):
     while True:
         cmd, data = remote.recv()
         if cmd == 'step':
-            ob, s_ob, reward, done, info, available_actions, bad_masks = env.step(data)
+            ob, s_ob, reward, done, info, available_actions = env.step(data)
             if 'bool' in done.__class__.__name__:
                 if done:
                     ob, s_ob, available_actions = env.reset()
@@ -309,7 +309,7 @@ def shareworker(remote, parent_remote, env_fn_wrapper):
                 if np.all(done):
                     ob, s_ob, available_actions = env.reset()
 
-            remote.send((ob, s_ob, reward, done, info, available_actions, bad_masks))
+            remote.send((ob, s_ob, reward, done, info, available_actions))
         elif cmd == 'reset':
             ob, s_ob, available_actions = env.reset()
             remote.send((ob, s_ob, available_actions))
@@ -706,7 +706,7 @@ class ShareDummyVecEnv(ShareVecEnv):
 
     def step_wait(self):
         results = [env.step(a) for (a, env) in zip(self.actions, self.envs)]
-        obs, share_obs, rews, dones, infos, available_actions, bad_masks = map(np.stack, zip(*results))
+        obs, share_obs, rews, dones, infos, available_actions = map(np.stack, zip(*results))
 
         for (i, done) in enumerate(dones):
             if 'bool' in done.__class__.__name__:
@@ -717,7 +717,7 @@ class ShareDummyVecEnv(ShareVecEnv):
                     obs[i], share_obs[i], available_actions[i] = self.envs[i].reset()
         self.actions = None
 
-        return obs, share_obs, rews, dones, infos, available_actions, bad_masks
+        return obs, share_obs, rews, dones, infos, available_actions
 
     def reset(self):
         results = [env.reset() for env in self.envs]
