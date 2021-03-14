@@ -4,9 +4,10 @@ algo="rmappo"
 bash clean.sh
 
 map="3m"
-episode_length=70
+episode_length=50
 
-seeds=(64579 7860)
+# 64579 7860 
+seeds=(58598 1325)
 num_env_steps=10000000
 
 for seed in ${seeds[@]};
@@ -28,7 +29,7 @@ do
                             --use_state_agent \
                             --use_recurrent_policy \
                             --num_actors 4 \
-                            --env_per_actor 4 \
+                            --env_per_actor 2 \
                             --num_split 2 \
                             --use_wandb
     bash clean.sh

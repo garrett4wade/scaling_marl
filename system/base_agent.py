@@ -25,7 +25,7 @@ class Agent:
 
         self.env_fn = config['env_fn']
         self.example_env = config['example_env']
-        # self.eval_envs = config['eval_envs']
+        self.eval_envs = config['eval_envs']
         self.device = config['device']
         self.rollout_device = config['rollout_device']
         self.num_agents = config['num_agents']
@@ -52,6 +52,7 @@ class Agent:
         assert self.env_per_actor % self.num_split == 0
         self.episode_length = self.all_args.episode_length
         self.num_env_steps = self.all_args.num_env_steps
+        self.n_eval_rollout_threads = self.all_args.n_eval_rollout_threads
         # TODO: support arbitrary rollout batch size
         self.rollout_batch_size = self.num_actors * self.env_per_split
         # interval

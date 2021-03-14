@@ -127,7 +127,6 @@ class SMACAgent(Agent):
             if self.queued_cnt[split_id] >= self.num_actors:
                 policy_inputs = self.buffer.get_policy_inputs(split_id)
                 with torch.no_grad():
-                    self.trainer.prep_rollout()
                     rollout_outputs = self.trainer.rollout_policy.get_actions(*map(
                         lambda x: x.reshape(self.rollout_batch_size * self.num_agents, *x.shape[2:]), policy_inputs))
 
@@ -152,59 +151,56 @@ class SMACAgent(Agent):
 
     @torch.no_grad()
     def eval(self, total_num_steps):
-        pass
-        # eval_battles_won = 0
-        # eval_episode = 0
+        eval_battles_won = 0
+        eval_episode = 0
 
-        # eval_episode_rewards = []
-        # one_episode_rewards = []
+        eval_episode_rewards = []
+        one_episode_rewards = np.zeros((self.n_eval_rollout_threads, 1), dtype=np.float32)
 
-        # eval_obs, eval_share_obs, eval_available_actions = self.eval_envs.reset()
+        eval_obs, _, eval_available_actions = self.eval_envs.reset()
 
-        # eval_rnn_states = np.zeros((self.n_eval_rollout_threads, self.num_agents, self.recurrent_N, self.hidden_size),
-        #                            dtype=np.float32)
-        # eval_masks = np.ones((self.n_eval_rollout_threads, self.num_agents, 1), dtype=np.float32)
+        eval_rnn_states = np.zeros((self.n_eval_rollout_threads, self.num_agents, self.recurrent_N, self.hidden_size),
+                                   dtype=np.float32)
+        eval_masks = np.ones((self.n_eval_rollout_threads, self.num_agents, 1), dtype=np.float32)
 
-        # while True:
-        #     self.trainer.prep_rollout()
-        #     eval_actions, eval_rnn_states = \
-        #         self.trainer.policy.act(np.concatenate(eval_obs),
-        #                                 np.concatenate(eval_rnn_states),
-        #                                 np.concatenate(eval_masks),
-        #                                 np.concatenate(eval_available_actions),
-        #                                 deterministic=True)
-        #     eval_actions = np.array(np.split(_t2n(eval_actions), self.n_eval_rollout_threads))
-        #     eval_rnn_states = np.array(np.split(_t2n(eval_rnn_states), self.n_eval_rollout_threads))
+        while True:
+            self.trainer.prep_rollout()
+            policy_inputs = (eval_obs, eval_rnn_states, eval_masks, eval_available_actions)
 
-        #     # Obser reward and next obs
-        #     (eval_obs, eval_share_obs, eval_rewards, eval_dones, eval_infos,
-        #     eval_available_actions) = self.eval_envs.step(eval_actions)
-        #     one_episode_rewards.append(eval_rewards)
+            policy_outputs = self.trainer.policy.act(*map(
+                lambda x: x.reshape(self.n_eval_rollout_threads * self.num_agents, *x.shape[2:]), policy_inputs),
+                                                     deterministic=True)
+            eval_actions, eval_rnn_states = map(
+                lambda x: _t2n(x).reshape(self.n_eval_rollout_threads, self.num_agents, *x.shape[1:]), policy_outputs)
 
-        #     eval_dones_env = np.all(eval_dones, axis=1)
+            # Observe reward and next obs
+            (eval_obs, _, eval_rewards, eval_dones, eval_infos, eval_available_actions,
+             _) = self.eval_envs.step(eval_actions)
 
-        #     eval_rnn_states[eval_dones_env] = 0
+            # smac is shared-env, just record reward of agent 0
+            one_episode_rewards += eval_rewards[:, 0]
 
-        #     eval_masks = np.ones((self.all_args.n_eval_rollout_threads, self.num_agents, 1), dtype=np.float32)
-        #     eval_masks[eval_dones_env == True] = np.zeros(((eval_dones_env == True).sum(), self.num_agents, 1),
-        #                                                   dtype=np.float32)
+            eval_dones_env = np.all(eval_dones, 1).squeeze(-1)
+            eval_masks = np.broadcast_to(1 - np.all(eval_dones, axis=1, keepdims=True),
+                                         (self.all_args.n_eval_rollout_threads, self.num_agents, 1))
 
-        #     for eval_i in range(self.n_eval_rollout_threads):
-        #         if eval_dones_env[eval_i]:
-        #             eval_episode += 1
-        #             eval_episode_rewards.append(np.sum(one_episode_rewards, axis=0))
-        #             one_episode_rewards = []
-        #             if eval_infos[eval_i][0]['won']:
-        #                 eval_battles_won += 1
+            eval_rnn_states *= np.expand_dims(eval_masks, -1)
 
-        #     if eval_episode >= self.all_args.eval_episodes:
-        #         eval_episode_rewards = np.array(eval_episode_rewards)
-        #         eval_env_infos = {'eval_average_episode_rewards': eval_episode_rewards}
-        #         self.log_env(eval_env_infos, total_num_steps)
-        #         eval_win_rate = eval_battles_won / eval_episode
-        #         print("eval win rate is {}.".format(eval_win_rate))
-        #         if self.use_wandb:
-        #             wandb.log({"eval_win_rate": eval_win_rate}, step=total_num_steps)
-        #         else:
-        #             self.writter.add_scalars("eval_win_rate", {"eval_win_rate": eval_win_rate}, total_num_steps)
-        #         break
+            for eval_i in range(self.n_eval_rollout_threads):
+                if eval_dones_env[eval_i]:
+                    eval_episode += 1
+                    eval_episode_rewards.append(one_episode_rewards[eval_i].item())
+                    one_episode_rewards[eval_i] = 0
+                    if eval_infos[eval_i][0]['won']:
+                        eval_battles_won += 1
+
+            if eval_episode >= self.all_args.eval_episodes:
+                eval_env_infos = {'eval_average_episode_rewards': np.array(eval_episode_rewards)}
+                self.log_env(eval_env_infos, total_num_steps)
+                eval_win_rate = eval_battles_won / eval_episode
+                print("eval win rate is {}.".format(eval_win_rate))
+                if self.use_wandb:
+                    wandb.log({"eval_win_rate": eval_win_rate}, step=total_num_steps)
+                else:
+                    self.writter.add_scalars("eval_win_rate", {"eval_win_rate": eval_win_rate}, total_num_steps)
+                break

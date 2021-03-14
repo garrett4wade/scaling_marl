@@ -173,6 +173,10 @@ def get_config():
                         default=True,
                         help="by default, make sure random seed effective. if set, bypass such function.")
     parser.add_argument("--n_training_threads", type=int, default=1, help="Number of torch threads for training")
+    parser.add_argument("--n_eval_rollout_threads",
+                        type=int,
+                        default=4,
+                        help="Number of parallel envs for evaluating rollouts")
     parser.add_argument("--num_env_steps",
                         type=int,
                         default=10e6,
@@ -181,12 +185,11 @@ def get_config():
                         type=str,
                         default='garrett4wade',
                         help="[for wandb usage], to specify user's name for simply collecting training data.")
-    parser.add_argument(
-        "--use_wandb",
-        action='store_false',
-        default=True,
-        help="[for wandb usage], by default True, will log date to wandb server. "
-        "or else will use tensorboard to log data.")
+    parser.add_argument("--use_wandb",
+                        action='store_false',
+                        default=True,
+                        help="[for wandb usage], by default True, will log date to wandb server. "
+                        "or else will use tensorboard to log data.")
 
     # system parameters
     parser.add_argument("--num_actors", type=int, default=4)
@@ -335,8 +338,7 @@ def get_config():
         action='store_true',
         default=False,
         help="by default, do not render the env during training. If set, start render. Note: something, "
-        "the environment has internal render process which is not controlled by this hyperparam."
-    )
+        "the environment has internal render process which is not controlled by this hyperparam.")
     parser.add_argument("--render_episodes", type=int, default=5, help="the number of episodes to render a given env")
     parser.add_argument("--ifi",
                         type=float,

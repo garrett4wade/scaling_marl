@@ -19,6 +19,8 @@ class R_MAPPO():
         self.tpdv = dict(dtype=torch.float32, device=device)
         self.policy = policy
         self.rollout_policy = rollout_policy
+        self.rollout_policy.actor.eval()
+        self.rollout_policy.critic.eval()
 
         self.clip_param = args.clip_param
         self.ppo_epoch = args.ppo_epoch
@@ -205,5 +207,5 @@ class R_MAPPO():
         self.policy.critic.train()
 
     def prep_rollout(self):
-        self.rollout_policy.actor.eval()
-        self.rollout_policy.critic.eval()
+        self.policy.actor.eval()
+        self.policy.critic.eval()

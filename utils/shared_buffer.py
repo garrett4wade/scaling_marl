@@ -210,8 +210,10 @@ class SharedReplayBuffer:
         self.actions[slot_id, ep_step] = actions
         self.action_log_probs[slot_id, ep_step] = action_log_probs
         self.value_preds[slot_id, ep_step] = value_preds
-        self.rnn_states[slot_id, ep_step + 1] = rnn_states
-        self.rnn_states_critic[slot_id, ep_step + 1] = rnn_states_critic
+
+        rnn_mask = np.expand_dims(self.masks[slot_id, ep_step], -1)
+        self.rnn_states[slot_id, ep_step + 1] = rnn_states * rnn_mask
+        self.rnn_states_critic[slot_id, ep_step + 1] = rnn_states_critic * rnn_mask
 
         self._ep_step[split_id] += 1
 
