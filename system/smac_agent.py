@@ -5,7 +5,7 @@ import torch
 import itertools
 from torch.distributed import rpc
 from system.base_agent import Agent
-from utils.shared_buffer import SharedReplayBuffer
+from utils.buffer import SharedReplayBuffer
 
 
 def _t2n(x):
