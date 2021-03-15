@@ -187,7 +187,7 @@ class SharedReplayBuffer:
 
         if dones is not None:
             self.masks[slot_id, ep_step, env_slice] = 1 - np.all(dones, axis=1, keepdims=True)
-            if self.active_masks is not None:
+            if hasattr(self, 'active_masks'):
                 dones[np.all(dones, axis=1).squeeze(-1)] = 0
                 self.active_masks[slot_id, ep_step, env_slice] = 1 - dones
 
@@ -231,6 +231,7 @@ class SharedReplayBuffer:
             self._opening(new_slot_id, rnn_states, rnn_states_critic)
 
     def _opening(self, new_slot_id, rnn_states, rnn_states_critic):
+        # start up a new slot
         self.rnn_states[new_slot_id, 0] = rnn_states
         self.rnn_states_critic[new_slot_id, 0] = rnn_states_critic
 
@@ -243,6 +244,7 @@ class SharedReplayBuffer:
         assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
 
     def _closure(self, split_id, value_preds):
+        # complete bootstrap data & indicator of a written slot
         slot_id = self._prev_q_idx[split_id] * self.num_split + split_id
         cur_slot_id = self._q_idx[split_id] * self.num_split + split_id
 
@@ -250,9 +252,9 @@ class SharedReplayBuffer:
         self.obs[slot_id, -1] = self.obs[cur_slot_id, 0]
         self.masks[slot_id, -1] = self.masks[cur_slot_id, 0]
         self.rewards[slot_id, -1] = self.rewards[cur_slot_id, 0]
-        if self.active_masks is not None:
+        if hasattr(self, 'active_masks'):
             self.active_masks[slot_id, -1] = self.active_masks[cur_slot_id, 0]
-        if self.available_actions is not None:
+        if hasattr(self, 'available_actions'):
             self.available_actions[slot_id, -1] = self.available_actions[cur_slot_id, 0]
 
         self.value_preds[slot_id, -1] = value_preds
@@ -372,9 +374,8 @@ class SharedReplayBuffer:
         share_obs = _flatten(self.share_obs[slot_id, :-1], 3)
         obs = _flatten(self.obs[slot_id, :-1], 3)
         actions = _flatten(self.actions[slot_id], 3)
-        if self.available_actions is not None:
+        if hasattr(self, 'available_actions'):
             available_actions = _flatten(self.available_actions[slot_id, :-1], 3)
-            assert available_actions.shape[0] == batch_size
         value_preds = _flatten(self.value_preds[slot_id, :-1], 3)
         returns = _flatten(self.returns[slot_id, :-1], 3)
         masks = _flatten(self.masks[slot_id, :-1], 3)
@@ -392,7 +393,7 @@ class SharedReplayBuffer:
                 share_obs_batch = share_obs[indices]
                 obs_batch = obs[indices]
                 actions_batch = actions[indices]
-                if self.available_actions is not None:
+                if hasattr(self, 'available_actions'):
                     available_actions_batch = available_actions[indices]
                 else:
                     available_actions_batch = None
@@ -433,7 +434,7 @@ class SharedReplayBuffer:
         active_masks = _cast(self.active_masks[slot_id, :-1])
         advantages = _cast(self.advantages[slot_id])
 
-        if self.available_actions is not None:
+        if hasattr(self, 'available_actions'):
             available_actions = _cast(self.available_actions[slot_id, :-1])
 
         def _cast_h(h):
