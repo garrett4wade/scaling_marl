@@ -7,7 +7,6 @@ import threading
 from system.actor import Actor
 from torch.distributed import rpc
 from tensorboardX import SummaryWriter
-from utils.shared_buffer import SharedReplayBuffer
 
 
 def _t2n(x):
@@ -82,7 +81,7 @@ class Agent:
         from algorithms.r_mappo.r_mappo import R_MAPPO as TrainAlgo
         from algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
 
-        share_observation_space = self.example_env.share_observation_space[
+        self.share_observation_space = share_observation_space = self.example_env.share_observation_space[
             0] if self.use_centralized_V else self.example_env.observation_space[0]
 
         # policy network
@@ -106,11 +105,6 @@ class Agent:
 
         # algorithm
         self.trainer = TrainAlgo(self.all_args, self.policy, self.rollout_policy, device=self.device)
-
-        # buffer
-        self.buffer = SharedReplayBuffer(self.all_args, self.num_agents, self.example_env.observation_space[0],
-                                         share_observation_space, self.example_env.action_space[0],
-                                         self.trainer.value_normalizer)
 
         # actors
         self.rref = rpc.RRef(self)

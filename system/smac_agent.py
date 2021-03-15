@@ -5,6 +5,7 @@ import torch
 import itertools
 from torch.distributed import rpc
 from system.base_agent import Agent
+from utils.shared_buffer import SharedReplayBuffer
 
 
 def _t2n(x):
@@ -15,6 +16,9 @@ class SMACAgent(Agent):
     """Runner class to perform training, evaluation. and data collection for SMAC. See parent class for details."""
     def __init__(self, config):
         super().__init__(config)
+        self.buffer = SharedReplayBuffer(self.all_args, self.num_agents, self.example_env.observation_space[0],
+                                         self.share_observation_space, self.example_env.action_space[0],
+                                         self.trainer.value_normalizer)
         self.all_agent0_infos = [[{} for _ in range(self.num_split)] for _ in range(self.num_actors)]
 
     def run(self):
