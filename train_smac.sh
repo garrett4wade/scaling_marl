@@ -1,6 +1,6 @@
 #!/bin/sh
 env="StarCraft2"
-algo="rmappo"
+algo="mappo"
 bash clean.sh
 
 map="3m"
@@ -26,11 +26,11 @@ do
                             --use_eval \
                             --add_center_xy \
                             --use_state_agent \
-                            --use_recurrent_policy \
                             --num_actors 4 \
                             --env_per_actor 2 \
                             --num_split 2 \
                             --eval_interval 5 \
                             --use_wandb
+                            # --use_recurrent_policy \
     bash clean.sh
 done

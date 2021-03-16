@@ -273,15 +273,25 @@ class ReplayBuffer:
         action_log_probs = _flatten(self.action_log_probs[slot_id], 3)
         advantages = _flatten(self.advantages[slot_id], 3)
 
+        # TODO: although rnn_state is useless when using MLP,
+        # TODO: we must return it to ensure the correctness of model dataflow ...
+        rnn_states = _flatten(self.rnn_states[slot_id, :-1], 3)
+        rnn_states_critic = _flatten(self.rnn_states_critic[slot_id, :-1], 3)
+
         if num_mini_batch == 1:
-            yield (share_obs, obs, actions, value_preds, returns, masks, active_masks, action_log_probs, advantages,
-                   available_actions)
+            outputs = (share_obs, obs, rnn_states, rnn_states_critic, actions, value_preds, returns, masks,
+                       active_masks, action_log_probs, advantages, available_actions)
+            for i, item in enumerate(outputs):
+                assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
+            yield outputs
         else:
             rand = torch.randperm(batch_size).numpy()
             sampler = [rand[i * mini_batch_size:(i + 1) * mini_batch_size] for i in range(num_mini_batch)]
             for indices in sampler:
                 share_obs_batch = share_obs[indices]
                 obs_batch = obs[indices]
+                rnn_states_batch = rnn_states[indices]
+                rnn_states_critic_batch = rnn_states_critic[indices]
                 actions_batch = actions[indices]
                 if hasattr(self, 'available_actions'):
                     available_actions_batch = available_actions[indices]
@@ -297,8 +307,12 @@ class ReplayBuffer:
                 else:
                     adv_targ = advantages[indices]
 
-                yield (share_obs_batch, obs_batch, actions_batch, value_preds_batch, return_batch, masks_batch,
-                       active_masks_batch, old_action_log_probs_batch, adv_targ, available_actions_batch)
+                outputs = (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch,
+                           value_preds_batch, return_batch, masks_batch, active_masks_batch, old_action_log_probs_batch,
+                           adv_targ, available_actions_batch)
+                for i, item in enumerate(outputs):
+                    assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
+                yield outputs
 
     def recurrent_generator(self, slot_id):
         data_chunk_length = self.data_chunk_length
