@@ -7,28 +7,18 @@ import setproctitle
 import numpy as np
 from pathlib import Path
 import torch
-import torch.multiprocessing as mp
 from torch.distributed import rpc
-from config import get_config
-from envs.starcraft2.StarCraft2_Env import StarCraft2Env
-from envs.starcraft2.smac_maps import get_map_params
-from system.smac_agent import SMACAgent as Agent
-from envs.env_wrappers import ShareDummyVecEnv, ShareSubprocVecEnv
-"""Train script for SMAC."""
+import torch.multiprocessing as mp
+from system.hanabi_agent import HanabiAgent as Agent
+from onpolicy.config import get_config
+from onpolicy.envs.hanabi.Hanabi_Env import HanabiEnv
+from onpolicy.envs.env_wrappers import ShareDummyVecEnv, ChooseDummyVecEnv, ChooseSubprocVecEnv
+"""Train script for Hanabi."""
 
 
 def parse_args(args, parser):
-    parser.add_argument('--map_name', type=str, default='3m', help="Which smac map to run on")
-    parser.add_argument("--add_move_state", action='store_true', default=False)
-    parser.add_argument("--add_local_obs", action='store_true', default=False)
-    parser.add_argument("--add_distance_state", action='store_true', default=False)
-    parser.add_argument("--add_enemy_action_state", action='store_true', default=False)
-    parser.add_argument("--add_agent_id", action='store_true', default=False)
-    parser.add_argument("--add_visible_state", action='store_true', default=False)
-    parser.add_argument("--add_xy_state", action='store_true', default=False)
-    parser.add_argument("--use_state_agent", action='store_true', default=False)
-    parser.add_argument("--use_mustalive", action='store_false', default=True)
-    parser.add_argument("--add_center_xy", action='store_true', default=False)
+    parser.add_argument('--hanabi_name', type=str, default='Hanabi-Very-Small', help="Which env to run on")
+    parser.add_argument('--num_agents', type=int, default=2, help="number of players")
 
     all_args = parser.parse_known_args(args)[0]
 
@@ -36,8 +26,9 @@ def parse_args(args, parser):
 
 
 def build_actor_env(rank, all_args):
-    if all_args.env_name == "StarCraft2":
-        env = StarCraft2Env(all_args)
+    if all_args.env_name == "Hanabi":
+        assert all_args.num_agents > 1 and all_args.num_agents < 6, ("num_agents can be only between 2-5.")
+        env = HanabiEnv(all_args, (all_args.seed + rank * 1000))
     else:
         print("Can not support the " + all_args.env_name + "environment.")
         raise NotImplementedError
@@ -48,12 +39,13 @@ def build_actor_env(rank, all_args):
 def make_example_env(all_args):
     def get_env_fn(rank):
         def init_env():
-            if all_args.env_name == "StarCraft2":
-                env = StarCraft2Env(all_args)
+            if all_args.env_name == "Hanabi":
+                assert all_args.num_agents > 1 and all_args.num_agents < 6, ("num_agents can be only between 2-5.")
+                env = HanabiEnv(all_args, (all_args.seed * 50000 + rank * 10000))
             else:
                 print("Can not support the " + all_args.env_name + "environment.")
                 raise NotImplementedError
-            env.seed(all_args.seed + rank * 10000)
+            env.seed(all_args.seed * 50000 + rank * 10000)
             return env
 
         return init_env
@@ -64,8 +56,9 @@ def make_example_env(all_args):
 def make_eval_env(all_args):
     def get_env_fn(rank):
         def init_env():
-            if all_args.env_name == "StarCraft2":
-                env = StarCraft2Env(all_args)
+            if all_args.env_name == "Hanabi":
+                assert all_args.num_agents > 1 and all_args.num_agents < 6, ("num_agents can be only between 2-5.")
+                env = HanabiEnv(all_args, (all_args.seed * 50000 + rank * 10000))
             else:
                 print("Can not support the " + all_args.env_name + "environment.")
                 raise NotImplementedError
@@ -75,9 +68,9 @@ def make_eval_env(all_args):
         return init_env
 
     if all_args.n_eval_rollout_threads == 1:
-        return ShareDummyVecEnv([get_env_fn(0)])
+        return ChooseDummyVecEnv([get_env_fn(0)])
     else:
-        return ShareSubprocVecEnv([get_env_fn(i) for i in range(all_args.n_eval_rollout_threads)])
+        return ChooseSubprocVecEnv([get_env_fn(i) for i in range(all_args.n_eval_rollout_threads)])
 
 
 def main(rank, world_size):
@@ -109,11 +102,13 @@ def main(rank, world_size):
             device = torch.device("cpu")
             torch.set_num_threads(all_args.n_training_threads)
 
+        # run dir
         run_dir = Path(os.path.split(os.path.dirname(os.path.abspath(__file__)))[0] + "/results"
-                       ) / all_args.env_name / all_args.map_name / all_args.algorithm_name / all_args.experiment_name
+                       ) / all_args.env_name / all_args.hanabi_name / all_args.algorithm_name / all_args.experiment_name
         if not run_dir.exists():
             os.makedirs(str(run_dir))
 
+        # wandb
         if all_args.use_wandb:
             run = wandb.init(config=all_args,
                              project=all_args.env_name,
@@ -121,7 +116,7 @@ def main(rank, world_size):
                              notes=socket.gethostname(),
                              name=str(all_args.algorithm_name) + "_" + str(all_args.experiment_name) + "_seed" +
                              str(all_args.seed),
-                             group=all_args.map_name,
+                             group=all_args.hanabi_name,
                              dir=str(run_dir),
                              job_type="training",
                              reinit=True)
@@ -150,10 +145,10 @@ def main(rank, world_size):
         torch.cuda.manual_seed_all(all_args.seed)
         np.random.seed(all_args.seed)
 
-        # env
+        # env init
         example_env = make_example_env(all_args)
         eval_envs = make_eval_env(all_args) if all_args.use_eval else None
-        num_agents = get_map_params(all_args.map_name)["n_agents"]
+        num_agents = all_args.num_agents
 
         config = {
             "all_args": all_args,

@@ -76,7 +76,6 @@ class SMACAgent(Agent):
                         wandb.log(
                             {
                                 "incre_win_rate": incre_win_rate,
-                                'avg_reward': train_infos["average_step_rewards"],
                                 'total_env_steps': total_num_steps,
                                 'fps': recent_fps,
                             },
@@ -146,13 +145,6 @@ class SMACAgent(Agent):
                 cur_future_outputs.set_result(actions)
 
         return action_fut
-
-    def log_train(self, train_infos, total_num_steps):
-        for k, v in train_infos.items():
-            if self.use_wandb:
-                wandb.log({k: v}, step=total_num_steps)
-            else:
-                self.writter.add_scalars(k, {k: v}, total_num_steps)
 
     @torch.no_grad()
     def eval(self, total_num_steps):
