@@ -3,8 +3,8 @@ env="StarCraft2"
 algo="rmappo"
 bash clean.sh
 
-map="6h_vs_8z"
-episode_length=400
+map="3m"
+episode_length=50
 
 seeds=(58598 64579 7860)
 num_env_steps=15000000
@@ -27,9 +27,10 @@ do
                             --add_center_xy \
                             --use_state_agent \
                             --use_recurrent_policy \
-                            --num_actors 20 \
-                            --env_per_actor 6 \
+                            --num_actors 4 \
+                            --env_per_actor 2 \
                             --num_split 2 \
-                            --eval_interval 5
+                            --eval_interval 5 \
+                            --use_wandb
     bash clean.sh
 done

@@ -100,7 +100,9 @@ class SMACAgent(Agent):
         if init:
             # reset env
             obs, share_obs, available_actions = model_inputs
-            rewards = dones = infos = None
+            rewards = np.zeros((self.env_per_split, self.num_agents, 1), dtype=np.float32)
+            dones = np.zeros_like(rewards).astype(np.bool)
+            infos = None
         else:
             obs, share_obs, rewards, dones, infos, available_actions = model_inputs
         # replay buffer
