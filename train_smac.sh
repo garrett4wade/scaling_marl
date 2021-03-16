@@ -4,7 +4,7 @@ algo="rmappo"
 bash clean.sh
 
 map="3m"
-episode_length=50
+episode_length=400
 
 seeds=(58598 64579 7860)
 num_env_steps=15000000

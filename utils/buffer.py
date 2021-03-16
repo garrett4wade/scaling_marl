@@ -157,10 +157,10 @@ class ReplayBuffer:
 
         self.total_timesteps = 0
 
-    def _opening(self, new_slot_id, rnn_states, rnn_states_critic):
+    def _opening(self, old_slot_id, new_slot_id):
         # start up a new slot
-        self.rnn_states[new_slot_id, 0] = rnn_states
-        self.rnn_states_critic[new_slot_id, 0] = rnn_states_critic
+        self.rnn_states[new_slot_id, 0] = self.rnn_states[old_slot_id, -1]
+        self.rnn_states_critic[new_slot_id, 0] = self.rnn_states_critic[old_slot_id, -1]
 
         with self._read_ready:
             # if the next corresponding slot is readable, overwrite it
@@ -170,27 +170,24 @@ class ReplayBuffer:
                 self._is_writable[new_slot_id] = 1
         assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
 
-    def _closure(self, split_id, value_preds):
+    def _closure(self, old_slot_id, new_slot_id):
         # complete bootstrap data & indicator of a written slot
-        slot_id = self._prev_q_idx[split_id] * self.num_split + split_id
-        cur_slot_id = self._q_idx[split_id] * self.num_split + split_id
-
-        self.share_obs[slot_id, -1] = self.share_obs[cur_slot_id, 0]
-        self.obs[slot_id, -1] = self.obs[cur_slot_id, 0]
-        self.masks[slot_id, -1] = self.masks[cur_slot_id, 0]
-        self.rewards[slot_id, -1] = self.rewards[cur_slot_id, 0]
-        self.active_masks[slot_id, -1] = self.active_masks[cur_slot_id, 0]
+        self.share_obs[old_slot_id, -1] = self.share_obs[new_slot_id, 0]
+        self.obs[old_slot_id, -1] = self.obs[new_slot_id, 0]
+        self.masks[old_slot_id, -1] = self.masks[new_slot_id, 0]
+        self.rewards[old_slot_id, -1] = self.rewards[new_slot_id, 0]
+        self.active_masks[old_slot_id, -1] = self.active_masks[new_slot_id, 0]
         if hasattr(self, 'available_actions'):
-            self.available_actions[slot_id, -1] = self.available_actions[cur_slot_id, 0]
+            self.available_actions[old_slot_id, -1] = self.available_actions[new_slot_id, 0]
+        self.value_preds[old_slot_id, -1] = self.value_preds[new_slot_id, 0]
 
-        self.value_preds[slot_id, -1] = value_preds
-        self._compute_returns(slot_id)
+        self._compute_returns(old_slot_id)
 
         with self._read_ready:
             # update indicator of current slot
             no_availble_before = not np.any(self._is_readable)
-            self._is_readable[slot_id] = 1
-            self._is_writable[slot_id] = 0
+            self._is_readable[old_slot_id] = 1
+            self._is_writable[old_slot_id] = 0
             # if reader is waiting for data, notify it
             if no_availble_before:
                 self._read_ready.notify(1)
@@ -439,14 +436,16 @@ class SharedPolicyMixin(PolicyMixin):
         slot_id = self._q_idx[split_id] * self.num_split + split_id
         ep_step = self._ep_step[split_id]
 
+        self.value_preds[slot_id, ep_step] = value_preds
+
         if ep_step == 0 and self._prev_q_idx[split_id] >= 0:
+            old_slot_id = self._prev_q_idx[split_id] * self.num_split + split_id
             # fill bootstrap data in previous slot
-            self._closure(split_id, value_preds)
+            self._closure(old_slot_id, slot_id)
 
         # model inference returns
         self.actions[slot_id, ep_step] = actions
         self.action_log_probs[slot_id, ep_step] = action_log_probs
-        self.value_preds[slot_id, ep_step] = value_preds
 
         rnn_mask = np.expand_dims(self.masks[slot_id, ep_step], -1)
         self.rnn_states[slot_id, ep_step + 1] = rnn_states * rnn_mask
@@ -470,7 +469,7 @@ class SharedPolicyMixin(PolicyMixin):
                 new_slot_id = self._q_idx[split_id] * self.num_split + split_id
             self._prev_q_idx[split_id] = cur_q_idx
 
-            self._opening(new_slot_id, rnn_states, rnn_states_critic)
+            self._opening(slot_id, new_slot_id)
 
 
 class SharedReplayBuffer(ReplayBuffer, SharedPolicyMixin):
@@ -512,15 +511,23 @@ class SequentialPolicyMixin(PolicyMixin):
                                                                                      *self.available_actions.shape[4:]))
             self.available_actions[slot_id, ep_step, env_slice, agent_id] = available_actions
 
-        if dones is not None:
-            assert dones.shape == (self.env_per_split, 1), (dones.shape, (self.env_per_split, 1))
-            self._env_done_trigger[split_id, env_slice] = dones * self.num_agents
-            self.masks[slot_id, ep_step, env_slice, agent_id] = 1 - dones
-            self._env_done_trigger[split_id, env_slice] -= 1
+        assert dones.shape == (self.env_per_split, 1), (dones.shape, (self.env_per_split, 1))
+        assert dones.dtype == np.bool
+        # once env is done, fill the next #agents timestep with 0 to mask bootstrap values
+        # env_done_trigger records remaining timesteps to be filled with 0
+        trigger = self._env_done_trigger[split_id, env_slice]
+        trigger[dones] = self.num_agents
+        # NOTE: mask is initialized as all 1, hence we only care about filling 0
+        self.masks[slot_id, ep_step, env_slice, agent_id][trigger > 0] = 0
+        self._env_done_trigger[split_id, env_slice] = max(trigger - 1, 0)
+        assert np.all(self._env_done_trigger >= 0) and np.all(self._env_done_trigger <= self.num_agents - 1)
 
-        self.total_timesteps += self.env_per_split
+        # active_mask is always 1 because env automatically resets when any agent induces termination
 
-    def insert_after_inference(self):
+        if agent_id == self.num_agents - 1:
+            self.total_timesteps += self.env_per_split
+
+    def insert_after_inference(self, split_id, value_preds, actions, action_log_probs, rnn_states, rnn_states_critic):
         pass
 
 
@@ -530,4 +537,4 @@ class SequentialReplayBuffer(ReplayBuffer, SequentialPolicyMixin):
         self._agent_ids = np.zeros((self.num_split, ), dtype=np.uint8)
         self._reward_since_last_action = np.zeros((self.num_split, self.batch_size, self.num_agents, 1),
                                                   dtype=np.float32)
-        self._env_done_trigger = np.zeros((self.num_split, self.batch_size), dtype=np.uint8)
+        self._env_done_trigger = np.zeros((self.num_split, self.batch_size), dtype=np.int16)
