@@ -23,19 +23,22 @@ do
                                 --hanabi_name ${game_version} \
                                 --num_agents ${num_agents} \
                                 --seed ${seed} \
-                                --n_training_threads 128 \
+                                --n_training_threads 8 \
                                 --n_eval_rollout_threads 1 \
                                 --num_mini_batch 1 \
                                 --episode_length ${episode_length} \
                                 --num_env_steps ${num_env_steps} \
-                                --ppo_epoch 15 \
+                                --ppo_epoch 5 \
                                 --lr 7e-4 \
                                 --critic_lr 1e-3 \
                                 --hidden_size 512 \
                                 --layer_N 2 \
-                                --use_eval \
-                                --use_recurrent_policy \
                                 --entropy_coef 0.015 \
+                                --num_actors 4 \
+                                --env_per_actor 2 \
+                                --num_split 2 \
+                                --eval_interval 5 \
                                 --use_wandb
+                                # --use_eval \
     bash clean.sh
 done

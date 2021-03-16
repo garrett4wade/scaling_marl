@@ -32,7 +32,6 @@ class R_MAPPO():
         self.huber_delta = args.huber_delta
 
         self._use_recurrent_policy = args.use_recurrent_policy
-        self._use_naive_recurrent = args.use_naive_recurrent_policy
         self._use_max_grad_norm = args.use_max_grad_norm
         self._use_clipped_value_loss = args.use_clipped_value_loss
         self._use_huber_loss = args.use_huber_loss

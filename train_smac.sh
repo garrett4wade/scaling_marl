@@ -20,10 +20,11 @@ do
                             --seed ${seed} \
                             --n_training_threads 8 \
                             --num_mini_batch 1 \
+                            --n_eval_rollout_threads 4 \
                             --episode_length ${episode_length} \
                             --num_env_steps ${num_env_steps} \
-                            --ppo_epoch 5 --use_value_active_masks \
-                            --use_eval \
+                            --ppo_epoch 5 \
+                            --use_value_active_masks \
                             --add_center_xy \
                             --use_state_agent \
                             --num_actors 4 \
@@ -31,6 +32,6 @@ do
                             --num_split 2 \
                             --eval_interval 5 \
                             --use_wandb
-                            # --use_recurrent_policy \
+                            # --use_eval \
     bash clean.sh
 done

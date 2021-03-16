@@ -88,10 +88,9 @@ def main(rank, world_size):
         rpc.init_rpc('agent', rank=rank, world_size=world_size, rpc_backend_options=rpc_opt)
 
         if all_args.algorithm_name == "rmappo":
-            assert (all_args.use_recurrent_policy or all_args.use_naive_recurrent_policy), ("check recurrent policy!")
-        elif all_args.algorithm_name == "mappo":
-            assert not (all_args.use_recurrent_policy
-                        or all_args.use_naive_recurrent_policy), ("check recurrent policy!")
+            all_args.use_recurrent_policy = True
+        elif all_args.algorithm_name == 'mappo':
+            all_args.use_recurrent_policy = False
         else:
             raise NotImplementedError
 
