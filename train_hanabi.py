@@ -12,7 +12,7 @@ import torch.multiprocessing as mp
 from system.hanabi_agent import HanabiAgent as Agent
 from config import get_config
 from envs.hanabi.Hanabi_Env import HanabiEnv
-from envs.env_wrappers import ShareDummyVecEnv, ChooseDummyVecEnv, ChooseSubprocVecEnv
+from envs.env_wrappers import ShareDummyVecEnv, ShareSubprocVecEnv
 """Train script for Hanabi."""
 
 
@@ -62,15 +62,15 @@ def make_eval_env(all_args):
             else:
                 print("Can not support the " + all_args.env_name + "environment.")
                 raise NotImplementedError
-            env.seed(all_args.seed * 50000 + rank * 10000)
+            env.seed(all_args.seed * 500 + rank * 10000)
             return env
 
         return init_env
 
     if all_args.n_eval_rollout_threads == 1:
-        return ChooseDummyVecEnv([get_env_fn(0)])
+        return ShareDummyVecEnv([get_env_fn(0)])
     else:
-        return ChooseSubprocVecEnv([get_env_fn(i) for i in range(all_args.n_eval_rollout_threads)])
+        return ShareSubprocVecEnv([get_env_fn(i) for i in range(all_args.n_eval_rollout_threads)])
 
 
 def main(rank, world_size):
@@ -92,7 +92,8 @@ def main(rank, world_size):
             print("choose to use gpu...")
             device = torch.device("cuda:0")
             if torch.cuda.device_count() > 1:
-                rollout_device = torch.device("cuda:1")
+                last_gpu = torch.cuda.device_count() - 1
+                rollout_device = torch.device("cuda:" + str(last_gpu))
             else:
                 rollout_device = device
             torch.set_num_threads(all_args.n_training_threads)

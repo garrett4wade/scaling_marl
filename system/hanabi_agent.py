@@ -74,8 +74,7 @@ class HanabiAgent(Agent):
 
             # eval
             if episode % self.eval_interval == 0 and self.use_eval:
-                # self.eval(total_num_steps)
-                pass
+                self.eval(total_num_steps)
 
     @rpc.functions.async_execution
     def select_action(self, actor_id, split_id, model_inputs, init=False):
@@ -123,49 +122,39 @@ class HanabiAgent(Agent):
 
     @torch.no_grad()
     def eval(self, total_num_steps):
-        eval_envs = self.eval_envs
-
         eval_scores = []
+        episode_cnt = 0
 
-        eval_finish = False
-        eval_reset_choose = np.ones(self.n_eval_rollout_threads) == 1.0
+        obs, _, available_actions = self.eval_envs.reset()
 
-        eval_obs, eval_share_obs, eval_available_actions = eval_envs.reset(eval_reset_choose)
+        rnn_states = np.zeros((self.n_eval_rollout_threads, self.num_agents, *self.buffer.rnn_states.shape[-2:]),
+                              dtype=np.float32)
+        masks = np.ones((self.n_eval_rollout_threads, self.num_agents, 1), dtype=np.float32)
+        env_done_trigger = np.zeros(self.n_eval_rollout_threads, dtype=np.int16)
 
-        eval_rnn_states = np.zeros((self.n_eval_rollout_threads, *self.buffer.rnn_states.shape[2:]), dtype=np.float32)
-        eval_masks = np.ones((self.n_eval_rollout_threads, self.num_agents, 1), dtype=np.float32)
-
-        while True:
-            if eval_finish:
-                break
+        while episode_cnt < self.all_args.eval_episodes:
             for agent_id in range(self.num_agents):
-                eval_actions = np.ones((self.n_eval_rollout_threads, 1), dtype=np.float32) * (-1.0)
-                eval_choose = np.any(eval_available_actions == 1, axis=1)
-
-                if ~np.any(eval_choose):
-                    eval_finish = True
-                    break
-
                 self.trainer.prep_rollout()
-                eval_action, eval_rnn_state = self.trainer.policy.act(eval_obs[eval_choose],
-                                                                      eval_rnn_states[eval_choose, agent_id],
-                                                                      eval_masks[eval_choose, agent_id],
-                                                                      eval_available_actions[eval_choose],
-                                                                      deterministic=True)
-
-                eval_actions[eval_choose] = _t2n(eval_action)
-                eval_rnn_states[eval_choose, agent_id] = _t2n(eval_rnn_state)
+                policy_outputs = self.trainer.policy.act(obs,
+                                                         rnn_states[:, agent_id],
+                                                         masks[:, agent_id],
+                                                         available_actions,
+                                                         deterministic=True)
+                action, new_rnn_state = map(_t2n, policy_outputs)
 
                 # Obser reward and next obs
-                eval_obs, eval_share_obs, eval_rewards, eval_dones, eval_infos, eval_available_actions = eval_envs.step(
-                    eval_actions)
+                obs, _, _, dones, infos, available_actions = self.eval_envs.step(action)
 
-                eval_available_actions[eval_dones.astype(np.bool)] = 0
+                env_done_trigger[dones.squeeze(-1)] = self.num_agents
+                masks[:, agent_id][env_done_trigger > 0] = 0
+                env_done_trigger = np.maximum(env_done_trigger - 1, 0)
 
-                for eval_done, eval_info in zip(eval_dones, eval_infos):
-                    if eval_done:
-                        if 'score' in eval_info.keys():
-                            eval_scores.append(eval_info['score'])
+                rnn_states[:, agent_id] = new_rnn_state * np.expand_dims(masks[:, agent_id], -1)
+
+                for done, info in zip(dones, infos):
+                    if done and 'score' in info.keys():
+                        episode_cnt += 1
+                        eval_scores.append(info['score'])
 
         eval_average_score = np.mean(eval_scores)
         print("eval average score is {}.".format(eval_average_score))
