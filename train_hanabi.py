@@ -10,9 +10,9 @@ import torch
 from torch.distributed import rpc
 import torch.multiprocessing as mp
 from system.hanabi_agent import HanabiAgent as Agent
-from onpolicy.config import get_config
-from onpolicy.envs.hanabi.Hanabi_Env import HanabiEnv
-from onpolicy.envs.env_wrappers import ShareDummyVecEnv, ChooseDummyVecEnv, ChooseSubprocVecEnv
+from config import get_config
+from envs.hanabi.Hanabi_Env import HanabiEnv
+from envs.env_wrappers import ShareDummyVecEnv, ChooseDummyVecEnv, ChooseSubprocVecEnv
 """Train script for Hanabi."""
 
 
@@ -45,7 +45,7 @@ def make_example_env(all_args):
             else:
                 print("Can not support the " + all_args.env_name + "environment.")
                 raise NotImplementedError
-            env.seed(all_args.seed * 50000 + rank * 10000)
+            env.seed(all_args.seed * 500 + rank * 10000)
             return env
 
         return init_env
@@ -58,7 +58,7 @@ def make_eval_env(all_args):
         def init_env():
             if all_args.env_name == "Hanabi":
                 assert all_args.num_agents > 1 and all_args.num_agents < 6, ("num_agents can be only between 2-5.")
-                env = HanabiEnv(all_args, (all_args.seed * 50000 + rank * 10000))
+                env = HanabiEnv(all_args, (all_args.seed * 500 + rank * 10000))
             else:
                 print("Can not support the " + all_args.env_name + "environment.")
                 raise NotImplementedError
@@ -146,7 +146,6 @@ def main(rank, world_size):
         torch.manual_seed(all_args.seed)
         torch.cuda.manual_seed_all(all_args.seed)
         np.random.seed(all_args.seed)
-
         # env init
         example_env = make_example_env(all_args)
         eval_envs = make_eval_env(all_args) if all_args.use_eval else None

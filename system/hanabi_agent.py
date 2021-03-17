@@ -46,8 +46,8 @@ class HanabiAgent(Agent):
                 end = time.time()
                 recent_fps = int((total_num_steps - last_total_num_steps) / (end - local_start))
                 global_avg_fps = int(total_num_steps / (end - global_start))
-                print("\n Map {} Algo {} Exp {} updates {}/{} episodes, total num timesteps {}/{}, "
-                      "recent FPS {}, global average FPS {}.\n".format(self.all_args.map_name, self.algorithm_name,
+                print("\nGame Version {}, Algo {} Exp {} updates {}/{} episodes, total num timesteps {}/{}, "
+                      "recent FPS {}, global average FPS {}.\n".format(self.all_args.hanabi_name, self.algorithm_name,
                                                                        self.experiment_name, episode, episodes,
                                                                        total_num_steps, self.num_env_steps, recent_fps,
                                                                        global_avg_fps))
@@ -108,11 +108,9 @@ class HanabiAgent(Agent):
             if self.queued_cnt[split_id] >= self.num_actors:
                 policy_inputs = self.buffer.get_policy_inputs(split_id)
                 with torch.no_grad():
-                    rollout_outputs = self.trainer.rollout_policy.get_actions(*map(
-                        lambda x: x.reshape(self.rollout_batch_size * self.num_agents, *x.shape[2:]), policy_inputs))
+                    rollout_outputs = self.trainer.rollout_policy.get_actions(*policy_inputs)
 
-                values, actions, action_log_probs, rnn_states, rnn_states_critic = map(
-                    lambda x: _t2n(x).reshape(self.rollout_batch_size, self.num_agents, *x.shape[1:]), rollout_outputs)
+                values, actions, action_log_probs, rnn_states, rnn_states_critic = map(_t2n, rollout_outputs)
 
                 self.buffer.insert_after_inference(split_id, values, actions, action_log_probs, rnn_states,
                                                    rnn_states_critic)

@@ -496,7 +496,7 @@ class HanabiEnv(Environment):
         else:
             share_obs = player_observations[current_player]['vectorized_ownhand'] + player_observations[current_player]['vectorized'] + agent_turn
 
-        done = self.state.is_terminal()
+        done = np.array([self.state.is_terminal()], dtype=np.bool)
         # Reward is score differential. May be large and negative at game end.
         reward = self.state.score() - last_score
         rewards = [[reward]] * self.players

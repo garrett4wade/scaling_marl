@@ -521,7 +521,7 @@ class SequentialPolicyMixin(PolicyMixin):
         # accumulate reward first, and then record final accumulated reward when env terminates,
         # because if current step is 'done', reported reward is from previous transition, which
         # belongs to the previous episode (current step is the opening of the next episode)
-        self._reward_since_last_action[split_id] += rewards
+        self._reward_since_last_action[split_id, env_slice] += rewards
         if ep_step >= 1:
             is_done_before = self._env_done_trigger[split_id, env_slice] > 0
             not_done_yet = (1 - is_done_before).astype(np.bool)
@@ -547,15 +547,15 @@ class SequentialPolicyMixin(PolicyMixin):
             self.available_actions[slot_id, ep_step, env_slice, agent_id] = available_actions
 
         assert dones.shape == (self.env_per_split, 1), (dones.shape, (self.env_per_split, 1))
-        assert dones.dtype == np.bool
+        assert dones.dtype == np.bool, dones.dtype
         # once env is done, fill the next #agents timestep with 0 to mask bootstrap values
         # env_done_trigger records remaining timesteps to be filled with 0
         trigger = self._env_done_trigger[split_id, env_slice]
-        trigger[dones] = self.num_agents
+        trigger[dones.squeeze(-1)] = self.num_agents
         # NOTE: mask is initialized as all 1, hence we only care about filling 0
         self.masks[slot_id, ep_step, env_slice, agent_id][trigger > 0] = 0
-        self._env_done_trigger[split_id, env_slice] = max(trigger - 1, 0)
-        assert np.all(self._env_done_trigger >= 0) and np.all(self._env_done_trigger <= self.num_agents - 1)
+        self._env_done_trigger[split_id, env_slice] = np.maximum(trigger - 1, 0)
+        assert np.all(self._env_done_trigger >= 0) and np.all(self._env_done_trigger <= self.num_agents)
 
         # active_mask is always 1 because env automatically resets when any agent induces termination
 

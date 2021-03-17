@@ -1,13 +1,14 @@
 #!/bin/sh
 env="Hanabi"
 algo="rmappo"
-bash clean.sh
+pkill -9 python3.8
+pkill -9 mappo
 
 game_version="Hanabi-Full"
 episode_length=100
-num_agents=2
+num_agents=3
 
-seeds=(58598 64579 7860)
+seeds=(55 37 28)
 num_env_steps=10000000000
 
 exp="mlp_critic1e-3_entropy0.015_v0belief"
@@ -35,10 +36,11 @@ do
                                 --layer_N 2 \
                                 --entropy_coef 0.015 \
                                 --num_actors 4 \
-                                --env_per_actor 2 \
+                                --env_per_actor 4 \
                                 --num_split 2 \
                                 --eval_interval 5 \
                                 --use_wandb
                                 # --use_eval \
-    bash clean.sh
+    pkill -9 python3.8
+    pkill -9 mappo
 done
