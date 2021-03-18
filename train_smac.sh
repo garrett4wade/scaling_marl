@@ -28,10 +28,11 @@ do
                             --use_value_active_masks \
                             --add_center_xy \
                             --use_state_agent \
-                            --num_actors 20 \
-                            --env_per_actor 6 \
+                            --num_actors 4 \
+                            --env_per_actor 2 \
                             --num_split 2 \
                             --eval_interval 5 \
-                            --use_eval
+                            --use_eval \
+                            --use_wandb
     bash clean.sh
 done
