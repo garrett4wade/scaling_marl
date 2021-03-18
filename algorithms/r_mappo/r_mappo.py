@@ -44,6 +44,8 @@ class R_MAPPO():
         else:
             self.value_normalizer = None
 
+        self.loss_fn = lambda x: huber_loss(x, self.huber_delta) if self._use_huber_loss else mse_loss
+
     def cal_value_loss(self, values, value_preds_batch, return_batch, active_masks_batch):
         """
         Calculate value function loss.
@@ -54,25 +56,15 @@ class R_MAPPO():
 
         :return value_loss: (torch.Tensor) value function loss.
         """
-        if self._use_popart:
-            value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(
-                -self.clip_param, self.clip_param)
-            error_clipped = self.value_normalizer(return_batch) - value_pred_clipped
-            error_original = self.value_normalizer(return_batch) - values
-        else:
-            value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(
-                -self.clip_param, self.clip_param)
-            error_clipped = return_batch - value_pred_clipped
-            error_original = return_batch - values
-
-        if self._use_huber_loss:
-            value_loss_clipped = huber_loss(error_clipped, self.huber_delta)
-            value_loss_original = huber_loss(error_original, self.huber_delta)
-        else:
-            value_loss_clipped = mse_loss(error_clipped)
-            value_loss_original = mse_loss(error_original)
+        v_target = self.value_normalizer(return_batch) if self._use_popart else return_batch
+        error_original = v_target - values
+        value_loss_original = self.loss_fn(error_original)
 
         if self._use_clipped_value_loss:
+            value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(
+                -self.clip_param, self.clip_param)
+            error_clipped = v_target - value_pred_clipped
+            value_loss_clipped = self.loss_fn(error_clipped)
             value_loss = torch.max(value_loss_original, value_loss_clipped)
         else:
             value_loss = value_loss_original
