@@ -1,13 +1,13 @@
 #!/bin/sh
 env="StarCraft2"
-algo="rmappo"
+algo="mappo"
 bash clean.sh
 
-map="8m_vs_9m"
+map="6h_vs_8z"
 episode_length=400
 
-#  64579 7860
-seeds=(58598)
+# 168 4356 
+seeds=(952)
 num_env_steps=15000000
 
 for seed in ${seeds[@]};
@@ -24,7 +24,7 @@ do
                             --n_eval_rollout_threads 4 \
                             --episode_length ${episode_length} \
                             --num_env_steps ${num_env_steps} \
-                            --ppo_epoch 10 \
+                            --ppo_epoch 5 \
                             --use_value_active_masks \
                             --add_center_xy \
                             --use_state_agent \
