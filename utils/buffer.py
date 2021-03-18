@@ -350,18 +350,18 @@ class ReplayBuffer:
         rnn_states_critic = _cast_h(self.rnn_states_critic[slot_id, :-1])
 
         if num_mini_batch == 1:
-            share_obs_batch = _flatten(share_obs, 2)
-            obs_batch = _flatten(obs, 2)
-            rnn_states_batch = np.swapaxes(rnn_states, 0, 1)
-            rnn_states_critic_batch = np.swapaxes(rnn_states_critic, 0, 1)
-            actions_batch = _flatten(actions, 2)
-            available_actions_batch = None if self.available_actions is None else _flatten(available_actions, 2)
-            value_preds_batch = _flatten(value_preds, 2)
-            return_batch = _flatten(returns, 2)
-            masks_batch = _flatten(masks, 2)
-            active_masks_batch = _flatten(active_masks, 2)
-            old_action_log_probs_batch = _flatten(action_log_probs, 2)
-            adv_targ = _flatten(advantages, 2)
+            share_obs_batch = share_obs
+            obs_batch = obs
+            rnn_states_batch = rnn_states
+            rnn_states_critic_batch = rnn_states_critic
+            actions_batch = actions
+            available_actions_batch = None if self.available_actions is None else available_actions
+            value_preds_batch = value_preds
+            return_batch = returns
+            masks_batch = masks
+            active_masks_batch = active_masks
+            old_action_log_probs_batch = action_log_probs
+            adv_targ = advantages
 
             outputs = (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch,
                        value_preds_batch, return_batch, masks_batch, active_masks_batch, old_action_log_probs_batch,
@@ -374,19 +374,18 @@ class ReplayBuffer:
             sampler = [rand[i * mini_batch_size:(i + 1) * mini_batch_size] for i in range(num_mini_batch)]
 
             for indices in sampler:
-                share_obs_batch = _flatten(share_obs[:, indices], 2)
-                obs_batch = _flatten(obs[:, indices], 2)
+                share_obs_batch = share_obs[:, indices]
+                obs_batch = obs[:, indices]
                 rnn_states_batch = np.swapaxes(rnn_states[:, indices], 0, 1)
                 rnn_states_critic_batch = np.swapaxes(rnn_states_critic[:, indices], 0, 1)
-                actions_batch = _flatten(actions[:, indices], 2)
-                available_actions_batch = None if self.available_actions is None else _flatten(
-                    available_actions[:, indices], 2)
-                value_preds_batch = _flatten(value_preds[:, indices], 2)
-                return_batch = _flatten(returns[:, indices], 2)
-                masks_batch = _flatten(masks[:, indices], 2)
-                active_masks_batch = _flatten(active_masks[:, indices], 2)
-                old_action_log_probs_batch = _flatten(action_log_probs[:, indices], 2)
-                adv_targ = _flatten(advantages[:, indices], 2)
+                actions_batch = actions[:, indices]
+                available_actions_batch = None if self.available_actions is None else available_actions[:, indices]
+                value_preds_batch = value_preds[:, indices]
+                return_batch = returns[:, indices]
+                masks_batch = masks[:, indices]
+                active_masks_batch = active_masks[:, indices]
+                old_action_log_probs_batch = action_log_probs[:, indices]
+                adv_targ = advantages[:, indices]
 
                 outputs = (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch,
                            value_preds_batch, return_batch, masks_batch, active_masks_batch, old_action_log_probs_batch,
