@@ -56,10 +56,9 @@ class R_MAPPO():
 
         :return value_loss: (torch.Tensor) value function loss.
         """
-        T, N = return_batch.shape[:2]
-        assert return_batch.shape == torch.Size([T, N, 1])
-        flattened_return = return_batch.view(T * N, 1)
-        v_target = self.value_normalizer(flattened_return).view(T, N, 1) if self._use_popart else return_batch
+        shp = return_batch.shape
+        flattened_return = return_batch.view(-1, 1)
+        v_target = self.value_normalizer(flattened_return).view(*shp) if self._use_popart else return_batch
         error_original = v_target - values
         value_loss_original = self.loss_fn(error_original)
 

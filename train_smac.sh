@@ -1,6 +1,6 @@
 #!/bin/sh
 env="StarCraft2"
-algo="rmappo"
+algo="mappo"
 bash clean.sh
 
 map="3m"

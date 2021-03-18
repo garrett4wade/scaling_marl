@@ -41,7 +41,7 @@ class ACTLayer(nn.Module):
                 Categorical(inputs_dim, discrete_dim, use_orthogonal, gain)
             ])
 
-    def forward(self, x, available_actions=None, deterministic=False):
+    def forward(self, x, available_actions=None):
         """
         Compute actions and action logprobs from given input.
         :param x: (torch.Tensor) input to network.
@@ -53,114 +53,69 @@ class ACTLayer(nn.Module):
         :return action_log_probs: (torch.Tensor) log probabilities of taken actions.
         """
         if self.mixed_action:
-            actions = []
-            action_log_probs = []
-            for action_out in self.action_outs:
-                action_logit = action_out(x)
-                action = action_logit.mode() if deterministic else action_logit.sample()
-                action_log_prob = action_logit.log_probs(action)
-                actions.append(action.float())
-                action_log_probs.append(action_log_prob)
+            action_dists = [action_out(x) for action_out in self.action_outs]
 
-            actions = torch.cat(actions, -1)
-            action_log_probs = torch.sum(torch.cat(action_log_probs, -1), -1, keepdim=True)
+            def action_reduce_fn(x):
+                return torch.cat(x, -1)
 
-        elif self.multi_discrete:
-            actions = []
-            action_log_probs = []
-            for action_out in self.action_outs:
-                action_logit = action_out(x)
-                action = action_logit.mode() if deterministic else action_logit.sample()
-                action_log_prob = action_logit.log_probs(action)
-                actions.append(action)
-                action_log_probs.append(action_log_prob)
+            def log_prob_reduce_fn(x):
+                return torch.sum(torch.cat(x, -1), -1, keepdim=True)
 
-            actions = torch.cat(actions, -1)
-            action_log_probs = torch.cat(action_log_probs, -1)
+            def action_preprocess_fn(x):
+                a, b = x.split((2, 1), -1)
+                b = b.long()
+                return [a, b]
 
-        else:
-            action_logits = self.action_out(x, available_actions)
-            actions = action_logits.mode() if deterministic else action_logits.sample()
-            action_log_probs = action_logits.log_probs(actions)
-
-        return actions, action_log_probs
-
-    def get_probs(self, x, available_actions=None):
-        """
-        Compute action probabilities from inputs.
-        :param x: (torch.Tensor) input to network.
-        :param available_actions: (torch.Tensor) denotes which actions are available to agent
-                                  (if None, all actions available)
-
-        :return action_probs: (torch.Tensor)
-        """
-        if self.mixed_action or self.multi_discrete:
-            action_probs = []
-            for action_out in self.action_outs:
-                action_logit = action_out(x)
-                action_prob = action_logit.probs
-                action_probs.append(action_prob)
-            action_probs = torch.cat(action_probs, -1)
-        else:
-            action_logits = self.action_out(x, available_actions)
-            action_probs = action_logits.probs
-
-        return action_probs
-
-    def evaluate_actions(self, x, action, available_actions=None, active_masks=None):
-        """
-        Compute log probability and entropy of given actions.
-        :param x: (torch.Tensor) input to network.
-        :param action: (torch.Tensor) actions whose entropy and log probability to evaluate.
-        :param available_actions: (torch.Tensor) denotes which actions are available to agent
-                                                              (if None, all actions available)
-        :param active_masks: (torch.Tensor) denotes whether an agent is active or dead.
-
-        :return action_log_probs: (torch.Tensor) log probabilities of the input actions.
-        :return dist_entropy: (torch.Tensor) action distribution entropy for the given inputs.
-        """
-        if self.mixed_action:
-            a, b = action.split((2, 1), -1)
-            b = b.long()
-            action = [a, b]
-            action_log_probs = []
-            dist_entropy = []
-            for action_out, act in zip(self.action_outs, action):
-                action_logit = action_out(x)
-                action_log_probs.append(action_logit.log_probs(act))
+            def entropy_fn(action_dist, active_masks=None):
                 if active_masks is not None:
-                    if len(action_logit.entropy().shape) == len(active_masks.shape):
-                        dist_entropy.append((action_logit.entropy() * active_masks).sum() / active_masks.sum())
+                    if len(action_dist.entropy().shape) == len(active_masks.shape):
+                        x = (action_dist.entropy() * active_masks).sum() / active_masks.sum()
                     else:
-                        dist_entropy.append(
-                            (action_logit.entropy() * active_masks.squeeze(-1)).sum() / active_masks.sum())
+                        x = (action_dist.entropy() * active_masks.squeeze(-1)).sum() / active_masks.sum()
                 else:
-                    dist_entropy.append(action_logit.entropy().mean())
+                    x = action_dist.entropy().mean()
+                return x
 
-            action_log_probs = torch.sum(torch.cat(action_log_probs, -1), -1, keepdim=True)
-            dist_entropy = dist_entropy[0] / 2.0 + dist_entropy[1] / 0.98  # ! dosen't make sense
+            def entropy_reduce_fn(dist_entropy):
+                return dist_entropy[0] / 2.0 + dist_entropy[1] / 0.98  # ! dosen't make sense
 
         elif self.multi_discrete:
-            action = torch.transpose(action, 0, 1)
-            action_log_probs = []
-            dist_entropy = []
-            for action_out, act in zip(self.action_outs, action):
-                action_logit = action_out(x)
-                action_log_probs.append(action_logit.log_probs(act))
-                if active_masks is not None:
-                    dist_entropy.append((action_logit.entropy() * active_masks.squeeze(-1)).sum() / active_masks.sum())
-                else:
-                    dist_entropy.append(action_logit.entropy().mean())
+            action_dists = [action_out(x) for action_out in self.action_outs]
 
-            action_log_probs = torch.cat(action_log_probs, -1)  # ! could be wrong
-            dist_entropy = torch.tensor(dist_entropy).mean()
+            def action_reduce_fn(x):
+                return torch.cat(x, -1)
+
+            log_prob_reduce_fn = action_reduce_fn
+
+            def action_preprocess_fn(x):
+                return torch.transpose(x, 0, 1)
+
+            def entropy_fn(action_dist, active_masks=None):
+                if active_masks is not None:
+                    x = (action_dist.entropy() * active_masks.squeeze(-1)).sum() / active_masks.sum()
+                else:
+                    x = action_dist.entropy().mean()
+                return x
+
+            def entropy_reduce_fn(dist_entropy):
+                return torch.tensor(dist_entropy).mean()
 
         else:
-            action_logits = self.action_out(x, available_actions)
-            action_log_probs = action_logits.log_probs(action)
-            if active_masks is not None:
-                dist_entropy = (action_logits.entropy() * active_masks.squeeze(-1)).sum() / active_masks.sum()
-            else:
-                dist_entropy = action_logits.entropy().mean()
+            action_dists = [self.action_out(x, available_actions)]
 
-        return action_log_probs, dist_entropy
+            def action_reduce_fn(x):
+                return x[0]
+
+            def action_preprocess_fn(x):
+                return [x]
+
+            def entropy_fn(action_dist, active_masks=None):
+                if active_masks is not None:
+                    x = (action_dist.entropy() * active_masks.squeeze(-1)).sum() / active_masks.sum()
+                else:
+                    x = action_dist.entropy().mean()
+                return x
+
+            entropy_reduce_fn = log_prob_reduce_fn = action_reduce_fn
+
+        return action_dists, action_reduce_fn, log_prob_reduce_fn, action_preprocess_fn, entropy_fn, entropy_reduce_fn
