@@ -1,9 +1,24 @@
 import torch
 import time
 import numpy as np
-from threading import Lock, Condition
+from multiprocessing import Lock, Condition
+from multiprocessing.managers import SharedMemoryManager
 
 from utils.util import get_shape_from_obs_space, get_shape_from_act_space
+
+
+def byte_of_dtype(dtype):
+    if '16' in str(dtype):
+        byte_per_digit = 2
+    elif '32' in str(dtype):
+        byte_per_digit = 4
+    elif '64' in str(dtype):
+        byte_per_digit = 8
+    elif 'bool' in str(dtype) or '8' in str(dtype):
+        byte_per_digit = 1
+    else:
+        raise NotImplementedError
+    return byte_per_digit
 
 
 def _flatten(x, ndim):
@@ -105,7 +120,20 @@ class ReplayBuffer:
 
         self.value_normalizer = value_normalizer
 
+        self._smm = SharedMemoryManager()
+        self._smm.start()
+
         # initialize storage
+        def shm_array(shape, dtype):
+            byte_per_digit = byte_of_dtype(dtype)
+            shm = self._smm.SharedMemory(size=byte_per_digit * np.prod(shape))
+            shm_array = np.ndarray(shape, dtype=dtype, buffer=shm.buf)
+            return shm, shm_array
+
+        def shape_prefix(bootstrap):
+            t = ep_l + 1 if bootstrap else ep_l
+            return (num_slots, t, bs, num_agents)
+
         obs_shape = get_shape_from_obs_space(obs_space)
         share_obs_shape = get_shape_from_obs_space(share_obs_space)
 
@@ -115,47 +143,52 @@ class ReplayBuffer:
         if type(share_obs_shape[-1]) == list:
             share_obs_shape = share_obs_shape[:1]
 
-        self.share_obs = np.zeros((num_slots, ep_l + 1, bs, num_agents, *share_obs_shape), dtype=np.float32)
-        self.obs = np.zeros((num_slots, ep_l + 1, bs, num_agents, *obs_shape), dtype=np.float32)
+        self._share_obs_shm, self.share_obs = shm_array((*shape_prefix(True), *share_obs_shape), np.float32)
+        self._obs_shm, self.obs = shm_array((*shape_prefix(True), *obs_shape), np.float32)
 
         if act_space.__class__.__name__ == 'Discrete':
-            self.available_actions = np.ones((num_slots, ep_l + 1, bs, num_agents, act_space.n), dtype=np.float32)
+            self._avail_shm, self.available_actions = shm_array((*shape_prefix(True), act_space.n), np.float32)
+            self.available_actions[:] = 1
         else:
             self.available_actions = None
 
         act_shape = get_shape_from_act_space(act_space)
 
-        self.actions = np.zeros((num_slots, ep_l, bs, num_agents, act_shape), dtype=np.float32)
-        self.action_log_probs = np.zeros((num_slots, ep_l, bs, num_agents, act_shape), dtype=np.float32)
+        self._act_shm, self.actions = shm_array((*shape_prefix(False), act_shape), np.float32)
+        self._logp_shm, self.action_log_probs = shm_array((*shape_prefix(False), act_shape), np.float32)
 
-        self.rnn_states = np.zeros((num_slots, ep_l + 1, bs, num_agents, rec_n, hs), dtype=np.float32)
-        self.rnn_states_critic = np.zeros_like(self.rnn_states)
+        self._h_shm, self.rnn_states = shm_array((*shape_prefix(True), rec_n, hs), np.float32)
+        self._hc_shm, self.rnn_states_critic = shm_array((*shape_prefix(True), rec_n, hs), np.float32)
 
-        self.masks = np.ones((num_slots, ep_l + 1, bs, num_agents, 1), dtype=np.float32)
-        self.active_masks = np.ones_like(self.masks)
+        self._msk_shm, self.masks = shm_array((*shape_prefix(True), 1), np.float32)
+        self.masks[:] = 1
+        self._amsk_shm, self.active_masks = shm_array((*shape_prefix(True), 1), np.float32)
+        self.active_masks[:] = 1
 
-        self.rewards = np.zeros((num_slots, ep_l, bs, num_agents, 1), dtype=np.float32)
-        self.value_preds = np.zeros((num_slots, ep_l + 1, bs, num_agents, 1), dtype=np.float32)
-        self.returns = np.zeros_like(self.value_preds)
-        self.advantages = np.zeros_like(self.rewards)
+        self._r_shm, self.rewards = shm_array((*shape_prefix(False), 1), np.float32)
+        self._v_shm, self.value_preds = shm_array((*shape_prefix(True), 1), np.float32)
+        self._rt_shm, self.returns = shm_array((*shape_prefix(True), 1), np.float32)
+        self._adv_shm, self.advantages = shm_array((*shape_prefix(False), 1), np.float32)
 
         # queue index
-        self._prev_q_idx = -np.ones((num_split, ), dtype=np.int16)
-        self._q_idx = np.zeros((num_split, ), dtype=np.uint8)
+        self._prev_q_shm, self._prev_q_idx = shm_array((num_split, ), np.int16)
+        self._prev_q_idx[:] = -1
+        self._q_shm, self._q_idx = shm_array((num_split, ), np.uint8)
 
         # episode step record
-        self._ep_step = np.zeros((num_split, ), dtype=np.int32)
+        self._step_shm, self._ep_step = shm_array((num_split, ), np.int32)
 
         # buffer indicators
-        self._used_times = np.zeros((num_slots, ), dtype=np.uint8)
-        self._is_readable = np.zeros((num_slots, ), dtype=np.uint8)
-        self._is_being_read = np.zeros((num_slots, ), dtype=np.uint8)
-        self._is_writable = np.ones((num_slots, ), dtype=np.uint8)
+        self._ut_shm, self._used_times = shm_array((num_slots, ), np.uint8)
+        self._read_shm, self._is_readable = shm_array((num_slots, ), np.uint8)
+        self._being_read_shm, self._is_being_read = shm_array((num_slots, ), np.uint8)
+        self._wrt_shm, self._is_writable = shm_array((num_slots, ), np.uint8)
+        self._is_writable[:] = 1
         assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
 
         self._read_ready = Condition(Lock())
 
-        self.total_timesteps = 0
+        self._timestep_shm, self.total_timesteps = shm_array((), np.int64)
 
     def _opening(self, old_slot_id, new_slot_id):
         # start up a new slot

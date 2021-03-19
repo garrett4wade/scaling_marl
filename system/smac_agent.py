@@ -39,7 +39,7 @@ class SMACAgent(Agent):
             train_infos = self.train()
 
             # post process
-            total_num_steps = self.buffer.total_timesteps
+            total_num_steps = self.buffer.total_timesteps.item()
             # save model
             if (episode % self.save_interval == 0 or episode == episodes - 1):
                 self.save()
