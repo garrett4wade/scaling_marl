@@ -2,6 +2,7 @@ import torch
 from algorithms.utils.util import check
 from algorithms.r_mappo.algorithm.r_actor_critic import R_Actor, R_Critic
 from utils.util import update_linear_schedule
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 
 def get_actions_from_dist(action_dists, action_reduce_fn, log_prob_reduce_fn, deterministic=False):
@@ -47,9 +48,9 @@ class R_MAPPOPolicy:
     :param action_space: (gym.Space) action space.
     :param device: (torch.device) specifies the device to run on (cpu/gpu).
     """
-    def __init__(self, args, obs_space, cent_obs_space, act_space, device=torch.device("cpu")):
-        self.device = device
-        self.tpdv = dict(dtype=torch.float32, device=device)
+    def __init__(self, rank, args, obs_space, cent_obs_space, act_space, is_training=True):
+        self.device = torch.device(rank)
+        self.tpdv = dict(dtype=torch.float32, device=self.device)
         self.lr = args.lr
         self.critic_lr = args.critic_lr
         self.opti_eps = args.opti_eps
@@ -59,17 +60,20 @@ class R_MAPPOPolicy:
         self.share_obs_space = cent_obs_space
         self.act_space = act_space
 
-        self.actor = R_Actor(args, self.obs_space, self.act_space, self.device)
-        self.critic = R_Critic(args, self.share_obs_space, self.device)
+        self.actor = R_Actor(args, self.obs_space, self.act_space).to(rank)
+        self.critic = R_Critic(args, self.share_obs_space).to(rank)
+        if is_training:
+            self.actor = DDP(self.actor, device_ids=[rank], output_device=rank)
+            self.critic = DDP(self.critic, device_ids=[rank], output_device=rank)
 
-        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(),
-                                                lr=self.lr,
-                                                eps=self.opti_eps,
-                                                weight_decay=self.weight_decay)
-        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(),
-                                                 lr=self.critic_lr,
-                                                 eps=self.opti_eps,
-                                                 weight_decay=self.weight_decay)
+            self.actor_optimizer = torch.optim.Adam(self.actor.parameters(),
+                                                    lr=self.lr,
+                                                    eps=self.opti_eps,
+                                                    weight_decay=self.weight_decay)
+            self.critic_optimizer = torch.optim.Adam(self.critic.parameters(),
+                                                     lr=self.critic_lr,
+                                                     eps=self.opti_eps,
+                                                     weight_decay=self.weight_decay)
 
     def lr_decay(self, episode, episodes):
         """
@@ -189,6 +193,10 @@ class R_MAPPOPolicy:
 
         return actions, rnn_states_actor
 
-    def load_weights(self, policy):
-        self.actor.load_state_dict(policy.actor.state_dict())
-        self.critic.load_state_dict(policy.critic.state_dict())
+    def state_dict(self):
+        return self.actor.state_dict(), self.critic.state_dict()
+
+    def load_state_dict(self, state_dict):
+        actor_state_dict, critic_state_dict = state_dict
+        self.actor.load_state_dict(actor_state_dict)
+        self.critic.load_state_dict(critic_state_dict)

@@ -1,4 +1,3 @@
-import torch
 import torch.nn as nn
 from algorithms.utils.util import init
 from algorithms.utils.cnn import CNNBase
@@ -9,7 +8,7 @@ from utils.util import get_shape_from_obs_space
 
 
 class R_Actor(nn.Module):
-    def __init__(self, args, obs_space, action_space, device=torch.device("cpu")):
+    def __init__(self, args, obs_space, action_space):
         super(R_Actor, self).__init__()
         self.hidden_size = args.hidden_size
 
@@ -18,7 +17,6 @@ class R_Actor(nn.Module):
         self._use_policy_active_masks = args.use_policy_active_masks
         self._use_recurrent_policy = args.use_recurrent_policy
         self._recurrent_N = args.recurrent_N
-        self.tpdv = dict(dtype=torch.float32, device=device)
 
         obs_shape = get_shape_from_obs_space(obs_space)
         base = CNNBase if len(obs_shape) == 3 else MLPBase
@@ -28,8 +26,6 @@ class R_Actor(nn.Module):
             self.rnn = RNNLayer(self.hidden_size, self.hidden_size, self._recurrent_N, self._use_orthogonal)
 
         self.act = ACTLayer(action_space, self.hidden_size, self._use_orthogonal, self._gain)
-
-        self.to(device)
 
     def forward(self, obs, rnn_states, masks, available_actions=None):
         actor_features = self.base(obs)
@@ -45,13 +41,12 @@ class R_Actor(nn.Module):
 
 
 class R_Critic(nn.Module):
-    def __init__(self, args, cent_obs_space, device=torch.device("cpu")):
+    def __init__(self, args, cent_obs_space):
         super(R_Critic, self).__init__()
         self.hidden_size = args.hidden_size
         self._use_orthogonal = args.use_orthogonal
         self._use_recurrent_policy = args.use_recurrent_policy
         self._recurrent_N = args.recurrent_N
-        self.tpdv = dict(dtype=torch.float32, device=device)
         init_method = [nn.init.xavier_uniform_, nn.init.orthogonal_][self._use_orthogonal]
 
         cent_obs_space = get_shape_from_obs_space(cent_obs_space)
@@ -65,8 +60,6 @@ class R_Critic(nn.Module):
             return init(m, init_method, lambda x: nn.init.constant_(x, 0))
 
         self.v_out = init_(nn.Linear(self.hidden_size, 1))
-
-        self.to(device)
 
     def forward(self, cent_obs, rnn_states, masks):
         critic_features = self.base(cent_obs)

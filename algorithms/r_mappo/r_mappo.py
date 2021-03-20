@@ -13,14 +13,10 @@ class R_MAPPO():
     :param policy: (R_MAPPO_Policy) policy to update.
     :param device: (torch.device) specifies the device to run on (cpu/gpu).
     """
-    def __init__(self, args, policy, rollout_policy, device=torch.device("cpu")):
-
-        self.device = device
-        self.tpdv = dict(dtype=torch.float32, device=device)
+    def __init__(self, args, policy):
+        self.device = policy.device
+        self.tpdv = dict(dtype=torch.float32, device=self.device)
         self.policy = policy
-        self.rollout_policy = rollout_policy
-        self.rollout_policy.actor.eval()
-        self.rollout_policy.critic.eval()
 
         self.clip_param = args.clip_param
         self.ppo_epoch = args.ppo_epoch
