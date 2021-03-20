@@ -11,7 +11,7 @@ def _t2n(x):
     return x.detach().cpu().numpy()
 
 
-class Agent:
+class InferenceServer:
     """
     Base class for training recurrent policies.
     :param config: (dict) Config dictionary containing parameters for training.

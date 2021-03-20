@@ -2,14 +2,14 @@ import time
 import numpy as np
 import torch
 from torch.distributed import rpc
-from system.base_agent import Agent
+from system.inference_server import InferenceServer
 
 
 def _t2n(x):
     return x.detach().cpu().numpy()
 
 
-class HanabiAgent(Agent):
+class HanabiServer(InferenceServer):
     """Runner class to perform training, evaluation. and data collection for SMAC. See parent class for details."""
     def __init__(self, rank, config, buffer):
         super().__init__(rank, config)
