@@ -3,8 +3,6 @@ import os
 import numpy as np
 import torch
 import threading
-# from queue import Queue
-from system.actor import Actor
 from torch.distributed import rpc
 from tensorboardX import SummaryWriter
 

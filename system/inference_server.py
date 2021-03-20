@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 import threading
-# from queue import Queue
 from system.actor import Actor
 from torch.distributed import rpc
 
@@ -17,7 +16,8 @@ class InferenceServer:
     :param config: (dict) Config dictionary containing parameters for training.
     """
     def __init__(self, rank, config):
-        self.rank = rank
+        # inference servers occupy first #num_servers GPUs
+        self.rank = self.server_id = rank
         self.all_args = config['all_args']
 
         self.env_fn = config['env_fn']
@@ -29,7 +29,8 @@ class InferenceServer:
         # tricks
         self.use_centralized_V = self.all_args.use_centralized_V
         # system dataflow
-        self.num_actors = self.all_args.num_actors
+        assert self.all_args.num_actors % self.all_args.num_servers == 0
+        self.num_actors = self.all_args.num_actors // self.all_args.num_servers
         self.env_per_actor = self.all_args.env_per_actor
         self.num_split = self.all_args.num_split
         self.env_per_split = self.env_per_actor // self.num_split
@@ -76,8 +77,7 @@ class InferenceServer:
         self.actor_rrefs = []
         self.actor_job_rrefs = []
         for i in range(self.num_actors):
-            # TODO: deal with situation when there are multiple agents
-            name = 'actor_' + str(i)
+            name = 'actor_' + str(i + self.num_actors * self.server_id)
             actor_rref = rpc.remote(name, Actor, args=(i, self.env_fn, self.rref, self.all_args))
             self.actor_job_rrefs.append(actor_rref.remote().run())
             self.actor_rrefs.append(actor_rref)
