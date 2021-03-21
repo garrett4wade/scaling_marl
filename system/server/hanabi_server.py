@@ -11,13 +11,12 @@ def _t2n(x):
 
 class HanabiServer(InferenceServer):
     """Runner class to perform training, evaluation. and data collection for SMAC. See parent class for details."""
-    def __init__(self, rpc_rank, buffer, config):
-        super().__init__(rpc_rank, buffer, config)
-        # TODO: consider how to deal with summary info
-        self.scores = []
+    def __init__(self, rpc_rank, weights_queue, buffer, config):
+        super().__init__(rpc_rank, weights_queue, buffer, config)
 
     @rpc.functions.async_execution
     def select_action(self, actor_id, split_id, model_inputs, init=False):
+        self.load_weights(block=False)
         if init:
             # reset env
             obs, share_obs, available_actions = model_inputs
@@ -31,9 +30,12 @@ class HanabiServer(InferenceServer):
             share_obs = obs
         self.buffer.insert_before_inference(actor_id, split_id, share_obs, obs, rewards, dones, available_actions)
 
-        for done, info in zip(dones, infos):
-            if done and 'score' in info.keys():
-                self.scores.append(info['score'])
+        with self.buffer.summary_lock:
+            for done, info in zip(dones, infos):
+                if done and 'score' in info.keys():
+                    self.buffer.elapsed_episode += 1
+                    avg_score = self.buffer.avg_score.item()
+                    self.buffer.avg_score += (info['score'] - avg_score) / self.buffer.elapsed_episode
 
         def _unpack(action_batch_futures):
             action_batch = action_batch_futures.wait()

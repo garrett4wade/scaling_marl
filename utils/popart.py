@@ -5,7 +5,7 @@ import torch.multiprocessing as mp
 
 
 class PopArt(nn.Module):
-    """ Normalize a vector of observations - across the first norm_axes dimensions"""
+    # TODO: check read/write access and locks
     def __init__(self, input_shape, num_trainers, norm_axes=1, beta=0.99999, per_element_update=False, epsilon=1e-5):
         super(PopArt, self).__init__()
 

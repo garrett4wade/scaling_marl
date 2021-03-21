@@ -31,12 +31,7 @@ class Trainer:
         self.algorithm_name = self.all_args.algorithm_name
         self.experiment_name = self.all_args.experiment_name
         # tricks
-        self.use_centralized_V = self.all_args.use_centralized_V
-        self.use_obs_instead_of_state = self.all_args.use_obs_instead_of_state
         self.use_linear_lr_decay = self.all_args.use_linear_lr_decay
-        # model
-        self.recurrent_N = self.all_args.recurrent_N
-        self.hidden_size = self.all_args.hidden_size
         # system dataflow
         self.num_actors = self.all_args.num_actors
         self.env_per_actor = self.all_args.env_per_actor
@@ -46,8 +41,6 @@ class Trainer:
         self.episode_length = self.all_args.episode_length
         self.num_env_steps = self.all_args.num_env_steps
         self.n_eval_rollout_threads = self.all_args.n_eval_rollout_threads
-        # TODO: support arbitrary rollout batch size
-        self.rollout_batch_size = self.num_actors * self.env_per_split
         # interval
         self.save_interval = self.all_args.save_interval
         self.use_eval = self.all_args.use_eval
@@ -77,7 +70,7 @@ class Trainer:
 
         example_env = config['example_env']
         share_observation_space = example_env.share_observation_space[
-            0] if self.use_centralized_V else example_env.observation_space[0]
+            0] if self.all_args.use_centralized_V else example_env.observation_space[0]
         observation_space = example_env.observation_space[0]
         action_space = example_env.action_space[0]
 
@@ -90,11 +83,11 @@ class Trainer:
         # algorithm
         self.algorithm = TrainAlgo(self.all_args, self.policy)
 
+        # synchronization utilities
         self.weights_queue = weights_queue
         self.buffer = buffer
 
     def run(self):
-        """Collect training data, perform training updates, and evaluate policy."""
         raise NotImplementedError
 
     def pack_off_weights(self):
@@ -127,7 +120,6 @@ class Trainer:
             self.policy.critic.load_state_dict(policy_critic_state_dict)
 
     def log_info(self, infos, total_num_steps):
-        assert isinstance(infos)
         for k, v in infos.items():
             if self.use_wandb:
                 wandb.log({k: v}, step=total_num_steps)

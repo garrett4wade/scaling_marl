@@ -3,6 +3,7 @@ import torch
 import threading
 from system.actor import Actor
 from torch.distributed import rpc
+from queue import Empty
 
 
 def _t2n(x):
@@ -15,10 +16,11 @@ class InferenceServer:
     Base class for training recurrent policies.
     :param config: (dict) Config dictionary containing parameters for training.
     """
-    def __init__(self, rpc_rank, buffer, config):
+    def __init__(self, rpc_rank, weights_queue, buffer, config):
         # NOTE: inference servers occupy first #num_servers GPUs
         self.rpc_rank = self.server_id = rpc_rank
         self.all_args = config['all_args']
+        torch.cuda.set_device(rpc_rank)
 
         self.env_fn = config['env_fn']
         self.num_agents = config['num_agents']
@@ -49,7 +51,12 @@ class InferenceServer:
         action_space = example_env.action_space[0]
 
         # policy network
-        self.rollout_policy = Policy(rpc_rank, self.all_args, observation_space, share_observation_space, action_space)
+        self.rollout_policy = Policy(rpc_rank,
+                                     self.all_args,
+                                     observation_space,
+                                     share_observation_space,
+                                     action_space,
+                                     is_training=False)
         self.rollout_policy.eval_mode()
 
         # actors
@@ -61,11 +68,23 @@ class InferenceServer:
         self.future_outputs = [torch.futures.Future() for _ in range(self.num_split)]
         self.queued_cnt = np.zeros((self.num_split, ), dtype=np.float32)
 
+        # synchronization utilities
         self.buffer = buffer
+        self.weights_queue = weights_queue
 
-    def load_weights(self, state_dict):
+    def load_weights(self, block=False):
+        try:
+            state_dict = self.weights_queue.get(block)
+        except Empty:
+            # for debug
+            print("queue empty, load weights failed")
+            return
         for lock in self.locks:
             lock.acquire()
+        for k, v in state_dict[0].items():
+            assert not torch.any(v == self.rollout_policy.actor.state_dict()[k])
+        for k, v in state_dict[1].items():
+            assert not torch.any(v == self.rollout_policy.critic.state_dict()[k])
         self.rollout_policy.load_state_dict(state_dict)
         for lock in self.locks:
             lock.release()
@@ -75,6 +94,7 @@ class InferenceServer:
         raise NotImplementedError
 
     def setup_actors(self):
+        self.load_weights(block=True)
         self.actor_rrefs = []
         self.actor_job_rrefs = []
         for i in range(self.num_actors):

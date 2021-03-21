@@ -41,6 +41,7 @@ def _select_rnn_states(h, num_chunks):
 
 
 class ReplayBuffer:
+    # TODO: check read/write access and locks
     def __init__(self, args, num_agents, obs_space, share_obs_space, act_space):
         """base buffer
 
@@ -193,6 +194,9 @@ class ReplayBuffer:
         self._read_ready = Condition(Lock())
 
         self._timestep_shm, self.total_timesteps = shm_array((), np.int64)
+
+        # to read/write env-specific summary info, e.g. winning rate, scores
+        self.summary_lock = Lock()
 
     def _opening(self, old_slot_id, new_slot_id):
         # start up a new slot

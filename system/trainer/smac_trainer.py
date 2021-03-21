@@ -3,7 +3,6 @@ import wandb
 import numpy as np
 import torch
 import torc.distributed as dist
-import itertools
 from system.base_trainer import Trainer
 
 
@@ -19,13 +18,10 @@ class SMACTrainer(Trainer):
         # synchronize weights of rollout policy before inference starts
         self.pack_off_weights()
 
-        global_start = time.time()
-        local_start = time.time()
         episodes = int(self.num_env_steps) // self.episode_length // (self.num_actors * self.env_per_split)
 
-        last_battles_game = np.zeros(self.num_actors * self.num_split, dtype=np.float32)
-        last_battles_won = np.zeros(self.num_actors * self.num_split, dtype=np.float32)
-        last_total_num_steps = 0
+        global_tik = local_tik = time.time()
+        last_battles_game = last_battles_won = last_total_num_steps = 0
 
         for episode in range(episodes):
             if self.use_linear_lr_decay:
@@ -34,55 +30,47 @@ class SMACTrainer(Trainer):
             train_infos = self.training_step()
             self.pack_off_weights()
 
-            # post process
-            total_num_steps = self.buffer.total_timesteps.item()
             # save model
             if self.ddp_rank == 0 and (episode % self.save_interval == 0 or episode == episodes - 1):
                 self.save()
 
             # log information
             if self.ddp_rank == 0 and episode % self.log_interval == 0:
-                end = time.time()
-                recent_fps = int((total_num_steps - last_total_num_steps) / (end - local_start) * self.num_trainers)
-                global_avg_fps = int(total_num_steps / (end - global_start) * self.num_trainers)
+                total_num_steps = self.buffer.total_timesteps.item()
+
+                tok = time.time()
+                recent_fps = int((total_num_steps - last_total_num_steps) / (tok - local_tik) * self.num_trainers)
+                global_avg_fps = int(total_num_steps / (tok - global_tik) * self.num_trainers)
                 print("\n Map {} Algo {} Exp {} updates {}/{} episodes, total num timesteps {}/{}, "
                       "recent FPS {}, global average FPS {}.\n".format(self.all_args.map_name, self.algorithm_name,
                                                                        self.experiment_name, episode, episodes,
                                                                        total_num_steps, self.num_env_steps, recent_fps,
                                                                        global_avg_fps))
 
-                if self.env_name == "StarCraft2":
-                    battles_won = []
-                    battles_game = []
-                    incre_battles_won = []
-                    incre_battles_game = []
+                assert self.env_name == "StarCraft2"
+                with self.buffer.summary_lock:
+                    battles_won = np.sum(self.buffer.battles_won)
+                    battles_game = np.sum(self.buffer.battles_game)
+                recent_battles_won = battles_won - last_battles_won
+                recent_battles_game = battles_game - last_battles_game
 
-                    for i, info in enumerate(itertools.chain(*self.all_agent0_infos)):
-                        if 'battles_won' in info.keys():
-                            battles_won.append(info['battles_won'])
-                            incre_battles_won.append(info['battles_won'] - last_battles_won[i])
-                        if 'battles_game' in info.keys():
-                            battles_game.append(info['battles_game'])
-                            incre_battles_game.append(info['battles_game'] - last_battles_game[i])
+                recent_win_rate = recent_battles_won / recent_battles_game if recent_battles_game > 0 else 0.0
+                print("recent winning rate is {}.".format(recent_win_rate))
+                if self.use_wandb:
+                    wandb.log(
+                        {
+                            "recent_win_rate": recent_win_rate,
+                            'total_env_steps': total_num_steps,
+                            'fps': recent_fps,
+                        },
+                        step=total_num_steps)
+                else:
+                    self.writter.add_scalars("recent_win_rate", {"recent_win_rate": recent_win_rate}, total_num_steps)
 
-                    incre_win_rate = np.sum(incre_battles_won) / np.sum(incre_battles_game) if np.sum(
-                        incre_battles_game) > 0 else 0.0
-                    print("incre win rate is {}.".format(incre_win_rate))
-                    if self.use_wandb:
-                        wandb.log(
-                            {
-                                "incre_win_rate": incre_win_rate,
-                                'total_env_steps': total_num_steps,
-                                'fps': recent_fps,
-                            },
-                            step=total_num_steps)
-                    else:
-                        self.writter.add_scalars("incre_win_rate", {"incre_win_rate": incre_win_rate}, total_num_steps)
-
-                    last_battles_game = battles_game
-                    last_battles_won = battles_won
-                    last_total_num_steps = total_num_steps
-                    local_start = time.time()
+                last_battles_game = battles_game
+                last_battles_won = battles_won
+                last_total_num_steps = total_num_steps
+                local_tik = time.time()
 
                 self.log_info(train_infos, total_num_steps)
 
@@ -94,19 +82,18 @@ class SMACTrainer(Trainer):
     @torch.no_grad()
     def eval(self, total_num_steps):
         self.policy.eval_mode()
-        eval_battles_won = 0
-        eval_episode = 0
+        eval_battles_won = eval_episode = 0
 
         eval_episode_rewards = []
         one_episode_rewards = np.zeros((self.n_eval_rollout_threads, 1), dtype=np.float32)
 
         eval_obs, _, eval_available_actions = self.eval_envs.reset()
 
-        eval_rnn_states = np.zeros((self.n_eval_rollout_threads, self.num_agents, self.recurrent_N, self.hidden_size),
+        eval_rnn_states = np.zeros((self.n_eval_rollout_threads, self.num_agents, *self.buffer.rnn_states.shape[-2:]),
                                    dtype=np.float32)
         eval_masks = np.ones((self.n_eval_rollout_threads, self.num_agents, 1), dtype=np.float32)
 
-        while True:
+        while eval_episode < self.all_args.eval_episodes:
             policy_inputs = (eval_obs, eval_rnn_states, eval_masks, eval_available_actions)
 
             policy_outputs = self.policy.act(*map(
@@ -136,11 +123,9 @@ class SMACTrainer(Trainer):
                     if eval_infos[eval_i][0]['won']:
                         eval_battles_won += 1
 
-            if eval_episode >= self.all_args.eval_episodes:
-                eval_env_infos = {
-                    'eval_average_episode_rewards': np.mean(eval_episode_rewards),
-                    "eval_win_rate": eval_battles_won / eval_episode
-                }
-                self.log_info(eval_env_infos, total_num_steps)
-                print("eval win rate is {}.".format(eval_battles_won / eval_episode))
-                break
+        eval_env_infos = {
+            'eval_average_episode_rewards': np.mean(eval_episode_rewards),
+            "eval_win_rate": eval_battles_won / eval_episode
+        }
+        self.log_info(eval_env_infos, total_num_steps)
+        print("eval win rate is {}.".format(eval_battles_won / eval_episode))

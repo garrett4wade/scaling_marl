@@ -11,11 +11,12 @@ def _t2n(x):
 
 class SMACServer(InferenceServer):
     """Runner class to perform training, evaluation. and data collection for SMAC. See parent class for details."""
-    def __init__(self, rpc_rank, buffer, config):
-        super().__init__(rpc_rank, buffer, config)
+    def __init__(self, rpc_rank, weights_queue, buffer, config):
+        super().__init__(rpc_rank, weights_queue, buffer, config)
 
     @rpc.functions.async_execution
     def select_action(self, actor_id, split_id, model_inputs, init=False):
+        self.load_weights(block=False)
         if init:
             # reset env
             obs, share_obs, available_actions = model_inputs
