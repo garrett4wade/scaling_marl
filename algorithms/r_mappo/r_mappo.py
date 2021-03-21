@@ -2,18 +2,17 @@ import numpy as np
 import torch
 import torch.nn as nn
 from utils.util import get_gard_norm, huber_loss, mse_loss
-from utils.popart import PopArt
 from algorithms.utils.util import check
 
 
-class R_MAPPO():
+class R_MAPPO:
     """
     Trainer class for MAPPO to update policies.
     :param args: (argparse.Namespace) arguments containing relevant model, policy, and env information.
     :param policy: (R_MAPPO_Policy) policy to update.
     :param device: (torch.device) specifies the device to run on (cpu/gpu).
     """
-    def __init__(self, args, policy):
+    def __init__(self, args, policy, value_normalizer):
         self.device = policy.device
         self.tpdv = dict(dtype=torch.float32, device=self.device)
         self.policy = policy
@@ -35,34 +34,17 @@ class R_MAPPO():
         self._use_value_active_masks = args.use_value_active_masks
         self._use_policy_active_masks = args.use_policy_active_masks
 
-        if self._use_popart:
-            self.value_normalizer = PopArt(1, device=self.device)
-        else:
-            self.value_normalizer = None
+        self.value_loss_fn = lambda x: huber_loss(x, self.huber_delta) if self._use_huber_loss else mse_loss
 
-        self.loss_fn = lambda x: huber_loss(x, self.huber_delta) if self._use_huber_loss else mse_loss
-
-    def cal_value_loss(self, values, value_preds_batch, return_batch, active_masks_batch):
-        """
-        Calculate value function loss.
-        :param values: (torch.Tensor) value function predictions.
-        :param value_preds_batch: (torch.Tensor) "old" value  predictions from data batch (used for value clip loss)
-        :param return_batch: (torch.Tensor) reward to go returns.
-        :param active_masks_batch: (torch.Tensor) denotes if agent is active or dead at a given timesep.
-
-        :return value_loss: (torch.Tensor) value function loss.
-        """
-        shp = return_batch.shape
-        flattened_return = return_batch.view(-1, 1)
-        v_target = self.value_normalizer(flattened_return).view(*shp) if self._use_popart else return_batch
-        error_original = v_target - values
-        value_loss_original = self.loss_fn(error_original)
+    def cal_value_loss(self, values, value_preds_batch, v_target_batch, active_masks_batch):
+        error_original = v_target_batch - values
+        value_loss_original = self.value_loss_fn(error_original)
 
         if self._use_clipped_value_loss:
             value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(
                 -self.clip_param, self.clip_param)
-            error_clipped = v_target - value_pred_clipped
-            value_loss_clipped = self.loss_fn(error_clipped)
+            error_clipped = v_target_batch - value_pred_clipped
+            value_loss_clipped = self.value_loss_fn(error_clipped)
             value_loss = torch.max(value_loss_original, value_loss_clipped)
         else:
             value_loss = value_loss_original
@@ -75,26 +57,14 @@ class R_MAPPO():
         return value_loss
 
     def ppo_update(self, sample, update_actor=True):
-        """
-        Update actor and critic networks.
-        :param sample: (Tuple) contains data batch with which to update networks.
-        :update_actor: (bool) whether to update actor network.
-
-        :return value_loss: (torch.Tensor) value function loss.
-        :return critic_grad_norm: (torch.Tensor) gradient norm from critic up9date.
-        ;return policy_loss: (torch.Tensor) actor(policy) loss value.
-        :return dist_entropy: (torch.Tensor) action entropies.
-        :return actor_grad_norm: (torch.Tensor) gradient norm from actor update.
-        :return imp_weights: (torch.Tensor) importance sampling weights.
-        """
         (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch, value_preds_batch,
-         return_batch, masks_batch, active_masks_batch, old_action_log_probs_batch, adv_targ,
+         v_target_batch, masks_batch, active_masks_batch, old_action_log_probs_batch, adv_targ,
          available_actions_batch) = sample
 
         old_action_log_probs_batch = check(old_action_log_probs_batch).to(**self.tpdv)
         adv_targ = check(adv_targ).to(**self.tpdv)
         value_preds_batch = check(value_preds_batch).to(**self.tpdv)
-        return_batch = check(return_batch).to(**self.tpdv)
+        v_target_batch = check(v_target_batch).to(**self.tpdv)
         active_masks_batch = check(active_masks_batch).to(**self.tpdv)
 
         # Reshape to do in a single forward pass for all steps
@@ -130,7 +100,7 @@ class R_MAPPO():
         self.policy.actor_optimizer.step()
 
         # critic update
-        value_loss = self.cal_value_loss(values, value_preds_batch, return_batch, active_masks_batch)
+        value_loss = self.cal_value_loss(values, value_preds_batch, v_target_batch, active_masks_batch)
 
         self.policy.critic_optimizer.zero_grad()
 

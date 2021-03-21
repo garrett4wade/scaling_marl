@@ -301,6 +301,7 @@ class ReplayBuffer:
             available_actions = _flatten(self.available_actions[slot_id, :-1], 3)
         value_preds = _flatten(self.value_preds[slot_id, :-1], 3)
         returns = _flatten(self.returns[slot_id, :-1], 3)
+        v_target = self.value_normalizer(returns) if self._use_popart else returns
         masks = _flatten(self.masks[slot_id, :-1], 3)
         active_masks = _flatten(self.active_masks[slot_id, :-1], 3)
         action_log_probs = _flatten(self.action_log_probs[slot_id], 3)
@@ -312,7 +313,7 @@ class ReplayBuffer:
         rnn_states_critic = _flatten(self.rnn_states_critic[slot_id, :-1], 3)
 
         if num_mini_batch == 1:
-            outputs = (share_obs, obs, rnn_states, rnn_states_critic, actions, value_preds, returns, masks,
+            outputs = (share_obs, obs, rnn_states, rnn_states_critic, actions, value_preds, v_target, masks,
                        active_masks, action_log_probs, advantages, available_actions)
             for i, item in enumerate(outputs):
                 assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
@@ -331,7 +332,7 @@ class ReplayBuffer:
                 else:
                     available_actions_batch = None
                 value_preds_batch = value_preds[indices]
-                return_batch = returns[indices]
+                v_target_batch = v_target[indices]
                 masks_batch = masks[indices]
                 active_masks_batch = active_masks[indices]
                 old_action_log_probs_batch = action_log_probs[indices]
@@ -341,8 +342,8 @@ class ReplayBuffer:
                     adv_targ = advantages[indices]
 
                 outputs = (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch,
-                           value_preds_batch, return_batch, masks_batch, active_masks_batch, old_action_log_probs_batch,
-                           adv_targ, available_actions_batch)
+                           value_preds_batch, v_target_batch, masks_batch, active_masks_batch,
+                           old_action_log_probs_batch, adv_targ, available_actions_batch)
                 for i, item in enumerate(outputs):
                     assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
                 yield outputs
@@ -367,6 +368,8 @@ class ReplayBuffer:
         action_log_probs = _cast(self.action_log_probs[slot_id])
         value_preds = _cast(self.value_preds[slot_id, :-1])
         returns = _cast(self.returns[slot_id, :-1])
+        v_target = self.value_normalizer(returns.reshape(-1, 1)).reshape(
+            *returns.shape) if self._use_popart else returns
         masks = _cast(self.masks[slot_id, :-1])
         active_masks = _cast(self.active_masks[slot_id, :-1])
         advantages = _cast(self.advantages[slot_id])
@@ -390,14 +393,14 @@ class ReplayBuffer:
             actions_batch = actions
             available_actions_batch = None if self.available_actions is None else available_actions
             value_preds_batch = value_preds
-            return_batch = returns
+            v_target_batch = v_target
             masks_batch = masks
             active_masks_batch = active_masks
             old_action_log_probs_batch = action_log_probs
             adv_targ = advantages
 
             outputs = (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch,
-                       value_preds_batch, return_batch, masks_batch, active_masks_batch, old_action_log_probs_batch,
+                       value_preds_batch, v_target_batch, masks_batch, active_masks_batch, old_action_log_probs_batch,
                        adv_targ, available_actions_batch)
             for i, item in enumerate(outputs):
                 assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
@@ -414,15 +417,15 @@ class ReplayBuffer:
                 actions_batch = actions[:, indices]
                 available_actions_batch = None if self.available_actions is None else available_actions[:, indices]
                 value_preds_batch = value_preds[:, indices]
-                return_batch = returns[:, indices]
+                v_target_batch = v_target[:, indices]
                 masks_batch = masks[:, indices]
                 active_masks_batch = active_masks[:, indices]
                 old_action_log_probs_batch = action_log_probs[:, indices]
                 adv_targ = advantages[:, indices]
 
                 outputs = (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch,
-                           value_preds_batch, return_batch, masks_batch, active_masks_batch, old_action_log_probs_batch,
-                           adv_targ, available_actions_batch)
+                           value_preds_batch, v_target_batch, masks_batch, active_masks_batch,
+                           old_action_log_probs_batch, adv_targ, available_actions_batch)
                 for i, item in enumerate(outputs):
                     assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
                 yield outputs

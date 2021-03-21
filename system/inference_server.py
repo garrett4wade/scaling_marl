@@ -16,7 +16,7 @@ class InferenceServer:
     :param config: (dict) Config dictionary containing parameters for training.
     """
     def __init__(self, rank, config):
-        # inference servers occupy first #num_servers GPUs
+        # NOTE: inference servers occupy first #num_servers GPUs
         self.rank = self.server_id = rank
         self.all_args = config['all_args']
 
@@ -50,8 +50,7 @@ class InferenceServer:
 
         # policy network
         self.rollout_policy = Policy(rank, self.all_args, observation_space, share_observation_space, action_space)
-        self.rollout_policy.actor.eval()
-        self.rollout_policy.critic.eval()
+        self.rollout_policy.eval()
 
         # actors
         self.rref = rpc.RRef(self)

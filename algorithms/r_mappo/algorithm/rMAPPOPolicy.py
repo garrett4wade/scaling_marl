@@ -200,3 +200,11 @@ class R_MAPPOPolicy:
         actor_state_dict, critic_state_dict = state_dict
         self.actor.load_state_dict(actor_state_dict)
         self.critic.load_state_dict(critic_state_dict)
+
+    def train(self):
+        self.actor.train()
+        self.critic.train()
+
+    def eval(self):
+        self.actor.eval()
+        self.critic.eval()

@@ -1,9 +1,6 @@
 import wandb
 import os
-import numpy as np
 import torch
-import threading
-from torch.distributed import rpc
 from tensorboardX import SummaryWriter
 
 
@@ -12,22 +9,19 @@ def _t2n(x):
     return x.detach().cpu().numpy()
 
 
-class Agent:
+class Trainer:
     """
     Base class for training recurrent policies.
     :param config: (dict) Config dictionary containing parameters for training.
     """
-    def __init__(self, config):
+    def __init__(self, rank, config):
+        self.rank = rank
         self.all_args = config['all_args']
+        # NOTE: trainers occupy last #num_trainers GPUs
+        self.trainer_id = rank + self.all_args.num_servers
 
-        self.env_fn = config['env_fn']
-        self.example_env = config['example_env']
         self.eval_envs = config['eval_envs']
-        self.device = config['device']
-        self.rollout_device = config['rollout_device']
         self.num_agents = config['num_agents']
-        if config.__contains__("render_envs"):
-            self.render_envs = config['render_envs']
 
         # -------- parameters --------
         # names
@@ -79,41 +73,20 @@ class Agent:
         from algorithms.r_mappo.r_mappo import R_MAPPO as TrainAlgo
         from algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
 
-        self.share_observation_space = share_observation_space = self.example_env.share_observation_space[
-            0] if self.use_centralized_V else self.example_env.observation_space[0]
+        example_env = config['example_env']
+        share_observation_space = example_env.share_observation_space[
+            0] if self.use_centralized_V else example_env.observation_space[0]
+        observation_space = example_env.observation_space[0]
+        action_space = example_env.action_space[0]
 
         # policy network
-        self.policy = Policy(self.all_args,
-                             self.example_env.observation_space[0],
-                             share_observation_space,
-                             self.example_env.action_space[0],
-                             device=self.device)
-        if self.rollout_device != self.device:
-            self.rollout_policy = Policy(self.all_args,
-                                         self.example_env.observation_space[0],
-                                         share_observation_space,
-                                         self.example_env.action_space[0],
-                                         device=self.rollout_device)
-            self.rollout_policy.load_weights(self.policy)
-        else:
-            self.rollout_policy = self.policy
-        self.rollout_policy.actor.eval()
-        self.rollout_policy.critic.eval()
+        self.policy = Policy(rank, self.all_args, observation_space, share_observation_space, action_space)
 
         if self.model_dir is not None:
             self.restore()
 
         # algorithm
-        self.trainer = TrainAlgo(self.all_args, self.policy)
-
-        # actors
-        self.rref = rpc.RRef(self)
-        self.actor_rrefs = None
-        self.actor_job_rrefs = None
-
-        self.locks = [threading.Lock() for _ in range(self.num_split)]
-        self.future_outputs = [torch.futures.Future() for _ in range(self.num_split)]
-        self.queued_cnt = np.zeros((self.num_split, ), dtype=np.float32)
+        self.algorithm = TrainAlgo(self.all_args, self.policy)
 
     def run(self):
         """Collect training data, perform training updates, and evaluate policy."""
