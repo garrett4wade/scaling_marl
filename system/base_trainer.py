@@ -14,11 +14,13 @@ class Trainer:
     Base class for training recurrent policies.
     :param config: (dict) Config dictionary containing parameters for training.
     """
-    def __init__(self, rank, config):
-        self.rank = rank
+    def __init__(self, rpc_rank, weights_queue, buffer, config):
+        self.rpc_rank = rpc_rank
         self.all_args = config['all_args']
         # NOTE: trainers occupy last #num_trainers GPUs
-        self.trainer_id = rank + self.all_args.num_servers
+        self.trainer_id = self.dpp_rank = rpc_rank + self.all_args.num_servers
+        self.num_trainers = self.all_args.num_trainers
+        torch.cuda.set_device(self.rpc_rank)
 
         self.eval_envs = config['eval_envs']
         self.num_agents = config['num_agents']
@@ -80,7 +82,7 @@ class Trainer:
         action_space = example_env.action_space[0]
 
         # policy network
-        self.policy = Policy(rank, self.all_args, observation_space, share_observation_space, action_space)
+        self.policy = Policy(rpc_rank, self.all_args, observation_space, share_observation_space, action_space)
 
         if self.model_dir is not None:
             self.restore()
@@ -88,33 +90,32 @@ class Trainer:
         # algorithm
         self.algorithm = TrainAlgo(self.all_args, self.policy)
 
+        self.weights_queue = weights_queue
+        self.buffer = buffer
+
     def run(self):
         """Collect training data, perform training updates, and evaluate policy."""
         raise NotImplementedError
 
-    # def setup_ddp_trainer(self, rank, world_size, global_weights):
-    #     dist.init_process_group('nccl', init_method='tcp://localhost:12345', rank=rank, world_size=world_size)
-    #     policy = self.policy_fn(rank, self.all_args, self.example_env.observation_space[0],
-    #                             self.share_observation_space, self.example_env.action_space[0])
-    #     actor_weights, critic_weights = global_weights
-    #     policy.actor.load_state_dict(actor_weights)
-    #     policy.critic.load_state_dict(critic_weights)
-    #     trainer = self.algo_fn(self.all_args, policy)
-    #     return policy, trainer
+    def pack_off_weights(self):
+        if self.ddp_rank == 0:
+            # send weights to rollout policy
+            actor_state_dict, critic_state_dict = self.policy.state_dict()
+            actor_state_dict = {k.replace('module.', ''): v for k, v in actor_state_dict.items()}
+            critic_state_dict = {k.replace('module.', ''): v for k, v in critic_state_dict.items()}
+            self.weights_queue.put((actor_state_dict, critic_state_dict))
 
-    def train(self):
+    def training_step(self):
         """Train policies with data in buffer. """
-        self.trainer.prep_training()
-        train_infos = self.trainer.train(self.buffer)
-        if self.policy is not self.rollout_policy:
-            self.rollout_policy.load_weights(self.policy)
+        self.policy.train_mode()
+        train_infos = self.algorithm.step(self.buffer)
         return train_infos
 
     def save(self):
         """Save policy's actor and critic networks."""
-        policy_actor = self.trainer.policy.actor
+        policy_actor = self.policy.actor
         torch.save(policy_actor.state_dict(), str(self.save_dir) + "/actor.pt")
-        policy_critic = self.trainer.policy.critic
+        policy_critic = self.policy.critic
         torch.save(policy_critic.state_dict(), str(self.save_dir) + "/critic.pt")
 
     def restore(self):

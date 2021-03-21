@@ -11,11 +11,8 @@ def _t2n(x):
 
 class SMACServer(InferenceServer):
     """Runner class to perform training, evaluation. and data collection for SMAC. See parent class for details."""
-    def __init__(self, rank, config, buffer):
-        super().__init__(rank, config)
-        self.buffer = buffer
-        # TODO: consider how to deal with summary info
-        self.all_agent0_infos = [[{} for _ in range(self.num_split)] for _ in range(self.num_actors)]
+    def __init__(self, rpc_rank, buffer, config):
+        super().__init__(rpc_rank, buffer, config)
 
     @rpc.functions.async_execution
     def select_action(self, actor_id, split_id, model_inputs, init=False):
@@ -40,7 +37,9 @@ class SMACServer(InferenceServer):
                             merged_info[k] = v
                         else:
                             merged_info[k] += v
-            self.all_agent0_infos[actor_id][split_id] = merged_info
+            with self.buffer.summary_lock:
+                self.buffer.battles_won[actor_id, split_id] = merged_info['battles_won']
+                self.buffer.battles_game[actor_id, split_id] = merged_info['battles_game']
 
         def _unpack(action_batch_futures):
             action_batch = action_batch_futures.wait()

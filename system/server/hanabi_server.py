@@ -11,9 +11,8 @@ def _t2n(x):
 
 class HanabiServer(InferenceServer):
     """Runner class to perform training, evaluation. and data collection for SMAC. See parent class for details."""
-    def __init__(self, rank, config, buffer):
-        super().__init__(rank, config)
-        self.buffer = buffer
+    def __init__(self, rpc_rank, buffer, config):
+        super().__init__(rpc_rank, buffer, config)
         # TODO: consider how to deal with summary info
         self.scores = []
 

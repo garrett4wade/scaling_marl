@@ -2,26 +2,20 @@ import time
 import wandb
 import numpy as np
 import torch
-from torch.distributed import rpc
-from system.base_agent import Agent
-from utils.buffer import SequentialReplayBuffer
+from system.base_trainer import Trainer
 
 
 def _t2n(x):
     return x.detach().cpu().numpy()
 
 
-class HanabiAgent(Agent):
-    """Runner class to perform training, evaluation. and data collection for SMAC. See parent class for details."""
-    def __init__(self, config):
-        super().__init__(config)
-        self.buffer = SequentialReplayBuffer(self.all_args, self.num_agents, self.example_env.observation_space[0],
-                                             self.share_observation_space, self.example_env.action_space[0],
-                                             self.trainer.value_normalizer)
-        self.scores = []
+class HanabiTrainer(Trainer):
+    def __init__(self, rpc_rank, weights_queue, buffer, config):
+        super().__init__(rpc_rank, weights_queue, buffer, config)
 
     def run(self):
-        self.setup_actors()
+        # synchronize weights of rollout policy before inference starts
+        self.pack_off_weights()
 
         global_start = time.time()
         local_start = time.time()
@@ -31,7 +25,7 @@ class HanabiAgent(Agent):
 
         for episode in range(episodes):
             if self.use_linear_lr_decay:
-                self.trainer.policy.lr_decay(episode, episodes)
+                self.policy.lr_decay(episode, episodes)
 
             train_infos = self.train()
 
@@ -76,52 +70,9 @@ class HanabiAgent(Agent):
             if episode % self.eval_interval == 0 and self.use_eval:
                 self.eval(total_num_steps)
 
-    @rpc.functions.async_execution
-    def select_action(self, actor_id, split_id, model_inputs, init=False):
-        if init:
-            # reset env
-            obs, share_obs, available_actions = model_inputs
-            rewards = np.zeros((self.env_per_split, self.num_agents, 1), dtype=np.float32)
-            dones = np.zeros((self.env_per_split, 1), dtype=np.bool)
-            infos = [{} for _ in range(self.env_per_split)]
-        else:
-            obs, share_obs, rewards, dones, infos, available_actions = model_inputs
-        # replay buffer
-        if not self.use_centralized_V:
-            share_obs = obs
-        self.buffer.insert_before_inference(actor_id, split_id, share_obs, obs, rewards, dones, available_actions)
-
-        for done, info in zip(dones, infos):
-            if done and 'score' in info.keys():
-                self.scores.append(info['score'])
-
-        def _unpack(action_batch_futures):
-            action_batch = action_batch_futures.wait()
-            batch_slice = slice(actor_id * self.env_per_split, (actor_id + 1) * self.env_per_split)
-            return time.time(), action_batch[batch_slice]
-
-        action_fut = self.future_outputs[split_id].then(_unpack)
-
-        with self.locks[split_id]:
-            self.queued_cnt[split_id] += 1
-            if self.queued_cnt[split_id] >= self.num_actors:
-                policy_inputs = self.buffer.get_policy_inputs(split_id)
-                with torch.no_grad():
-                    rollout_outputs = self.trainer.rollout_policy.get_actions(*policy_inputs)
-
-                values, actions, action_log_probs, rnn_states, rnn_states_critic = map(_t2n, rollout_outputs)
-
-                self.buffer.insert_after_inference(split_id, values, actions, action_log_probs, rnn_states,
-                                                   rnn_states_critic)
-                self.queued_cnt[split_id] = 0
-                cur_future_outputs = self.future_outputs[split_id]
-                self.future_outputs[split_id] = torch.futures.Future()
-                cur_future_outputs.set_result(actions)
-
-        return action_fut
-
     @torch.no_grad()
     def eval(self, total_num_steps):
+        self.policy.eval_mode()
         eval_scores = []
         episode_cnt = 0
 
@@ -134,12 +85,11 @@ class HanabiAgent(Agent):
 
         while episode_cnt < self.all_args.eval_episodes:
             for agent_id in range(self.num_agents):
-                self.trainer.prep_rollout()
-                policy_outputs = self.trainer.policy.act(obs,
-                                                         rnn_states[:, agent_id],
-                                                         masks[:, agent_id],
-                                                         available_actions,
-                                                         deterministic=True)
+                policy_outputs = self.policy.act(obs,
+                                                 rnn_states[:, agent_id],
+                                                 masks[:, agent_id],
+                                                 available_actions,
+                                                 deterministic=True)
                 action, new_rnn_state = map(_t2n, policy_outputs)
 
                 # Obser reward and next obs

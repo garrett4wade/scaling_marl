@@ -3,7 +3,7 @@ import time
 import numpy as np
 from multiprocessing import Lock, Condition
 from multiprocessing.managers import SharedMemoryManager
-
+from utils.popart import PopArt
 from utils.util import get_shape_from_obs_space, get_shape_from_act_space
 
 
@@ -41,7 +41,7 @@ def _select_rnn_states(h, num_chunks):
 
 
 class ReplayBuffer:
-    def __init__(self, args, num_agents, obs_space, share_obs_space, act_space, value_normalizer):
+    def __init__(self, args, num_agents, obs_space, share_obs_space, act_space):
         """base buffer
 
         Structure is shown below. Because of asynchronous rollout execution,
@@ -102,6 +102,7 @@ class ReplayBuffer:
         self.env_per_split = env_per_split = args.env_per_actor // num_split
         self.batch_size = bs = num_actors * env_per_split
         self.num_agents = num_agents
+        self.num_trainers = args.num_trainers
         assert args.env_per_actor % num_split == 0
 
         self.episode_length = ep_l = args.episode_length
@@ -118,7 +119,10 @@ class ReplayBuffer:
         self._use_gae = args.use_gae
         self._use_popart = args.use_popart
 
-        self.value_normalizer = value_normalizer
+        if self._use_popart:
+            self.value_normalizer = PopArt(input_shape=(1, ), num_trainers=args.num_trainers)
+        else:
+            self.value_normalizer = None
 
         self._smm = SharedMemoryManager()
         self._smm.start()
@@ -223,7 +227,7 @@ class ReplayBuffer:
             self._is_writable[old_slot_id] = 0
             # if reader is waiting for data, notify it
             if no_availble_before:
-                self._read_ready.notify(1)
+                self._read_ready.notify(self.num_trainers)
 
     def get(self, recur=True):
         with self._read_ready:

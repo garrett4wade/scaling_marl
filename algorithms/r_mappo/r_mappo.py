@@ -6,25 +6,16 @@ from algorithms.utils.util import check
 
 
 class R_MAPPO:
-    """
-    Trainer class for MAPPO to update policies.
-    :param args: (argparse.Namespace) arguments containing relevant model, policy, and env information.
-    :param policy: (R_MAPPO_Policy) policy to update.
-    :param device: (torch.device) specifies the device to run on (cpu/gpu).
-    """
-    def __init__(self, args, policy, value_normalizer):
+    def __init__(self, args, policy):
         self.device = policy.device
         self.tpdv = dict(dtype=torch.float32, device=self.device)
         self.policy = policy
 
         self.clip_param = args.clip_param
         self.ppo_epoch = args.ppo_epoch
-        self.num_mini_batch = args.num_mini_batch
-        self.data_chunk_length = args.data_chunk_length
         self.value_loss_coef = args.value_loss_coef
         self.entropy_coef = args.entropy_coef
         self.max_grad_norm = args.max_grad_norm
-        self.huber_delta = args.huber_delta
 
         self._use_recurrent_policy = args.use_recurrent_policy
         self._use_max_grad_norm = args.use_max_grad_norm
@@ -34,7 +25,7 @@ class R_MAPPO:
         self._use_value_active_masks = args.use_value_active_masks
         self._use_policy_active_masks = args.use_policy_active_masks
 
-        self.value_loss_fn = lambda x: huber_loss(x, self.huber_delta) if self._use_huber_loss else mse_loss
+        self.value_loss_fn = lambda x: huber_loss(x, args.huber_delta) if self._use_huber_loss else mse_loss
 
     def cal_value_loss(self, values, value_preds_batch, v_target_batch, active_masks_batch):
         error_original = v_target_batch - values
@@ -115,14 +106,7 @@ class R_MAPPO:
 
         return value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm, imp_weights
 
-    def train(self, buffer, update_actor=True):
-        """
-        Perform a training update using minibatch GD.
-        :param buffer: (SharedReplayBuffer) buffer containing training data.
-        :param update_actor: (bool) whether to update actor network.
-
-        :return train_info: (dict) contains information regarding training update (e.g. loss, grad norms, etc).
-        """
+    def step(self, buffer, update_actor=True):
         train_info = {}
 
         train_info['value_loss'] = 0
@@ -160,11 +144,3 @@ class R_MAPPO:
                 train_info[k] /= num_updates
 
         return train_info
-
-    def prep_training(self):
-        self.policy.actor.train()
-        self.policy.critic.train()
-
-    def prep_rollout(self):
-        self.policy.actor.eval()
-        self.policy.critic.eval()

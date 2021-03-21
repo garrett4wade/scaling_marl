@@ -15,9 +15,9 @@ class InferenceServer:
     Base class for training recurrent policies.
     :param config: (dict) Config dictionary containing parameters for training.
     """
-    def __init__(self, rank, config):
+    def __init__(self, rpc_rank, buffer, config):
         # NOTE: inference servers occupy first #num_servers GPUs
-        self.rank = self.server_id = rank
+        self.rpc_rank = self.server_id = rpc_rank
         self.all_args = config['all_args']
 
         self.env_fn = config['env_fn']
@@ -49,8 +49,8 @@ class InferenceServer:
         action_space = example_env.action_space[0]
 
         # policy network
-        self.rollout_policy = Policy(rank, self.all_args, observation_space, share_observation_space, action_space)
-        self.rollout_policy.eval()
+        self.rollout_policy = Policy(rpc_rank, self.all_args, observation_space, share_observation_space, action_space)
+        self.rollout_policy.eval_mode()
 
         # actors
         self.rref = rpc.RRef(self)
@@ -60,6 +60,8 @@ class InferenceServer:
         self.locks = [threading.Lock() for _ in range(self.num_split)]
         self.future_outputs = [torch.futures.Future() for _ in range(self.num_split)]
         self.queued_cnt = np.zeros((self.num_split, ), dtype=np.float32)
+
+        self.buffer = buffer
 
     def load_weights(self, state_dict):
         for lock in self.locks:
