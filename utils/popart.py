@@ -2,14 +2,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.multiprocessing as mp
+from utils.util import RWLock
 
 
 class PopArt(nn.Module):
-    # TODO: check read/write access and locks
     def __init__(self, input_shape, num_trainers, norm_axes=1, beta=0.99999, per_element_update=False, epsilon=1e-5):
         super(PopArt, self).__init__()
-
-        self.input_shape = input_shape
         self.norm_axes = norm_axes
         self.epsilon = epsilon
         self.beta = beta
@@ -19,10 +17,14 @@ class PopArt(nn.Module):
         self.running_mean_sq = nn.Parameter(torch.zeros(input_shape), requires_grad=False)
         self.debiasing_term = nn.Parameter(torch.tensor(0.0), requires_grad=False)
 
-        self.lock = mp.Lock()
+        # multiple-readers-single-writer lock
+        self.lock = RWLock()
         self.barrier = mp.Barrier(num_trainers)
+
+        # make PopArt accessible for every training process
         self.share_memory()
-        assert self.running_mean.is_shared() and self.running_mean_sq.is_shared() and self.debiasing_term.is_shared()
+        for p in self.parameters():
+            assert p.is_shared()
 
     def reset_parameters(self):
         self.running_mean.zero_()
@@ -30,8 +32,9 @@ class PopArt(nn.Module):
         self.debiasing_term.zero_()
 
     def running_mean_var(self):
-        debiased_mean = self.running_mean / self.debiasing_term.clamp(min=self.epsilon)
-        debiased_mean_sq = self.running_mean_sq / self.debiasing_term.clamp(min=self.epsilon)
+        with self.lock.r_locked():
+            debiased_mean = self.running_mean / self.debiasing_term.clamp(min=self.epsilon)
+            debiased_mean_sq = self.running_mean_sq / self.debiasing_term.clamp(min=self.epsilon)
         debiased_var = (debiased_mean_sq - debiased_mean**2).clamp(min=1e-2)
         return debiased_mean, debiased_var
 
@@ -53,7 +56,7 @@ class PopArt(nn.Module):
             else:
                 weight = self.beta
 
-            with self.lock:
+            with self.lock.w_locked():
                 self.running_mean.mul_(weight).add_(batch_mean * (1.0 - weight))
                 self.running_mean_sq.mul_(weight).add_(batch_sq_mean * (1.0 - weight))
                 self.debiasing_term.mul_(weight).add_(1.0 * (1.0 - weight))

@@ -41,7 +41,6 @@ def _select_rnn_states(h, num_chunks):
 
 
 class ReplayBuffer:
-    # TODO: check read/write access and locks
     def __init__(self, args, num_agents, obs_space, share_obs_space, act_space):
         """base buffer
 
