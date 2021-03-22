@@ -10,9 +10,8 @@ def _t2n(x):
 
 
 class SMACServer(InferenceServer):
-    """Runner class to perform training, evaluation. and data collection for SMAC. See parent class for details."""
-    def __init__(self, rpc_rank, weights_queue, buffer, config):
-        super().__init__(rpc_rank, weights_queue, buffer, config)
+    def __init__(self, rpc_rank, gpu_rank, weights_queue, buffer, config):
+        super().__init__(rpc_rank, gpu_rank, weights_queue, buffer, config)
 
     @rpc.functions.async_execution
     def select_action(self, actor_id, split_id, model_inputs, init=False):
@@ -28,7 +27,8 @@ class SMACServer(InferenceServer):
         # replay buffer
         if not self.use_centralized_V:
             share_obs = obs
-        self.buffer.insert_before_inference(actor_id, split_id, share_obs, obs, rewards, dones, available_actions)
+        self.buffer.insert_before_inference(self.server_id, actor_id, split_id, share_obs, obs, rewards, dones,
+                                            available_actions)
         if infos is not None:
             merged_info = {}
             for all_agent_info in infos:
@@ -38,9 +38,9 @@ class SMACServer(InferenceServer):
                             merged_info[k] = v
                         else:
                             merged_info[k] += v
-            with self.buffer.summary_lock:
-                self.buffer.battles_won[actor_id, split_id] = merged_info['battles_won']
-                self.buffer.battles_game[actor_id, split_id] = merged_info['battles_game']
+            with self.buffer.summary_lock:  # multiprocessing RLock
+                self.buffer.battles_won[self.server_id, actor_id, split_id] = merged_info['battles_won']
+                self.buffer.battles_game[self.server_id, actor_id, split_id] = merged_info['battles_game']
 
         def _unpack(action_batch_futures):
             action_batch = action_batch_futures.wait()
@@ -52,7 +52,7 @@ class SMACServer(InferenceServer):
         with self.locks[split_id]:
             self.queued_cnt[split_id] += 1
             if self.queued_cnt[split_id] >= self.num_actors:
-                policy_inputs = self.buffer.get_policy_inputs(split_id)
+                policy_inputs = self.buffer.get_policy_inputs(self.server_id, split_id)
                 with torch.no_grad():
                     rollout_outputs = self.trainer.rollout_policy.get_actions(*map(
                         lambda x: x.reshape(self.rollout_batch_size * self.num_agents, *x.shape[2:]), policy_inputs))
@@ -60,8 +60,8 @@ class SMACServer(InferenceServer):
                 values, actions, action_log_probs, rnn_states, rnn_states_critic = map(
                     lambda x: _t2n(x).reshape(self.rollout_batch_size, self.num_agents, *x.shape[1:]), rollout_outputs)
 
-                self.buffer.insert_after_inference(split_id, values, actions, action_log_probs, rnn_states,
-                                                   rnn_states_critic)
+                self.buffer.insert_after_inference(self.server_id, split_id, values, actions, action_log_probs,
+                                                   rnn_states, rnn_states_critic)
                 self.queued_cnt[split_id] = 0
                 cur_future_outputs = self.future_outputs[split_id]
                 self.future_outputs[split_id] = torch.futures.Future()

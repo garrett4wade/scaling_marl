@@ -12,15 +12,12 @@ def _t2n(x):
 
 
 class InferenceServer:
-    """
-    Base class for training recurrent policies.
-    :param config: (dict) Config dictionary containing parameters for training.
-    """
-    def __init__(self, rpc_rank, weights_queue, buffer, config):
-        # NOTE: inference servers occupy first #num_servers GPUs
+    def __init__(self, rpc_rank, gpu_rank, weights_queue, buffer, config):
+        # NOTE: inference servers rpc_ranks come ahead of trainers
         self.rpc_rank = self.server_id = rpc_rank
+        self.gpu_rank = gpu_rank
         self.all_args = config['all_args']
-        torch.cuda.set_device(rpc_rank)
+        torch.cuda.set_device(gpu_rank)
 
         self.env_fn = config['env_fn']
         self.num_agents = config['num_agents']
@@ -31,12 +28,13 @@ class InferenceServer:
         # tricks
         self.use_centralized_V = self.all_args.use_centralized_V
         # system dataflow
-        assert self.all_args.num_actors % self.all_args.num_servers == 0
-        self.num_actors = self.all_args.num_actors // self.all_args.num_servers
+        # NOTE: #actors = #clients per inference server
+        self.num_actors = self.all_args.num_actors
         self.env_per_actor = self.all_args.env_per_actor
         self.num_split = self.all_args.num_split
         self.env_per_split = self.env_per_actor // self.num_split
         assert self.env_per_actor % self.num_split == 0
+
         self.episode_length = self.all_args.episode_length
         self.num_env_steps = self.all_args.num_env_steps
         self.rollout_batch_size = self.num_actors * self.env_per_split
@@ -51,7 +49,7 @@ class InferenceServer:
         action_space = example_env.action_space[0]
 
         # policy network
-        self.rollout_policy = Policy(rpc_rank,
+        self.rollout_policy = Policy(gpu_rank,
                                      self.all_args,
                                      observation_space,
                                      share_observation_space,
@@ -81,11 +79,15 @@ class InferenceServer:
             return
         for lock in self.locks:
             lock.acquire()
+
+        # for debug
         for k, v in state_dict[0].items():
             assert not torch.any(v == self.rollout_policy.actor.state_dict()[k])
         for k, v in state_dict[1].items():
             assert not torch.any(v == self.rollout_policy.critic.state_dict()[k])
+
         self.rollout_policy.load_state_dict(state_dict)
+
         for lock in self.locks:
             lock.release()
 
@@ -98,7 +100,8 @@ class InferenceServer:
         self.actor_rrefs = []
         self.actor_job_rrefs = []
         for i in range(self.num_actors):
-            name = 'actor_' + str(i + self.num_actors * self.server_id)
+            # NOTE: actor ids of any server is [0, 1, ..., #actors-1]
+            name = 'actor_' + str(i)
             actor_rref = rpc.remote(name, Actor, args=(i, self.env_fn, self.rref, self.all_args))
             self.actor_job_rrefs.append(actor_rref.remote().run())
             self.actor_rrefs.append(actor_rref)

@@ -6,14 +6,22 @@ import socket
 import setproctitle
 import numpy as np
 from pathlib import Path
+
 import torch
-from torch.distributed import rpc
 import torch.multiprocessing as mp
-from system.hanabi_agent import HanabiAgent as Agent
+from torch.distributed import rpc
+
+from system.trainer.hanabi_trainer import HanabiTrainer
+from system.server.hanabi_server import HanabiServer
+from utils.buffer import SequentialReplayBuffer
 from config import get_config
 from envs.hanabi.Hanabi_Env import HanabiEnv
 from envs.env_wrappers import ShareDummyVecEnv, ShareSubprocVecEnv
 """Train script for Hanabi."""
+
+
+class HanabiSummaryMixin:
+    pass
 
 
 def parse_args(args, parser):

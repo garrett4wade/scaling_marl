@@ -42,11 +42,12 @@ def _select_rnn_states(h, num_chunks):
 
 class ReplayBuffer:
     def __init__(self, args, num_agents, obs_space, share_obs_space, act_space):
-        """base buffer
+        """base buffer, can be integrated with different rollout collection mechanism
 
         Structure is shown below. Because of asynchronous rollout execution,
-        buffer has multiple queue positions such that actor returning fast
-        does not need to wait others, instead it takes up next queue position.
+        buffer has multiple queue positions such that actor and inference server
+        does not need to wait for the completion of optimization, instead it
+        continues rollout and just takes up next queue position.
 
         Envs in each actor have #env_split splits, each split has multiple envs
         and takes up a section of actor (a minibatch of data). Env splits of all
@@ -55,7 +56,13 @@ class ReplayBuffer:
         is also a (normal) batch that will be loaded into GPU for loss computation
         and optimization.
 
-        (suppose num_actors=3, qsize=5, num_split=2)
+        If buffer is shared among multiple inference servers,
+        then this buffer is just the concatenation of single-server buffers,
+        e.g. first half slots are prepared for server 0 and second half
+        slots are prepared for server 1, such that there is no read/write
+        interleaving.
+
+        (suppose num_actors=3, qsize=5, num_split=2, single-server)
 
         +++++++++++ ————————————————
                   +                 | =========================
@@ -95,12 +102,18 @@ class ReplayBuffer:
         +++++++++++  ————————————————
         """
         # storage shape configuration
+        # NOTE: #actors = #clients per inference server
+        # NOTE: actor ids of any server is [0, 1, ..., #actors-1]
         self.num_actors = num_actors = args.num_actors
-        self.qsize = qsize = args.qsize
         self.num_split = num_split = args.num_split
-        self.num_slots = num_slots = qsize * num_split
+        self.num_servers = num_servers = args.num_servers
+        self.qsize = qsize = args.qsize
+
+        self.num_slots = num_slots = qsize * num_split * num_servers
+        self.slots_per_server = qsize * num_split
         self.env_per_split = env_per_split = args.env_per_actor // num_split
         self.batch_size = bs = num_actors * env_per_split
+
         self.num_agents = num_agents
         self.num_trainers = args.num_trainers
         assert args.env_per_actor % num_split == 0
@@ -175,12 +188,12 @@ class ReplayBuffer:
         self._adv_shm, self.advantages = shm_array((*shape_prefix(False), 1), np.float32)
 
         # queue index
-        self._prev_q_shm, self._prev_q_idx = shm_array((num_split, ), np.int16)
+        self._prev_q_shm, self._prev_q_idx = shm_array((num_servers, num_split), np.int16)
         self._prev_q_idx[:] = -1
-        self._q_shm, self._q_idx = shm_array((num_split, ), np.uint8)
+        self._q_shm, self._q_idx = shm_array((num_servers, num_split), np.uint8)
 
         # episode step record
-        self._step_shm, self._ep_step = shm_array((num_split, ), np.int32)
+        self._step_shm, self._ep_step = shm_array((num_servers, num_split), np.int32)
 
         # buffer indicators
         self._ut_shm, self._used_times = shm_array((num_slots, ), np.uint8)
@@ -196,6 +209,13 @@ class ReplayBuffer:
 
         # to read/write env-specific summary info, e.g. winning rate, scores
         self.summary_lock = Lock()
+
+    def _locate(self, server_id, split_id):
+        return server_id * self.slots_per_server + self._q_idx[server_id, split_id] * self.num_split + split_id
+
+    def _locate_prev(self, server_id, split_id):
+        assert self._prev_q_idx[server_id, split_id] >= 0
+        return server_id * self.slots_per_server + self._prev_q_idx[server_id, split_id] * self.num_split + split_id
 
     def _opening(self, old_slot_id, new_slot_id):
         # start up a new slot
@@ -461,17 +481,25 @@ class PolicyMixin:
 
 
 class SharedPolicyMixin(PolicyMixin):
-    def get_policy_inputs(self, split_id):
-        slot_id = self._q_idx[split_id] * self.num_split + split_id
-        ep_step = self._ep_step[split_id]
+    def get_policy_inputs(self, server_id, split_id):
+        slot_id = self._locate(server_id, split_id)
+        ep_step = self._ep_step[server_id, split_id]
 
         return (self.share_obs[slot_id, ep_step], self.obs[slot_id, ep_step], self.rnn_states[slot_id, ep_step],
                 self.rnn_states_critic[slot_id, ep_step], self.masks[slot_id, ep_step], self.available_actions[slot_id,
                                                                                                                ep_step])
 
-    def insert_before_inference(self, actor_id, split_id, share_obs, obs, rewards, dones, available_actions=None):
-        slot_id = self._q_idx[split_id] * self.num_split + split_id
-        ep_step = self._ep_step[split_id]
+    def insert_before_inference(self,
+                                server_id,
+                                actor_id,
+                                split_id,
+                                share_obs,
+                                obs,
+                                rewards,
+                                dones,
+                                available_actions=None):
+        slot_id = self._locate(server_id, split_id)
+        ep_step = self._ep_step[server_id, split_id]
         env_slice = slice(actor_id * self.env_per_split, (actor_id + 1) * self.env_per_split)
 
         # env step returns
@@ -488,14 +516,15 @@ class SharedPolicyMixin(PolicyMixin):
 
         self.total_timesteps += self.env_per_split
 
-    def insert_after_inference(self, split_id, value_preds, actions, action_log_probs, rnn_states, rnn_states_critic):
-        slot_id = self._q_idx[split_id] * self.num_split + split_id
-        ep_step = self._ep_step[split_id]
+    def insert_after_inference(self, server_id, split_id, value_preds, actions, action_log_probs, rnn_states,
+                               rnn_states_critic):
+        slot_id = self._locate(server_id, split_id)
+        ep_step = self._ep_step[server_id, split_id]
 
         self.value_preds[slot_id, ep_step] = value_preds
 
-        if ep_step == 0 and self._prev_q_idx[split_id] >= 0:
-            old_slot_id = self._prev_q_idx[split_id] * self.num_split + split_id
+        if ep_step == 0 and self._prev_q_idx[server_id, split_id] >= 0:
+            old_slot_id = self._locate_prev(server_id, split_id)
             # fill bootstrap data in previous slot
             self._closure(old_slot_id, slot_id)
 
@@ -507,23 +536,23 @@ class SharedPolicyMixin(PolicyMixin):
         self.rnn_states[slot_id, ep_step + 1] = rnn_states * rnn_mask
         self.rnn_states_critic[slot_id, ep_step + 1] = rnn_states_critic * rnn_mask
 
-        self._ep_step[split_id] += 1
+        self._ep_step[server_id, split_id] += 1
 
         # section of this actor in current slot is full except for bootstrap step
         if ep_step == self.episode_length - 1:
-            self._ep_step[split_id] = 0
+            self._ep_step[server_id, split_id] = 0
 
             # move global queue pointer to next corresponding slot
-            cur_q_idx = self._q_idx[split_id]
-            self._q_idx[split_id] += 1
-            self._q_idx[split_id] %= self.qsize
-            new_slot_id = self._q_idx[split_id] * self.num_split + split_id
+            cur_q_idx = self._q_idx[server_id, split_id]
+            self._q_idx[server_id, split_id] += 1
+            self._q_idx[server_id, split_id] %= self.qsize
+            new_slot_id = self._locate(server_id, split_id)
             # find next slot which is not busy
             while self._is_being_read[new_slot_id]:
-                self._q_idx[split_id] += 1
-                self._q_idx[split_id] %= self.qsize
-                new_slot_id = self._q_idx[split_id] * self.num_split + split_id
-            self._prev_q_idx[split_id] = cur_q_idx
+                self._q_idx[server_id, split_id] += 1
+                self._q_idx[server_id, split_id] %= self.qsize
+                new_slot_id = self._locate(server_id, split_id)
+            self._prev_q_idx[server_id, split_id] = cur_q_idx
 
             self._opening(slot_id, new_slot_id)
 
@@ -533,26 +562,34 @@ class SharedReplayBuffer(ReplayBuffer, SharedPolicyMixin):
 
 
 class SequentialPolicyMixin(PolicyMixin):
-    def get_policy_inputs(self, split_id):
-        slot_id = self._q_idx[split_id] * self.num_split + split_id
-        ep_step = self._ep_step[split_id]
-        agent_id = self._agent_ids[split_id]
+    def get_policy_inputs(self, server_id, split_id):
+        slot_id = self._locate(server_id, split_id)
+        ep_step = self._ep_step[server_id, split_id]
+        agent_id = self._agent_ids[server_id, split_id]
 
         return (self.share_obs[slot_id, ep_step, :, agent_id], self.obs[slot_id, ep_step, :, agent_id],
                 self.rnn_states[slot_id, ep_step, :, agent_id], self.rnn_states_critic[slot_id, ep_step, :, agent_id],
                 self.masks[slot_id, ep_step, :, agent_id], self.available_actions[slot_id, ep_step, :, agent_id])
 
-    def insert_before_inference(self, actor_id, split_id, share_obs, obs, rewards, dones, available_actions=None):
+    def insert_before_inference(self,
+                                server_id,
+                                actor_id,
+                                split_id,
+                                share_obs,
+                                obs,
+                                rewards,
+                                dones,
+                                available_actions=None):
         assert share_obs.shape == (self.env_per_split, *self.share_obs.shape[4:]), (share_obs.shape,
                                                                                     (self.env_per_split,
                                                                                      *self.share_obs.shape[4:]))
         assert obs.shape == (self.env_per_split, *self.obs.shape[4:]), (obs.shape, (self.env_per_split,
                                                                                     *self.obs.shape[4:]))
 
-        slot_id = self._q_idx[split_id] * self.num_split + split_id
-        ep_step = self._ep_step[split_id]
+        slot_id = self._locate(server_id, split_id)
+        ep_step = self._ep_step[server_id, split_id]
+        agent_id = self._agent_ids[server_id, split_id]
         env_slice = slice(actor_id * self.env_per_split, (actor_id + 1) * self.env_per_split)
-        agent_id = self._agent_ids[split_id]
 
         # env step returns
         self.share_obs[slot_id, ep_step, env_slice, agent_id] = share_obs
@@ -563,23 +600,22 @@ class SequentialPolicyMixin(PolicyMixin):
         # accumulate reward first, and then record final accumulated reward when env terminates,
         # because if current step is 'done', reported reward is from previous transition, which
         # belongs to the previous episode (current step is the opening of the next episode)
-        self._reward_since_last_action[split_id, env_slice] += rewards
+        self._reward_since_last_action[server_id, split_id, env_slice] += rewards
         if ep_step >= 1:
-            is_done_before = self._env_done_trigger[split_id, env_slice] > 0
+            is_done_before = self._env_done_trigger[server_id, split_id, env_slice] > 0
             not_done_yet = (1 - is_done_before).astype(np.bool)
-            assert np.all(is_done_before + not_done_yet == 1)
 
-            accumulated_reward = self._reward_since_last_action[split_id, env_slice][not_done_yet, agent_id]
+            accumulated_reward = self._reward_since_last_action[server_id, split_id, env_slice][not_done_yet, agent_id]
             self.rewards[slot_id, ep_step - 1, env_slice][not_done_yet, agent_id] = accumulated_reward
-            self._reward_since_last_action[split_id, env_slice][not_done_yet, agent_id] = 0
+            self._reward_since_last_action[server_id, split_id, env_slice][not_done_yet, agent_id] = 0
 
-            saved_reward = self._reward_when_env_done[split_id, env_slice][is_done_before, agent_id]
+            saved_reward = self._reward_when_env_done[server_id, split_id, env_slice][is_done_before, agent_id]
             self.rewards[slot_id, ep_step - 1, env_slice][is_done_before, agent_id] = saved_reward
 
         # record final accumulated reward when env terminates
-        self._reward_when_env_done[split_id, env_slice][dones.squeeze(-1)] = self._reward_since_last_action[
-            split_id, env_slice][dones.squeeze(-1)]
-        self._reward_since_last_action[split_id, env_slice][dones.squeeze(-1)] = 0
+        self._reward_when_env_done[server_id, split_id, env_slice][dones.squeeze(-1)] = self._reward_since_last_action[
+            server_id, split_id, env_slice][dones.squeeze(-1)]
+        self._reward_since_last_action[server_id, split_id, env_slice][dones.squeeze(-1)] = 0
 
         if available_actions is not None:
             assert available_actions.shape == (self.env_per_split,
@@ -592,11 +628,11 @@ class SequentialPolicyMixin(PolicyMixin):
         assert dones.dtype == np.bool, dones.dtype
         # once env is done, fill the next #agents timestep with 0 to mask bootstrap values
         # env_done_trigger records remaining timesteps to be filled with 0
-        trigger = self._env_done_trigger[split_id, env_slice]
+        trigger = self._env_done_trigger[server_id, split_id, env_slice]
         trigger[dones.squeeze(-1)] = self.num_agents
         # NOTE: mask is initialized as all 1, hence we only care about filling 0
         self.masks[slot_id, ep_step, env_slice, agent_id][trigger > 0] = 0
-        self._env_done_trigger[split_id, env_slice] = np.maximum(trigger - 1, 0)
+        self._env_done_trigger[server_id, split_id, env_slice] = np.maximum(trigger - 1, 0)
         assert np.all(self._env_done_trigger >= 0) and np.all(self._env_done_trigger <= self.num_agents)
 
         # active_mask is always 1 because env automatically resets when any agent induces termination
@@ -604,15 +640,16 @@ class SequentialPolicyMixin(PolicyMixin):
         if agent_id == self.num_agents - 1:
             self.total_timesteps += self.env_per_split
 
-    def insert_after_inference(self, split_id, value_preds, actions, action_log_probs, rnn_states, rnn_states_critic):
-        slot_id = self._q_idx[split_id] * self.num_split + split_id
-        ep_step = self._ep_step[split_id]
-        agent_id = self._agent_ids[split_id]
+    def insert_after_inference(self, server_id, split_id, value_preds, actions, action_log_probs, rnn_states,
+                               rnn_states_critic):
+        slot_id = self._locate(server_id, split_id)
+        ep_step = self._ep_step[server_id, split_id]
+        agent_id = self._agent_ids[server_id, split_id]
 
         self.value_preds[slot_id, ep_step, :, agent_id] = value_preds
 
-        if ep_step == 0 and agent_id == self.num_agents - 1 and self._prev_q_idx[split_id] >= 0:
-            old_slot_id = self._prev_q_idx[split_id] * self.num_split + split_id
+        if ep_step == 0 and agent_id == self.num_agents - 1 and self._prev_q_idx[server_id, split_id] >= 0:
+            old_slot_id = self._locate_prev(server_id, split_id)
             # fill bootstrap data in previous slot
             self._closure(old_slot_id, slot_id)
 
@@ -625,34 +662,34 @@ class SequentialPolicyMixin(PolicyMixin):
         self.rnn_states_critic[slot_id, ep_step + 1, :, agent_id] = rnn_states_critic * rnn_mask
 
         if agent_id == self.num_agents - 1:
-            self._agent_ids[split_id] = 0
-            self._ep_step[split_id] += 1
+            self._agent_ids[server_id, split_id] = 0
+            self._ep_step[server_id, split_id] += 1
             # section of this actor in current slot is full except for bootstrap step
             if ep_step == self.episode_length - 1:
-                self._ep_step[split_id] = 0
+                self._ep_step[server_id, split_id] = 0
 
                 # move global queue pointer to next corresponding slot
-                cur_q_idx = self._q_idx[split_id]
-                self._q_idx[split_id] += 1
-                self._q_idx[split_id] %= self.qsize
-                new_slot_id = self._q_idx[split_id] * self.num_split + split_id
+                cur_q_idx = self._q_idx[server_id, split_id]
+                self._q_idx[server_id, split_id] += 1
+                self._q_idx[server_id, split_id] %= self.qsize
+                new_slot_id = self._locate(server_id, split_id)
                 # find next slot which is not busy
                 while self._is_being_read[new_slot_id]:
-                    self._q_idx[split_id] += 1
-                    self._q_idx[split_id] %= self.qsize
-                    new_slot_id = self._q_idx[split_id] * self.num_split + split_id
-                self._prev_q_idx[split_id] = cur_q_idx
+                    self._q_idx[server_id, split_id] += 1
+                    self._q_idx[server_id, split_id] %= self.qsize
+                    new_slot_id = self._locate(server_id, split_id)
+                self._prev_q_idx[server_id, split_id] = cur_q_idx
 
                 self._opening(slot_id, new_slot_id)
         else:
-            self._agent_ids[split_id] += 1
+            self._agent_ids[server_id, split_id] += 1
 
 
 class SequentialReplayBuffer(ReplayBuffer, SequentialPolicyMixin):
     def __init__(self, *args):
         super().__init__(*args)
-        self._agent_ids = np.zeros((self.num_split, ), dtype=np.uint8)
-        self._reward_since_last_action = np.zeros((self.num_split, self.batch_size, self.num_agents, 1),
-                                                  dtype=np.float32)
+        self._agent_ids = np.zeros((self.num_servers, self.num_split), dtype=np.uint8)
+        self._reward_since_last_action = np.zeros(
+            (self.num_servers, self.num_split, self.batch_size, self.num_agents, 1), dtype=np.float32)
         self._reward_when_env_done = np.zeros_like(self._reward_since_last_action)
-        self._env_done_trigger = np.zeros((self.num_split, self.batch_size), dtype=np.int16)
+        self._env_done_trigger = np.zeros((self.num_servers, self.num_split, self.batch_size), dtype=np.int16)

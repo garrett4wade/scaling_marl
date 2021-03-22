@@ -10,9 +10,8 @@ def _t2n(x):
 
 
 class HanabiServer(InferenceServer):
-    """Runner class to perform training, evaluation. and data collection for SMAC. See parent class for details."""
-    def __init__(self, rpc_rank, weights_queue, buffer, config):
-        super().__init__(rpc_rank, weights_queue, buffer, config)
+    def __init__(self, rpc_rank, gpu_rank, weights_queue, buffer, config):
+        super().__init__(rpc_rank, gpu_rank, weights_queue, buffer, config)
 
     @rpc.functions.async_execution
     def select_action(self, actor_id, split_id, model_inputs, init=False):
@@ -28,14 +27,17 @@ class HanabiServer(InferenceServer):
         # replay buffer
         if not self.use_centralized_V:
             share_obs = obs
-        self.buffer.insert_before_inference(actor_id, split_id, share_obs, obs, rewards, dones, available_actions)
+        self.buffer.insert_before_inference(self.server_id, actor_id, split_id, share_obs, obs, rewards, dones,
+                                            available_actions)
 
-        with self.buffer.summary_lock:
-            for done, info in zip(dones, infos):
-                if done and 'score' in info.keys():
-                    self.buffer.elapsed_episode += 1
-                    avg_score = self.buffer.avg_score.item()
-                    self.buffer.avg_score += (info['score'] - avg_score) / self.buffer.elapsed_episode
+        elapsed_episode = total_scores = 0
+        for done, info in zip(dones, infos):
+            if done and 'score' in info.keys():
+                elapsed_episode += 1
+                total_scores += info['score']
+        with self.buffer.summary_lock:  # multiprocessing RLock
+            self.buffer.elapsed_episode[self.server_id, actor_id, split_id] += elapsed_episode
+            self.buffer.total_scores[self.server_id, actor_id, split_id] += total_scores
 
         def _unpack(action_batch_futures):
             action_batch = action_batch_futures.wait()
@@ -47,14 +49,14 @@ class HanabiServer(InferenceServer):
         with self.locks[split_id]:
             self.queued_cnt[split_id] += 1
             if self.queued_cnt[split_id] >= self.num_actors:
-                policy_inputs = self.buffer.get_policy_inputs(split_id)
+                policy_inputs = self.buffer.get_policy_inputs(self.server_id, split_id)
                 with torch.no_grad():
                     rollout_outputs = self.trainer.rollout_policy.get_actions(*policy_inputs)
 
                 values, actions, action_log_probs, rnn_states, rnn_states_critic = map(_t2n, rollout_outputs)
 
-                self.buffer.insert_after_inference(split_id, values, actions, action_log_probs, rnn_states,
-                                                   rnn_states_critic)
+                self.buffer.insert_after_inference(self.server_id, split_id, values, actions, action_log_probs,
+                                                   rnn_states, rnn_states_critic)
                 self.queued_cnt[split_id] = 0
                 cur_future_outputs = self.future_outputs[split_id]
                 self.future_outputs[split_id] = torch.futures.Future()
