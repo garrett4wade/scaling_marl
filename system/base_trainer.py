@@ -15,12 +15,11 @@ class Trainer:
     :param config: (dict) Config dictionary containing parameters for training.
     """
     def __init__(self, rpc_rank, weights_queue, buffer, config):
-        self.rpc_rank = rpc_rank
+        # NOTE: trainers occupy first #num_trainers GPUs, rpc_ranks come ahead of inference servers'
+        self.rpc_rank = self.trainer_id = self.ddp_rank = rpc_rank
         self.all_args = config['all_args']
-        # NOTE: trainers occupy last #num_trainers GPUs
-        self.trainer_id = self.dpp_rank = rpc_rank + self.all_args.num_servers
         self.num_trainers = self.all_args.num_trainers
-        torch.cuda.set_device(self.rpc_rank)
+        torch.cuda.set_device(self.ddp_rank)
 
         self.eval_envs = config['eval_envs']
         self.num_agents = config['num_agents']
@@ -75,7 +74,12 @@ class Trainer:
         action_space = example_env.action_space[0]
 
         # policy network
-        self.policy = Policy(rpc_rank, self.all_args, observation_space, share_observation_space, action_space)
+        self.policy = Policy(self.ddp_rank,
+                             self.all_args,
+                             observation_space,
+                             share_observation_space,
+                             action_space,
+                             is_training=True)
 
         if self.model_dir is not None:
             self.restore()
@@ -94,6 +98,7 @@ class Trainer:
         if self.ddp_rank == 0:
             # send weights to rollout policy
             actor_state_dict, critic_state_dict = self.policy.state_dict()
+            # remove prefix 'module.' of DDP models
             actor_state_dict = {k.replace('module.', ''): v for k, v in actor_state_dict.items()}
             critic_state_dict = {k.replace('module.', ''): v for k, v in critic_state_dict.items()}
             self.weights_queue.put((actor_state_dict, critic_state_dict))

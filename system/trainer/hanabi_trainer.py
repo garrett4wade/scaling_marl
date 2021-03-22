@@ -21,7 +21,7 @@ class HanabiTrainer(Trainer):
         episodes = int(self.num_env_steps) // self.episode_length // (self.num_actors * self.env_per_split)
 
         global_tik = local_tik = time.time()
-        last_total_num_steps = 0
+        last_total_num_steps = last_elapsed_episode = last_total_scores = 0
 
         for episode in range(episodes):
             if self.use_linear_lr_decay:
@@ -48,10 +48,12 @@ class HanabiTrainer(Trainer):
                                                                        global_avg_fps))
 
                 assert self.env_name == "Hanabi"
-                with self.buffer.summary_lock:
-                    average_score = self.buffer.avg_score.item()
-                    self.buffer.avg_score[:] = 0
-                    self.buffer.elapsed_episode[:] = 0
+                with self.buffer.summary_lock:  # multiprocessing RLock
+                    elapsed_episode = np.sum(self.buffer.elapsed_episode)
+                    total_scores = np.sum(self.buffer.total_scores)
+                recent_elapsed_episode = elapsed_episode - last_elapsed_episode
+                recent_total_scores = total_scores - last_total_scores
+                average_score = recent_total_scores / recent_elapsed_episode
                 print("average score is {}.".format(average_score))
 
                 if self.use_wandb:
@@ -65,6 +67,8 @@ class HanabiTrainer(Trainer):
                     self.writter.add_scalars('average_score', {'average_score': average_score}, total_num_steps)
 
                 last_total_num_steps = total_num_steps
+                last_elapsed_episode = elapsed_episode
+                last_total_scores = total_scores
                 local_tik = time.time()
 
                 self.log_info(train_infos, total_num_steps)

@@ -48,7 +48,7 @@ class SMACTrainer(Trainer):
                                                                        global_avg_fps))
 
                 assert self.env_name == "StarCraft2"
-                with self.buffer.summary_lock:
+                with self.buffer.summary_lock:  # multiprocessing RLock
                     battles_won = np.sum(self.buffer.battles_won)
                     battles_game = np.sum(self.buffer.battles_game)
                 recent_battles_won = battles_won - last_battles_won

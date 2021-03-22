@@ -13,10 +13,11 @@ def _t2n(x):
 
 class InferenceServer:
     def __init__(self, rpc_rank, gpu_rank, weights_queue, buffer, config):
-        # NOTE: inference servers rpc_ranks come ahead of trainers
-        self.rpc_rank = self.server_id = rpc_rank
+        # NOTE: inference servers rpc_ranks come after trainers rpc_ranks
+        self.rpc_rank = rpc_rank
         self.gpu_rank = gpu_rank
         self.all_args = config['all_args']
+        self.server_id = self.rpc_rank - self.all_args.num_trainers
         torch.cuda.set_device(gpu_rank)
 
         self.env_fn = config['env_fn']
