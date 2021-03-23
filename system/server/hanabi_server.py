@@ -51,7 +51,7 @@ class HanabiServer(InferenceServer):
             if self.queued_cnt[split_id] >= self.num_actors:
                 policy_inputs = self.buffer.get_policy_inputs(self.server_id, split_id)
                 with torch.no_grad():
-                    rollout_outputs = self.trainer.rollout_policy.get_actions(*policy_inputs)
+                    rollout_outputs = self.rollout_policy.get_actions(*policy_inputs)
 
                 values, actions, action_log_probs, rnn_states, rnn_states_critic = map(_t2n, rollout_outputs)
 

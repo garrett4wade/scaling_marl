@@ -30,14 +30,14 @@ class HanabiTrainer(Trainer):
             train_infos = self.training_step()
             self.pack_off_weights()
 
+            total_num_steps = self.buffer.total_timesteps.item()
+
             # save model
             if self.ddp_rank == 0 and (episode % self.save_interval == 0 or episode == episodes - 1):
                 self.save()
 
             # log information
             if self.ddp_rank == 0 and episode % self.log_interval == 0:
-                total_num_steps = self.buffer.total_timesteps.item()
-
                 tok = time.time()
                 recent_fps = int((total_num_steps - last_total_num_steps) / (tok - local_tik) * self.num_trainers)
                 global_avg_fps = int(total_num_steps / (tok - global_tik) * self.num_trainers)
@@ -114,5 +114,10 @@ class HanabiTrainer(Trainer):
                         episode_cnt += 1
                         eval_scores.append(info['score'])
 
-        self.log_info({'eval_average_score': np.mean(eval_scores)}, total_num_steps)
-        print("eval average score is {}.".format(np.mean(eval_scores)))
+        avg_score = torch.Tensor([np.mean(eval_scores)])
+        dist.all_reduce(avg_score.to(self.ddp_rank))
+
+        if self.ddp_rank == 0:
+            avg_score = avg_score.item() / self.num_trainers
+            self.log_info({'eval_average_score': np.mean(eval_scores)}, total_num_steps)
+            print("eval average score is {}.".format(np.mean(eval_scores)))

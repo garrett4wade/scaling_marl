@@ -5,7 +5,7 @@ pkill -9 python3.8
 pkill -9 mappo
 
 game_version="Hanabi-Full"
-episode_length=60
+episode_length=20
 num_agents=2
 
 seeds=(55 37 28)
@@ -32,13 +32,15 @@ do
                                 --ppo_epoch 5 \
                                 --lr 7e-4 \
                                 --critic_lr 1e-3 \
-                                --hidden_size 512 \
+                                --hidden_size 256 \
                                 --layer_N 2 \
                                 --entropy_coef 0.015 \
-                                --num_actors 16 \
-                                --env_per_actor 64 \
+                                --num_actors 4 \
+                                --env_per_actor 4 \
                                 --num_split 2 \
                                 --eval_interval 5 \
+                                --num_trainers 2 \
+                                --num_servers 1 \
                                 --use_eval \
                                 --use_wandb
                                 # --use_eval \

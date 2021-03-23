@@ -198,6 +198,8 @@ def get_config():
     parser.add_argument("--qsize", type=int, default=16)
     parser.add_argument("--rollout_batch_size", type=int, default=4)
     parser.add_argument("--verbose_time", action='store_true', default=False)
+    parser.add_argument("--num_trainers", type=int, default=1)
+    parser.add_argument("--num_servers", type=int, default=1)
 
     # env parameters
     parser.add_argument("--env_name", type=str, default='StarCraft2', help="specify the name of environment")

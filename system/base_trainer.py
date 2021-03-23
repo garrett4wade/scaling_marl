@@ -19,9 +19,10 @@ class Trainer:
         self.rpc_rank = self.trainer_id = self.ddp_rank = rpc_rank
         self.all_args = config['all_args']
         self.num_trainers = self.all_args.num_trainers
+        assert self.all_args.cuda and torch.cuda.is_available(), 'cpu training currently not supported'
         torch.cuda.set_device(self.ddp_rank)
 
-        self.eval_envs = config['eval_envs']
+        self.eval_envs = config['eval_envs_fn'](self.all_args)
         self.num_agents = config['num_agents']
 
         # -------- parameters --------
@@ -51,18 +52,19 @@ class Trainer:
         self.use_wandb = self.all_args.use_wandb
         self.use_render = self.all_args.use_render
 
-        if self.use_wandb:
-            self.save_dir = str(wandb.run.dir)
-            self.run_dir = str(wandb.run.dir)
-        else:
-            self.run_dir = config["run_dir"]
-            self.log_dir = str(self.run_dir / 'logs')
-            if not os.path.exists(self.log_dir):
-                os.makedirs(self.log_dir)
-            self.writter = SummaryWriter(self.log_dir)
-            self.save_dir = str(self.run_dir / 'models')
-            if not os.path.exists(self.save_dir):
-                os.makedirs(self.save_dir)
+        if self.ddp_rank == 0:
+            if self.use_wandb:
+                self.save_dir = str(wandb.run.dir)
+                self.run_dir = str(wandb.run.dir)
+            else:
+                self.run_dir = config["run_dir"]
+                self.log_dir = str(self.run_dir / 'logs')
+                if not os.path.exists(self.log_dir):
+                    os.makedirs(self.log_dir)
+                self.writter = SummaryWriter(self.log_dir)
+                self.save_dir = str(self.run_dir / 'models')
+                if not os.path.exists(self.save_dir):
+                    os.makedirs(self.save_dir)
 
         from algorithms.r_mappo.r_mappo import R_MAPPO as TrainAlgo
         from algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy

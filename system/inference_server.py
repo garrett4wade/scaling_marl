@@ -18,7 +18,8 @@ class InferenceServer:
         self.gpu_rank = gpu_rank
         self.all_args = config['all_args']
         self.server_id = self.rpc_rank - self.all_args.num_trainers
-        torch.cuda.set_device(gpu_rank)
+        assert self.all_args.cuda and torch.cuda.is_available(), 'cpu training currently not supported'
+        # torch.cuda.set_device(gpu_rank)
 
         self.env_fn = config['env_fn']
         self.num_agents = config['num_agents']
@@ -76,16 +77,10 @@ class InferenceServer:
             state_dict = self.weights_queue.get(block)
         except Empty:
             # for debug
-            print("queue empty, load weights failed")
+            # print("queue empty, load weights failed")
             return
         for lock in self.locks:
             lock.acquire()
-
-        # for debug
-        for k, v in state_dict[0].items():
-            assert not torch.any(v == self.rollout_policy.actor.state_dict()[k])
-        for k, v in state_dict[1].items():
-            assert not torch.any(v == self.rollout_policy.critic.state_dict()[k])
 
         self.rollout_policy.load_state_dict(state_dict)
 
@@ -102,7 +97,7 @@ class InferenceServer:
         self.actor_job_rrefs = []
         for i in range(self.num_actors):
             # NOTE: actor ids of any server is [0, 1, ..., #actors-1]
-            name = 'actor_' + str(i)
+            name = 'actor_' + str(i + self.server_id * self.num_actors)
             actor_rref = rpc.remote(name, Actor, args=(i, self.env_fn, self.rref, self.all_args))
             self.actor_job_rrefs.append(actor_rref.remote().run())
             self.actor_rrefs.append(actor_rref)

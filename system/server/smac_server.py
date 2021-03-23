@@ -54,7 +54,7 @@ class SMACServer(InferenceServer):
             if self.queued_cnt[split_id] >= self.num_actors:
                 policy_inputs = self.buffer.get_policy_inputs(self.server_id, split_id)
                 with torch.no_grad():
-                    rollout_outputs = self.trainer.rollout_policy.get_actions(*map(
+                    rollout_outputs = self.rollout_policy.get_actions(*map(
                         lambda x: x.reshape(self.rollout_batch_size * self.num_agents, *x.shape[2:]), policy_inputs))
 
                 values, actions, action_log_probs, rnn_states, rnn_states_critic = map(

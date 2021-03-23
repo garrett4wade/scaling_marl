@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from utils.util import get_gard_norm, huber_loss, mse_loss
 from algorithms.utils.util import check
+import torch.distributed as dist
 
 
 class R_MAPPO:
@@ -10,6 +11,7 @@ class R_MAPPO:
         self.device = policy.device
         self.tpdv = dict(dtype=torch.float32, device=self.device)
         self.policy = policy
+        self.num_mini_batch = args.num_mini_batch
 
         self.clip_param = args.clip_param
         self.ppo_epoch = args.ppo_epoch
@@ -117,6 +119,7 @@ class R_MAPPO:
         train_info['ratio'] = 0
 
         for i in range(self.ppo_epoch):
+            dist.barrier()
             slot_id, data_generator = buffer.get(self._use_recurrent_policy)
 
             for sample in data_generator:
@@ -143,4 +146,5 @@ class R_MAPPO:
             if k != "average_step_rewards":
                 train_info[k] /= num_updates
 
+        # TODO: currently just record train_info of DDP process 0
         return train_info

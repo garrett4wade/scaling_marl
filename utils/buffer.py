@@ -141,12 +141,6 @@ class ReplayBuffer:
         self._smm.start()
 
         # initialize storage
-        def shm_array(shape, dtype):
-            byte_per_digit = byte_of_dtype(dtype)
-            shm = self._smm.SharedMemory(size=byte_per_digit * np.prod(shape))
-            shm_array = np.ndarray(shape, dtype=dtype, buffer=shm.buf)
-            return shm, shm_array
-
         def shape_prefix(bootstrap):
             t = ep_l + 1 if bootstrap else ep_l
             return (num_slots, t, bs, num_agents)
@@ -160,55 +154,63 @@ class ReplayBuffer:
         if type(share_obs_shape[-1]) == list:
             share_obs_shape = share_obs_shape[:1]
 
-        self._share_obs_shm, self.share_obs = shm_array((*shape_prefix(True), *share_obs_shape), np.float32)
-        self._obs_shm, self.obs = shm_array((*shape_prefix(True), *obs_shape), np.float32)
+        self._share_obs_shm, self.share_obs = self.shm_array((*shape_prefix(True), *share_obs_shape), np.float32)
+        self._obs_shm, self.obs = self.shm_array((*shape_prefix(True), *obs_shape), np.float32)
 
         if act_space.__class__.__name__ == 'Discrete':
-            self._avail_shm, self.available_actions = shm_array((*shape_prefix(True), act_space.n), np.float32)
+            self._avail_shm, self.available_actions = self.shm_array((*shape_prefix(True), act_space.n), np.float32)
             self.available_actions[:] = 1
         else:
             self.available_actions = None
 
         act_shape = get_shape_from_act_space(act_space)
 
-        self._act_shm, self.actions = shm_array((*shape_prefix(False), act_shape), np.float32)
-        self._logp_shm, self.action_log_probs = shm_array((*shape_prefix(False), act_shape), np.float32)
+        self._act_shm, self.actions = self.shm_array((*shape_prefix(False), act_shape), np.float32)
+        self._logp_shm, self.action_log_probs = self.shm_array((*shape_prefix(False), act_shape), np.float32)
 
-        self._h_shm, self.rnn_states = shm_array((*shape_prefix(True), rec_n, hs), np.float32)
-        self._hc_shm, self.rnn_states_critic = shm_array((*shape_prefix(True), rec_n, hs), np.float32)
+        self._h_shm, self.rnn_states = self.shm_array((*shape_prefix(True), rec_n, hs), np.float32)
+        self._hc_shm, self.rnn_states_critic = self.shm_array((*shape_prefix(True), rec_n, hs), np.float32)
 
-        self._msk_shm, self.masks = shm_array((*shape_prefix(True), 1), np.float32)
+        self._msk_shm, self.masks = self.shm_array((*shape_prefix(True), 1), np.float32)
         self.masks[:] = 1
-        self._amsk_shm, self.active_masks = shm_array((*shape_prefix(True), 1), np.float32)
+        self._amsk_shm, self.active_masks = self.shm_array((*shape_prefix(True), 1), np.float32)
         self.active_masks[:] = 1
 
-        self._r_shm, self.rewards = shm_array((*shape_prefix(False), 1), np.float32)
-        self._v_shm, self.value_preds = shm_array((*shape_prefix(True), 1), np.float32)
-        self._rt_shm, self.returns = shm_array((*shape_prefix(True), 1), np.float32)
-        self._adv_shm, self.advantages = shm_array((*shape_prefix(False), 1), np.float32)
+        self._r_shm, self.rewards = self.shm_array((*shape_prefix(False), 1), np.float32)
+        self._v_shm, self.value_preds = self.shm_array((*shape_prefix(True), 1), np.float32)
+        self._rt_shm, self.returns = self.shm_array((*shape_prefix(True), 1), np.float32)
+        self._adv_shm, self.advantages = self.shm_array((*shape_prefix(False), 1), np.float32)
 
         # queue index
-        self._prev_q_shm, self._prev_q_idx = shm_array((num_servers, num_split), np.int16)
+        self._prev_q_shm, self._prev_q_idx = self.shm_array((num_servers, num_split), np.int16)
         self._prev_q_idx[:] = -1
-        self._q_shm, self._q_idx = shm_array((num_servers, num_split), np.uint8)
+        self._q_shm, self._q_idx = self.shm_array((num_servers, num_split), np.uint8)
 
         # episode step record
-        self._step_shm, self._ep_step = shm_array((num_servers, num_split), np.int32)
+        self._step_shm, self._ep_step = self.shm_array((num_servers, num_split), np.int32)
 
         # buffer indicators
-        self._ut_shm, self._used_times = shm_array((num_slots, ), np.uint8)
-        self._read_shm, self._is_readable = shm_array((num_slots, ), np.uint8)
-        self._being_read_shm, self._is_being_read = shm_array((num_slots, ), np.uint8)
-        self._wrt_shm, self._is_writable = shm_array((num_slots, ), np.uint8)
+        self._ut_shm, self._used_times = self.shm_array((num_slots, ), np.uint8)
+        self._read_shm, self._is_readable = self.shm_array((num_slots, ), np.uint8)
+        self._being_read_shm, self._is_being_read = self.shm_array((num_slots, ), np.uint8)
+        self._wrt_shm, self._is_writable = self.shm_array((num_slots, ), np.uint8)
         self._is_writable[:] = 1
+        self._rt_ready_shm, self._is_return_ready = self.shm_array((num_slots, ), np.uint8)
         assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
 
+        # TODO: lock usage is not clean here
         self._read_ready = Condition(Lock())
 
-        self._timestep_shm, self.total_timesteps = shm_array((), np.int64)
+        self._timestep_shm, self.total_timesteps = self.shm_array((), np.int64)
 
         # to read/write env-specific summary info, e.g. winning rate, scores
         self.summary_lock = Lock()
+
+    def shm_array(self, shape, dtype):
+        byte_per_digit = byte_of_dtype(dtype)
+        shm = self._smm.SharedMemory(size=byte_per_digit * np.prod(shape))
+        shm_array = np.ndarray(shape, dtype=dtype, buffer=shm.buf)
+        return shm, shm_array
 
     def _locate(self, server_id, split_id):
         return server_id * self.slots_per_server + self._q_idx[server_id, split_id] * self.num_split + split_id
@@ -226,9 +228,10 @@ class ReplayBuffer:
             # if the next corresponding slot is readable, overwrite it
             if self._is_readable[new_slot_id]:
                 # reset indicator for overwriting
+                self._is_return_ready[new_slot_id] = 0
                 self._is_readable[new_slot_id] = 0
                 self._is_writable[new_slot_id] = 1
-        assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
+            assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
 
     def _closure(self, old_slot_id, new_slot_id):
         # complete bootstrap data & indicator of a written slot
@@ -241,25 +244,24 @@ class ReplayBuffer:
             self.available_actions[old_slot_id, -1] = self.available_actions[new_slot_id, 0]
         self.value_preds[old_slot_id, -1] = self.value_preds[new_slot_id, 0]
 
-        self._compute_returns(old_slot_id)
-
         with self._read_ready:
             # update indicator of current slot
-            no_availble_before = not np.any(self._is_readable)
+            no_availble_before = np.sum(self._is_readable) < self.num_trainers
             self._is_readable[old_slot_id] = 1
             self._is_writable[old_slot_id] = 0
+            assert not self._is_return_ready[old_slot_id]
             # if reader is waiting for data, notify it
-            if no_availble_before:
+            if no_availble_before and np.sum(self._is_readable) >= self.num_trainers:
                 self._read_ready.notify(self.num_trainers)
 
     def get(self, recur=True):
         with self._read_ready:
-            self._read_ready.wait_for(lambda: np.any(self._is_readable))
+            self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= self.num_trainers)
             slot_id = np.nonzero(self._is_readable)[0][0]
             # indicator readable -> being-read
             self._is_readable[slot_id] = 0
             self._is_being_read[slot_id] = 1
-        assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
+            assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
         return slot_id, self.recurrent_generator(slot_id) if recur else self.feed_forward_generator(slot_id)
 
     def after_training_step(self, slot_id):
@@ -267,12 +269,14 @@ class ReplayBuffer:
             # reset indicator, being-read -> writable
             self._is_being_read[slot_id] = 0
             self._used_times[slot_id] += 1
+            assert self._is_return_ready[slot_id]
             if self._used_times[slot_id] >= self.sample_reuse:
+                self._is_return_ready[slot_id] = 0
                 self._is_writable[slot_id] = 1
                 self._used_times[slot_id] = 0
             else:
                 self._is_readable[slot_id] = 1
-        assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
+            assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
 
     def _compute_returns(self, slot_id, adv_normalization=True):
         tik = time.time()
@@ -313,6 +317,11 @@ class ReplayBuffer:
         print(time.time() - tik)
 
     def feed_forward_generator(self, slot_id):
+        with self._read_ready:
+            if not self._is_return_ready[slot_id]:
+                self._compute_returns(slot_id)
+                self._is_return_ready[slot_id] = 1
+
         num_mini_batch = self.num_mini_batch
         batch_size = self.batch_size * self.episode_length * self.num_agents
 
@@ -376,6 +385,11 @@ class ReplayBuffer:
                 yield outputs
 
     def recurrent_generator(self, slot_id):
+        with self._read_ready:
+            if not self._is_return_ready[slot_id]:
+                self._compute_returns(slot_id)
+                self._is_return_ready[slot_id] = 1
+
         data_chunk_length = self.data_chunk_length
         num_mini_batch = self.num_mini_batch
         assert self.episode_length % data_chunk_length == 0

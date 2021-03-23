@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.multiprocessing as mp
-from utils.util import RWLock
 
 
 class PopArt(nn.Module):
@@ -17,8 +16,6 @@ class PopArt(nn.Module):
         self.running_mean_sq = nn.Parameter(torch.zeros(input_shape), requires_grad=False)
         self.debiasing_term = nn.Parameter(torch.tensor(0.0), requires_grad=False)
 
-        # multiple-readers-single-writer lock
-        self.lock = RWLock()
         self.barrier = mp.Barrier(num_trainers)
 
         # make PopArt accessible for every training process
@@ -32,13 +29,13 @@ class PopArt(nn.Module):
         self.debiasing_term.zero_()
 
     def running_mean_var(self):
-        with self.lock.r_locked():
-            debiased_mean = self.running_mean / self.debiasing_term.clamp(min=self.epsilon)
-            debiased_mean_sq = self.running_mean_sq / self.debiasing_term.clamp(min=self.epsilon)
+        debiased_mean = self.running_mean / self.debiasing_term.clamp(min=self.epsilon)
+        debiased_mean_sq = self.running_mean_sq / self.debiasing_term.clamp(min=self.epsilon)
         debiased_var = (debiased_mean_sq - debiased_mean**2).clamp(min=1e-2)
         return debiased_mean, debiased_var
 
     def forward(self, input_vector, train=True):
+        # TODO: when computing loss, the same batch is used for #ppo_epoch times!
         # called before computing loss, to normalize target values and to update running mean/std
         np_input = isinstance(input_vector, np.ndarray)
         input_vector = torch.from_numpy(input_vector) if np_input else input_vector
@@ -56,10 +53,9 @@ class PopArt(nn.Module):
             else:
                 weight = self.beta
 
-            with self.lock.w_locked():
-                self.running_mean.mul_(weight).add_(batch_mean * (1.0 - weight))
-                self.running_mean_sq.mul_(weight).add_(batch_sq_mean * (1.0 - weight))
-                self.debiasing_term.mul_(weight).add_(1.0 * (1.0 - weight))
+            self.running_mean.mul_(weight).add_(batch_mean * (1.0 - weight))
+            self.running_mean_sq.mul_(weight).add_(batch_sq_mean * (1.0 - weight))
+            self.debiasing_term.mul_(weight).add_(1.0 * (1.0 - weight))
 
         self.barrier.wait()
         mean, var = self.running_mean_var()

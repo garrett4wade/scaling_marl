@@ -30,14 +30,14 @@ class SMACTrainer(Trainer):
             train_infos = self.training_step()
             self.pack_off_weights()
 
+            total_num_steps = self.buffer.total_timesteps.item()
+
             # save model
             if self.ddp_rank == 0 and (episode % self.save_interval == 0 or episode == episodes - 1):
                 self.save()
 
             # log information
             if self.ddp_rank == 0 and episode % self.log_interval == 0:
-                total_num_steps = self.buffer.total_timesteps.item()
-
                 tok = time.time()
                 recent_fps = int((total_num_steps - last_total_num_steps) / (tok - local_tik) * self.num_trainers)
                 global_avg_fps = int(total_num_steps / (tok - global_tik) * self.num_trainers)
@@ -123,9 +123,12 @@ class SMACTrainer(Trainer):
                     if eval_infos[eval_i][0]['won']:
                         eval_battles_won += 1
 
-        eval_env_infos = {
-            'eval_average_episode_rewards': np.mean(eval_episode_rewards),
-            "eval_win_rate": eval_battles_won / eval_episode
-        }
-        self.log_info(eval_env_infos, total_num_steps)
-        print("eval win rate is {}.".format(eval_battles_won / eval_episode))
+        summary_tensor = torch.Tensor([np.mean(eval_episode_rewards), eval_battles_won / eval_episode])
+        dist.all_reduce(summary_tensor.to(self.ddp_rank))
+
+        if self.ddp_rank == 0:
+            avg_reward = summary_tensor[0].item() / self.num_trainers
+            avg_winning_rate = summary_tensor[1].item() / self.num_trainers
+            eval_env_infos = {'eval_average_episode_rewards': avg_reward, "eval_win_rate": avg_winning_rate}
+            self.log_info(eval_env_infos, total_num_steps)
+            print("eval win rate is {}.".format(avg_winning_rate))
