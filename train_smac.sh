@@ -34,6 +34,7 @@ do
                             --eval_interval 5 \
                             --num_trainers 2 \
                             --num_servers 2 \
+                            --slots_per_update 2 \
                             --server_gpu_ranks 3 \
                             --eval_interval 5 \
                             --use_eval \

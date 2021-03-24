@@ -116,6 +116,8 @@ class ReplayBuffer:
         self.num_agents = num_agents
         self.num_trainers = args.num_trainers
         assert args.env_per_actor % num_split == 0
+        self.slots_per_update = args.slots_per_update
+        self.target_available_slots = self.slots_per_update * self.num_trainers
 
         self.episode_length = ep_l = args.episode_length
         self.hidden_size = hs = args.hidden_size
@@ -249,82 +251,85 @@ class ReplayBuffer:
 
         with self._read_ready:
             # update indicator of current slot
-            no_availble_before = np.sum(self._is_readable) < self.num_trainers
+            no_availble_before = np.sum(self._is_readable) < self.target_available_slots
             self._is_readable[old_slot_id] = 1
             self._is_writable[old_slot_id] = 0
             assert not self._is_return_ready[old_slot_id]
             # if reader is waiting for data, notify it
-            if no_availble_before and np.sum(self._is_readable) >= self.num_trainers:
+            if no_availble_before and np.sum(self._is_readable) >= self.target_available_slots:
                 self._read_ready.notify(self.num_trainers)
 
     def get(self, train_popart=True, recur=True):
-        # TODO: stack multiple slots as a batch
         with self._read_ready:
-            self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= self.num_trainers)
-            slot_id = np.nonzero(self._is_readable)[0][0]
+            self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= self.target_available_slots)
+            slots = np.nonzero(self._is_readable)[0][:self.slots_per_update]
             # indicator readable -> being-read
-            self._is_readable[slot_id] = 0
-            self._is_being_read[slot_id] = 1
+            self._is_readable[slots] = 0
+            self._is_being_read[slots] = 1
             assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
-        return slot_id, self.recurrent_generator(slot_id, train_popart) if recur else self.feed_forward_generator(
-            slot_id, train_popart)
+        return slots, self.recurrent_generator(slots, train_popart) if recur else self.feed_forward_generator(
+            slots, train_popart)
 
-    def after_training_step(self, slot_id):
+    def after_training_step(self, slots):
         with self._read_ready:
             # reset indicator, being-read -> writable
-            self._is_being_read[slot_id] = 0
-            self._used_times[slot_id] += 1
-            assert self._is_return_ready[slot_id]
-            if self._used_times[slot_id] >= self.sample_reuse:
-                self._is_return_ready[slot_id] = 0
-                self._is_writable[slot_id] = 1
-                self._used_times[slot_id] = 0
-            else:
-                self._is_readable[slot_id] = 1
+            self._is_being_read[slots] = 0
+            self._used_times[slots] += 1
+            assert np.all(self._is_return_ready[slots])
+            for slot_id in slots:
+                if self._used_times[slot_id] >= self.sample_reuse:
+                    self._is_return_ready[slot_id] = 0
+                    self._is_writable[slot_id] = 1
+                    self._used_times[slot_id] = 0
+                else:
+                    self._is_readable[slot_id] = 1
             assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
 
-    def _compute_returns(self, slot_id, adv_normalization=True):
+    def _compute_returns(self, slots, adv_normalization=True):
         value_normalizer = self.value_normalizer
         if self._use_gae:
             gae = 0
             for step in reversed(range(self.episode_length)):
                 if self._use_popart:
-                    bootstrap_v = value_normalizer.denormalize(self.value_preds[slot_id, step + 1])
-                    cur_v = value_normalizer.denormalize(self.value_preds[slot_id, step])
+                    bootstrap_v = value_normalizer.denormalize(self.value_preds[slots, step + 1])
+                    cur_v = value_normalizer.denormalize(self.value_preds[slots, step])
                 else:
-                    bootstrap_v = self.value_preds[slot_id, step + 1]
-                    cur_v = self.value_preds[slot_id, step]
+                    bootstrap_v = self.value_preds[slots, step + 1]
+                    cur_v = self.value_preds[slots, step]
 
-                one_step_return = self.rewards[slot_id, step] + self.gamma * bootstrap_v * self.masks[slot_id, step + 1]
+                one_step_return = self.rewards[slots, step] + self.gamma * bootstrap_v * self.masks[slots, step + 1]
                 delta = one_step_return - cur_v
-                gae = delta + self.gamma * self.gae_lambda * gae * self.masks[slot_id, step + 1]
-                self.returns[slot_id, step] = gae + cur_v
-                self.advantages[slot_id, step] = gae
+                gae = delta + self.gamma * self.gae_lambda * gae * self.masks[slots, step + 1]
+                self.returns[slots, step] = gae + cur_v
+                self.advantages[slots, step] = gae
         else:
             for step in reversed(range(self.rewards.shape[0])):
                 if self._use_popart:
-                    cur_v = value_normalizer.denormalize(self.value_preds[slot_id, step])
+                    cur_v = value_normalizer.denormalize(self.value_preds[slots, step])
                 else:
-                    cur_v = self.value_preds[slot_id, step]
+                    cur_v = self.value_preds[slots, step]
 
-                discount_r = (self.returns[slot_id, step + 1] * self.gamma * self.masks[slot_id, step + 1] +
-                              self.rewards[slot_id, step])
-                self.returns[slot_id, step] = discount_r
-                self.advantages[slot_id, step] = self.returns[slot_id, step] - cur_v
+                discount_r = (self.returns[slots, step + 1] * self.gamma * self.masks[slots, step + 1] +
+                              self.rewards[slots, step])
+                self.returns[slots, step] = discount_r
+                self.advantages[slots, step] = self.returns[slots, step] - cur_v
 
         if adv_normalization:
-            adv = self.advantages[slot_id, :].copy()
-            adv[self.active_masks[slot_id, :-1] == 0.0] = np.nan
+            adv = self.advantages[slots, :].copy()
+            adv[self.active_masks[slots, :-1] == 0.0] = np.nan
             mean_advantages = np.nanmean(adv)
             std_advantages = np.nanstd(adv)
-            self.advantages[slot_id, :] = (self.advantages[slot_id, :] - mean_advantages) / (std_advantages + 1e-5)
+            self.advantages[slots, :] = (self.advantages[slots, :] - mean_advantages) / (std_advantages + 1e-5)
 
-    def feed_forward_generator(self, slot_id, train_popart):
+    def feed_forward_generator(self, slots, train_popart):
         # once we ensure different trainers get different slot_ids,
-        # the following 3 line does not need lock
-        if not self._is_return_ready[slot_id]:
-            self._compute_returns(slot_id)
-            self._is_return_ready[slot_id] = 1
+        # the following few lines do not need lock
+        non_ready_slot_ids = []
+        for slot_id in slots:
+            if not self._is_return_ready[slot_id]:
+                non_ready_slot_ids.append(slot_id)
+        self._compute_returns(non_ready_slot_ids)
+        self._is_return_ready[non_ready_slot_ids] = 1
 
         num_mini_batch = self.num_mini_batch
         batch_size = self.batch_size * self.episode_length * self.num_agents
@@ -332,25 +337,25 @@ class ReplayBuffer:
         assert batch_size >= num_mini_batch and batch_size % num_mini_batch == 0
         mini_batch_size = batch_size // num_mini_batch
 
-        # flatten first 3 dims
-        # [T, B, A, D] -> [T * B * A, D]
-        share_obs = _flatten(self.share_obs[slot_id, :-1], 3)
-        obs = _flatten(self.obs[slot_id, :-1], 3)
-        actions = _flatten(self.actions[slot_id], 3)
+        # flatten first 4 dims
+        # [N, T, B, A, D] -> [N * T * B * A, D]
+        share_obs = _flatten(self.share_obs[slots, :-1], 4)
+        obs = _flatten(self.obs[slots, :-1], 4)
+        actions = _flatten(self.actions[slots], 4)
         if hasattr(self, 'available_actions'):
-            available_actions = _flatten(self.available_actions[slot_id, :-1], 3)
-        value_preds = _flatten(self.value_preds[slot_id, :-1], 3)
-        returns = _flatten(self.returns[slot_id, :-1], 3)
+            available_actions = _flatten(self.available_actions[slots, :-1], 4)
+        value_preds = _flatten(self.value_preds[slots, :-1], 4)
+        returns = _flatten(self.returns[slots, :-1], 4)
         v_target = self.value_normalizer(returns, train_popart) if self._use_popart else returns
-        masks = _flatten(self.masks[slot_id, :-1], 3)
-        active_masks = _flatten(self.active_masks[slot_id, :-1], 3)
-        action_log_probs = _flatten(self.action_log_probs[slot_id], 3)
-        advantages = _flatten(self.advantages[slot_id], 3)
+        masks = _flatten(self.masks[slots, :-1], 4)
+        active_masks = _flatten(self.active_masks[slots, :-1], 4)
+        action_log_probs = _flatten(self.action_log_probs[slots], 4)
+        advantages = _flatten(self.advantages[slots], 4)
 
         # TODO: although rnn_state is useless when using MLP,
         # we must return it to ensure the correctness of model dataflow ...
-        rnn_states = _flatten(self.rnn_states[slot_id, :-1], 3)
-        rnn_states_critic = _flatten(self.rnn_states_critic[slot_id, :-1], 3)
+        rnn_states = _flatten(self.rnn_states[slots, :-1], 4)
+        rnn_states_critic = _flatten(self.rnn_states_critic[slots, :-1], 4)
 
         if num_mini_batch == 1:
             outputs = (share_obs, obs, rnn_states, rnn_states_critic, actions, value_preds, v_target, masks,
@@ -388,12 +393,15 @@ class ReplayBuffer:
                     assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
                 yield outputs
 
-    def recurrent_generator(self, slot_id, train_popart):
+    def recurrent_generator(self, slots, train_popart):
         # once we ensure different trainers get different slot_ids,
-        # the following 3 line does not need lock
-        if not self._is_return_ready[slot_id]:
-            self._compute_returns(slot_id)
-            self._is_return_ready[slot_id] = 1
+        # the following few lines do not need lock
+        non_ready_slot_ids = []
+        for slot_id in slots:
+            if not self._is_return_ready[slot_id]:
+                non_ready_slot_ids.append(slot_id)
+        self._compute_returns(non_ready_slot_ids)
+        self._is_return_ready[non_ready_slot_ids] = 1
 
         data_chunk_length = self.data_chunk_length
         num_mini_batch = self.num_mini_batch
@@ -404,32 +412,38 @@ class ReplayBuffer:
         mini_batch_size = batch_size // num_mini_batch
 
         def _cast(x):
-            # B' = T * B * A / L
+            # [N, T, B, A, D] -> [T, N, B, A, D] -> [T, N * B, A, D]
+            x = x.swapaxes(0, 1)
+            x = x.reshape(x.shape[0], -1, *x.shape[3:])
+            # B <- N * B, B' = T * B * A / L
             # [T, B, A, D] -> [L, T*B/L, A, D] -> [L, B', D]
             return _to_chunk(x, num_chunks)
 
-        share_obs = _cast(self.share_obs[slot_id, :-1])
-        obs = _cast(self.obs[slot_id, :-1])
-        actions = _cast(self.actions[slot_id])
-        action_log_probs = _cast(self.action_log_probs[slot_id])
-        value_preds = _cast(self.value_preds[slot_id, :-1])
-        returns = _cast(self.returns[slot_id, :-1])
+        share_obs = _cast(self.share_obs[slots, :-1])
+        obs = _cast(self.obs[slots, :-1])
+        actions = _cast(self.actions[slots])
+        action_log_probs = _cast(self.action_log_probs[slots])
+        value_preds = _cast(self.value_preds[slots, :-1])
+        returns = _cast(self.returns[slots, :-1])
         v_target = self.value_normalizer(returns.reshape(-1, 1), train_popart).reshape(
             *returns.shape) if self._use_popart else returns
-        masks = _cast(self.masks[slot_id, :-1])
-        active_masks = _cast(self.active_masks[slot_id, :-1])
-        advantages = _cast(self.advantages[slot_id])
+        masks = _cast(self.masks[slots, :-1])
+        active_masks = _cast(self.active_masks[slots, :-1])
+        advantages = _cast(self.advantages[slots])
 
         if hasattr(self, 'available_actions'):
-            available_actions = _cast(self.available_actions[slot_id, :-1])
+            available_actions = _cast(self.available_actions[slots, :-1])
 
         def _cast_h(h):
-            # B' = T * B * A / L
+            # [N, T, B, A, rN, D] -> [T, N, B, A, rN, D] -> [T, N * B, A, rN, D]
+            h = h.swapaxes(0, 1)
+            h = h.reshape(h.shape[0], -1, *h.shape[3:])
+            # B <- N * B, B' = T * B * A / L
             # [T, B, A, rN, D] -> [T/L, B, A, rN, D] -> [B', rN, D] -> [rN, B', D]
             return _select_rnn_states(h, num_chunks)
 
-        rnn_states = _cast_h(self.rnn_states[slot_id, :-1])
-        rnn_states_critic = _cast_h(self.rnn_states_critic[slot_id, :-1])
+        rnn_states = _cast_h(self.rnn_states[slots, :-1])
+        rnn_states_critic = _cast_h(self.rnn_states_critic[slots, :-1])
 
         if num_mini_batch == 1:
             share_obs_batch = share_obs
