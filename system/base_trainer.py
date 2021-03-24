@@ -96,6 +96,10 @@ class Trainer:
     def run(self):
         raise NotImplementedError
 
+    def eval(self):
+        # TODO: conduct evaluation using inference server rather than trainer
+        raise NotImplementedError
+
     def pack_off_weights(self):
         if self.ddp_rank == 0:
             # send weights to rollout policy

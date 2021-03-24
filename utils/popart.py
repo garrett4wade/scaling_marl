@@ -5,7 +5,7 @@ import torch.multiprocessing as mp
 
 
 class PopArt(nn.Module):
-    def __init__(self, input_shape, num_trainers, norm_axes=1, beta=0.99999, per_element_update=False, epsilon=1e-5):
+    def __init__(self, input_shape, num_trainers, norm_axes=1, beta=0.9999, per_element_update=False, epsilon=1e-5):
         super(PopArt, self).__init__()
         self.norm_axes = norm_axes
         self.epsilon = epsilon
@@ -35,7 +35,6 @@ class PopArt(nn.Module):
         return debiased_mean, debiased_var
 
     def forward(self, input_vector, train=True):
-        # TODO: when computing loss, the same batch is used for #ppo_epoch times!
         # called before computing loss, to normalize target values and to update running mean/std
         np_input = isinstance(input_vector, np.ndarray)
         input_vector = torch.from_numpy(input_vector) if np_input else input_vector

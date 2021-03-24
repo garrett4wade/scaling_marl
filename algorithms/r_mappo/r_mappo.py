@@ -117,7 +117,14 @@ class R_MAPPO:
 
         for i in range(self.ppo_epoch):
             dist.barrier()
-            slot_id, data_generator = buffer.get(self._use_recurrent_policy)
+            # only train popart parameter in the first epoch
+            slot_id, data_generator = buffer.get(train_popart=(i == 0), recur=self._use_recurrent_policy)
+
+            # ensure all process get different slot ids
+            tensor_list = [torch.zeros(1).to(self.device) for _ in range(self.num_trainers)]
+            dist.all_gather(tensor_list, torch.Tensor([slot_id]).to(self.device))
+            slot_ids = [t.item() for t in tensor_list]
+            assert len(np.unique(slot_ids)) == len(slot_ids)
 
             for sample in data_generator:
 
