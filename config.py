@@ -200,6 +200,7 @@ def get_config():
     parser.add_argument("--verbose_time", action='store_true', default=False)
     parser.add_argument("--num_trainers", type=int, default=1)
     parser.add_argument("--num_servers", type=int, default=1)
+    parser.add_argument('--server_gpu_ranks', type=int, nargs='+')
 
     # env parameters
     parser.add_argument("--env_name", type=str, default='StarCraft2', help="specify the name of environment")

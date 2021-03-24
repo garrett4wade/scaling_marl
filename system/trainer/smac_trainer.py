@@ -28,6 +28,8 @@ class SMACTrainer(Trainer):
             if self.use_linear_lr_decay:
                 self.policy.lr_decay(episode, episodes)
 
+            buffer_util = self.buffer.get_utilization()
+
             train_infos = self.training_step()
             self.pack_off_weights()
 
@@ -57,12 +59,16 @@ class SMACTrainer(Trainer):
 
                 recent_win_rate = recent_battles_won / recent_battles_game if recent_battles_game > 0 else 0.0
                 print("recent winning rate is {}.".format(recent_win_rate))
+
+                print('buffer utilization before training step: {:.2f}'.format(buffer_util))
+
                 if self.use_wandb:
                     wandb.log(
                         {
                             "recent_win_rate": recent_win_rate,
                             'total_env_steps': total_num_steps,
                             'fps': recent_fps,
+                            'buffer_util': buffer_util,
                         },
                         step=total_num_steps)
                 else:

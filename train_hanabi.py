@@ -153,8 +153,15 @@ def run(rank, world_size, weights_queue, buffer, config):
 
         rpc.init_rpc('agent_' + str(rank - offset), rank=rank, world_size=world_size, rpc_backend_options=rpc_opt)
 
-        # TODO: modify server device
-        server = HanabiServer(rank, 3, weights_queue, buffer, config)
+        server_gpu_ranks = all_args.server_gpu_ranks
+        if len(server_gpu_ranks) == 1:
+            gpu_rank = server_gpu_ranks[0]
+        elif len(server_gpu_ranks) == all_args.num_servers:
+            gpu_rank = server_gpu_ranks[rank - offset]
+        else:
+            raise RuntimeError('server_gpu_ranks needs to either have length 1 or length #num_servers.')
+
+        server = HanabiServer(rank, gpu_rank, weights_queue, buffer, config)
         server.setup_actors()
 
     else:
@@ -167,7 +174,7 @@ def run(rank, world_size, weights_queue, buffer, config):
     rpc.shutdown()
 
 
-if __name__ == "__main__":
+def main():
     parser = get_config()
     all_args = parse_args(sys.argv[1:], parser)
 
@@ -222,3 +229,7 @@ if __name__ == "__main__":
         procs.append(p)
     for p in procs:
         p.join()
+
+
+if __name__ == "__main__":
+    main()

@@ -33,7 +33,8 @@ do
                             --num_split 2 \
                             --eval_interval 5 \
                             --num_trainers 2 \
-                            --num_servers 1 \
+                            --num_servers 2 \
+                            --server_gpu_ranks 3 \
                             --eval_interval 5 \
                             --use_eval \
                             --use_wandb

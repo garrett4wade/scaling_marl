@@ -28,6 +28,8 @@ class HanabiTrainer(Trainer):
             if self.use_linear_lr_decay:
                 self.policy.lr_decay(episode, episodes)
 
+            buffer_util = self.buffer.get_utilization()
+
             train_infos = self.training_step()
             self.pack_off_weights()
 
@@ -57,13 +59,17 @@ class HanabiTrainer(Trainer):
                 average_score = recent_total_scores / recent_elapsed_episode
                 print("average score is {}.".format(average_score))
 
+                print('buffer utilization before training step: {:.2f}'.format(buffer_util))
+
                 if self.use_wandb:
-                    wandb.log({
-                        'average_score': average_score,
-                        'total_env_steps': total_num_steps,
-                        'fps': recent_fps,
-                    },
-                              step=total_num_steps)
+                    wandb.log(
+                        {
+                            'average_score': average_score,
+                            'total_env_steps': total_num_steps,
+                            'fps': recent_fps,
+                            'buffer_util': buffer_util,
+                        },
+                        step=total_num_steps)
                 else:
                     self.writter.add_scalars('average_score', {'average_score': average_score}, total_num_steps)
 

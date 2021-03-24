@@ -41,6 +41,7 @@ do
                                 --eval_interval 5 \
                                 --num_trainers 1 \
                                 --num_servers 4 \
+                                --server_gpu_ranks 3 \
                                 --use_eval \
                                 --use_wandb
                                 # --use_eval \

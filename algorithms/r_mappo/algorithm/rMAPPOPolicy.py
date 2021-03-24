@@ -11,7 +11,6 @@ def get_actions_from_dist(action_dists, action_reduce_fn, log_prob_reduce_fn, de
     for action_dist in action_dists:
         action = action_dist.mode() if deterministic else action_dist.sample()
         action_log_prob = action_dist.log_probs(action)
-        # TODO: will .float() be a problem ?
         actions.append(action.float())
         action_log_probs.append(action_log_prob)
     actions = action_reduce_fn(actions)
