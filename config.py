@@ -270,7 +270,6 @@ def get_config():
     parser.add_argument("--clip_param", type=float, default=0.2, help='ppo clip parameter (default: 0.2)')
     parser.add_argument("--num_mini_batch", type=int, default=1, help='number of batches for ppo (default: 1)')
     parser.add_argument("--entropy_coef", type=float, default=0.01, help='entropy term coefficient (default: 0.01)')
-    parser.add_argument("--value_loss_coef", type=float, default=1, help='value loss coefficient (default: 0.5)')
     parser.add_argument("--use_max_grad_norm",
                         action='store_false',
                         default=True,

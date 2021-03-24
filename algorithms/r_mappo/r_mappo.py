@@ -12,10 +12,10 @@ class R_MAPPO:
         self.tpdv = dict(dtype=torch.float32, device=self.device)
         self.policy = policy
         self.num_mini_batch = args.num_mini_batch
+        self.num_trainers = dist.get_world_size()
 
         self.clip_param = args.clip_param
         self.ppo_epoch = args.ppo_epoch
-        self.value_loss_coef = args.value_loss_coef
         self.entropy_coef = args.entropy_coef
         self.max_grad_norm = args.max_grad_norm
 
@@ -97,7 +97,7 @@ class R_MAPPO:
 
         self.policy.critic_optimizer.zero_grad()
 
-        (value_loss * self.value_loss_coef).backward()
+        value_loss.backward()
 
         if self._use_max_grad_norm:
             critic_grad_norm = nn.utils.clip_grad_norm_(self.policy.critic.parameters(), self.max_grad_norm)
@@ -106,17 +106,14 @@ class R_MAPPO:
 
         self.policy.critic_optimizer.step()
 
-        return value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm, imp_weights
+        return value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm
 
     def step(self, buffer, update_actor=True):
         train_info = {}
 
-        train_info['value_loss'] = 0
-        train_info['policy_loss'] = 0
-        train_info['dist_entropy'] = 0
-        train_info['actor_grad_norm'] = 0
-        train_info['critic_grad_norm'] = 0
-        train_info['ratio'] = 0
+        summary_keys = ['value_loss', 'policy_loss', 'dist_entropy', 'actor_grad_norm', 'critic_grad_norm']
+        for k in summary_keys:
+            train_info[k] = 0
 
         for i in range(self.ppo_epoch):
             dist.barrier()
@@ -124,15 +121,13 @@ class R_MAPPO:
 
             for sample in data_generator:
 
-                value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm, imp_weights \
-                    = self.ppo_update(sample, update_actor)
+                infos = self.ppo_update(sample, update_actor)
+                for info in infos:
+                    dist.all_reduce(info)
+                value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm = infos
 
-                train_info['value_loss'] += value_loss.item()
-                train_info['policy_loss'] += policy_loss.item()
-                train_info['dist_entropy'] += dist_entropy.item()
-                train_info['actor_grad_norm'] += actor_grad_norm
-                train_info['critic_grad_norm'] += critic_grad_norm
-                train_info['ratio'] += imp_weights.mean()
+                for k in summary_keys:
+                    train_info[k] += locals()[k].item()
 
             if i == self.ppo_epoch - 1:
                 train_info["average_step_rewards"] = np.mean(buffer.rewards[slot_id])
@@ -140,11 +135,9 @@ class R_MAPPO:
                     buffer.active_masks[slot_id].shape)
             buffer.after_training_step(slot_id)
 
-        num_updates = self.ppo_epoch * self.num_mini_batch
+        reduce_factor = self.ppo_epoch * self.num_mini_batch * self.num_trainers
 
-        for k in train_info.keys():
-            if k != "average_step_rewards":
-                train_info[k] /= num_updates
+        for k in summary_keys:
+            train_info[k] /= reduce_factor
 
-        # TODO: currently just record train_info of DDP process 0
         return train_info
