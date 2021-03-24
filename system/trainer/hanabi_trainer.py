@@ -18,7 +18,8 @@ class HanabiTrainer(Trainer):
         # synchronize weights of rollout policy before inference starts
         self.pack_off_weights()
 
-        episodes = int(self.num_env_steps) // self.episode_length // (self.num_actors * self.env_per_split)
+        transition_per_batch = self.episode_length * self.num_actors * self.env_per_split
+        episodes = int(self.num_env_steps) // transition_per_batch // self.num_trainers
 
         global_tik = local_tik = time.time()
         last_total_num_steps = last_elapsed_episode = last_total_scores = 0
@@ -39,8 +40,8 @@ class HanabiTrainer(Trainer):
             # log information
             if self.ddp_rank == 0 and episode % self.log_interval == 0:
                 tok = time.time()
-                recent_fps = int((total_num_steps - last_total_num_steps) / (tok - local_tik) * self.num_trainers)
-                global_avg_fps = int(total_num_steps / (tok - global_tik) * self.num_trainers)
+                recent_fps = int((total_num_steps - last_total_num_steps) / (tok - local_tik))
+                global_avg_fps = int(total_num_steps / (tok - global_tik))
                 print("\nGame Version {}, Algo {} Exp {} updates {}/{} episodes, total num timesteps {}/{}, "
                       "recent FPS {}, global average FPS {}.\n".format(self.all_args.hanabi_name, self.algorithm_name,
                                                                        self.experiment_name, episode, episodes,
@@ -114,8 +115,8 @@ class HanabiTrainer(Trainer):
                         episode_cnt += 1
                         eval_scores.append(info['score'])
 
-        avg_score = torch.Tensor([np.mean(eval_scores)])
-        dist.all_reduce(avg_score.to(self.ddp_rank))
+        avg_score = torch.Tensor([np.mean(eval_scores)]).to(self.ddp_rank)
+        dist.all_reduce(avg_score)
 
         if self.ddp_rank == 0:
             avg_score = avg_score.item() / self.num_trainers

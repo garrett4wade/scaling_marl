@@ -4,7 +4,7 @@ algo="mappo"
 bash clean.sh
 
 map="3m"
-episode_length=400
+episode_length=100
 
 # 168 4356 
 seeds=(952)
@@ -31,6 +31,9 @@ do
                             --num_actors 4 \
                             --env_per_actor 2 \
                             --num_split 2 \
+                            --eval_interval 5 \
+                            --num_trainers 2 \
+                            --num_servers 1 \
                             --eval_interval 5 \
                             --use_eval \
                             --use_wandb

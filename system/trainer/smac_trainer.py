@@ -2,7 +2,7 @@ import time
 import wandb
 import numpy as np
 import torch
-import torc.distributed as dist
+import torch.distributed as dist
 from system.base_trainer import Trainer
 
 
@@ -18,7 +18,8 @@ class SMACTrainer(Trainer):
         # synchronize weights of rollout policy before inference starts
         self.pack_off_weights()
 
-        episodes = int(self.num_env_steps) // self.episode_length // (self.num_actors * self.env_per_split)
+        transition_per_batch = self.episode_length * self.num_actors * self.env_per_split
+        episodes = int(self.num_env_steps) // transition_per_batch // self.num_trainers
 
         global_tik = local_tik = time.time()
         last_battles_game = last_battles_won = last_total_num_steps = 0
@@ -39,8 +40,8 @@ class SMACTrainer(Trainer):
             # log information
             if self.ddp_rank == 0 and episode % self.log_interval == 0:
                 tok = time.time()
-                recent_fps = int((total_num_steps - last_total_num_steps) / (tok - local_tik) * self.num_trainers)
-                global_avg_fps = int(total_num_steps / (tok - global_tik) * self.num_trainers)
+                recent_fps = int((total_num_steps - last_total_num_steps) / (tok - local_tik))
+                global_avg_fps = int(total_num_steps / (tok - global_tik))
                 print("\n Map {} Algo {} Exp {} updates {}/{} episodes, total num timesteps {}/{}, "
                       "recent FPS {}, global average FPS {}.\n".format(self.all_args.map_name, self.algorithm_name,
                                                                        self.experiment_name, episode, episodes,
@@ -123,8 +124,9 @@ class SMACTrainer(Trainer):
                     if eval_infos[eval_i][0]['won']:
                         eval_battles_won += 1
 
-        summary_tensor = torch.Tensor([np.mean(eval_episode_rewards), eval_battles_won / eval_episode])
-        dist.all_reduce(summary_tensor.to(self.ddp_rank))
+        summary_tensor = torch.Tensor([np.mean(eval_episode_rewards),
+                                       eval_battles_won / eval_episode]).to(self.ddp_rank)
+        dist.all_reduce(summary_tensor)
 
         if self.ddp_rank == 0:
             avg_reward = summary_tensor[0].item() / self.num_trainers

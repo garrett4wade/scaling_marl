@@ -67,7 +67,7 @@ def make_example_env(all_args):
     return ShareDummyVecEnv([get_env_fn(0)])
 
 
-def make_eval_env(all_args):
+def make_eval_env(trainer_id, all_args):
     def get_env_fn(rank):
         def init_env():
             if all_args.env_name == "Hanabi":
@@ -76,7 +76,7 @@ def make_eval_env(all_args):
             else:
                 print("Can not support the " + all_args.env_name + "environment.")
                 raise NotImplementedError
-            env.seed(all_args.seed * 500 + rank * 10000)
+            env.seed(all_args.seed * 500 + rank * 10000 + trainer_id * 5)
             return env
 
         return init_env

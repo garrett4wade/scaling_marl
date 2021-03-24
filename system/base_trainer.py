@@ -22,7 +22,7 @@ class Trainer:
         assert self.all_args.cuda and torch.cuda.is_available(), 'cpu training currently not supported'
         torch.cuda.set_device(self.ddp_rank)
 
-        self.eval_envs = config['eval_envs_fn'](self.all_args)
+        self.eval_envs = config['eval_envs_fn'](self.trainer_id, self.all_args)
         self.num_agents = config['num_agents']
 
         # -------- parameters --------
