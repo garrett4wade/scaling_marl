@@ -102,7 +102,7 @@ def init_summary(run_dir, all_args):
                          notes=socket.gethostname(),
                          name=str(all_args.algorithm_name) + "_" + str(all_args.experiment_name) + "_seed" +
                          str(all_args.seed),
-                         group=all_args.hanabi_name,
+                         group=all_args.group_name,
                          dir=str(run_dir),
                          job_type="training",
                          reinit=True)
@@ -127,8 +127,8 @@ def init_summary(run_dir, all_args):
 
 def run(rank, world_size, weights_queue, buffer, config):
     all_args = config['all_args']
-    rpc_init_method = 'tcp://localhost:23457'
-    ddp_init_method = 'tcp://localhost:12345'
+    rpc_init_method = 'tcp://192.168.1.103:6379'
+    ddp_init_method = 'file:///dev/shm/smac_ddp'
     if rank < all_args.num_trainers:
         dist.init_process_group('nccl', init_method=ddp_init_method, rank=rank, world_size=all_args.num_trainers)
 
@@ -184,6 +184,8 @@ def run(rank, world_size, weights_queue, buffer, config):
 def main():
     parser = get_config()
     all_args = parse_args(sys.argv[1:], parser)
+    if all_args.group_name is None:
+        all_args.group_name = all_args.map_name
 
     if all_args.algorithm_name == "rmappo":
         all_args.use_recurrent_policy = True

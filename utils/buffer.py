@@ -328,8 +328,9 @@ class ReplayBuffer:
         for slot_id in slots:
             if not self._is_return_ready[slot_id]:
                 non_ready_slot_ids.append(slot_id)
-        self._compute_returns(non_ready_slot_ids)
-        self._is_return_ready[non_ready_slot_ids] = 1
+        if len(non_ready_slot_ids) > 0:
+            self._compute_returns(non_ready_slot_ids)
+            self._is_return_ready[non_ready_slot_ids] = 1
 
         num_mini_batch = self.num_mini_batch
         batch_size = self.batch_size * self.episode_length * self.num_agents
@@ -400,8 +401,9 @@ class ReplayBuffer:
         for slot_id in slots:
             if not self._is_return_ready[slot_id]:
                 non_ready_slot_ids.append(slot_id)
-        self._compute_returns(non_ready_slot_ids)
-        self._is_return_ready[non_ready_slot_ids] = 1
+        if len(non_ready_slot_ids) > 0:
+            self._compute_returns(non_ready_slot_ids)
+            self._is_return_ready[non_ready_slot_ids] = 1
 
         data_chunk_length = self.data_chunk_length
         num_mini_batch = self.num_mini_batch

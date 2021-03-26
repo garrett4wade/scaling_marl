@@ -202,6 +202,7 @@ def get_config():
     parser.add_argument("--num_servers", type=int, default=1)
     parser.add_argument('--server_gpu_ranks', type=int, nargs='+')
     parser.add_argument("--slots_per_update", type=int, default=1)
+    parser.add_argument("--group_name", type=str)
 
     # env parameters
     parser.add_argument("--env_name", type=str, default='StarCraft2', help="specify the name of environment")
