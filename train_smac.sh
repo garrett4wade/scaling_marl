@@ -1,8 +1,11 @@
 #!/bin/sh
 env="StarCraft2"
 algo="rmappo"
+
 rm -rf /tmp/*
-bash clean.sh
+pkill -9 Main_Thread & sleep 0.5
+pkill -9 python3.8 & sleep 0.5
+rm /dev/shm/smac_rpc /dev/shm/smac_ddp
 
 map="6h_vs_8z"
 episode_length=200
@@ -30,6 +33,8 @@ do
                             --slots_per_update 1 \
                             --server_gpu_ranks 3 \
                             --use_eval
-    bash clean.sh
+    pkill -9 Main_Thread & sleep 0.5
+    pkill -9 python3.8 & sleep 0.5
+    rm /dev/shm/smac_rpc /dev/shm/smac_ddp
 done
 rm -rf /tmp/*
