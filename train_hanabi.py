@@ -120,8 +120,8 @@ def init_summary(run_dir, all_args):
 
 def run(rank, world_size, weights_queue, buffer, config):
     all_args = config['all_args']
-    rpc_init_method = 'tcp://localhost:23457'
-    ddp_init_method = 'tcp://localhost:12345'
+    rpc_init_method = 'file:///dev/shm/hanabi_rpc'
+    ddp_init_method = 'file:///dev/shm/hanabi_ddp'
     if rank < all_args.num_trainers:
         dist.init_process_group('nccl', init_method=ddp_init_method, rank=rank, world_size=all_args.num_trainers)
 

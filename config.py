@@ -172,7 +172,7 @@ def get_config():
                         action='store_false',
                         default=True,
                         help="by default, make sure random seed effective. if set, bypass such function.")
-    parser.add_argument("--n_training_threads", type=int, default=1, help="Number of torch threads for training")
+    parser.add_argument("--n_training_threads", type=int, default=16, help="Number of torch threads for training")
     parser.add_argument("--n_eval_rollout_threads",
                         type=int,
                         default=4,
@@ -196,7 +196,6 @@ def get_config():
     parser.add_argument("--env_per_actor", type=int, default=2)
     parser.add_argument("--num_split", type=int, default=2)
     parser.add_argument("--qsize", type=int, default=16)
-    parser.add_argument("--rollout_batch_size", type=int, default=4)
     parser.add_argument("--verbose_time", action='store_true', default=False)
     parser.add_argument("--num_trainers", type=int, default=1)
     parser.add_argument("--num_servers", type=int, default=1)
@@ -323,7 +322,7 @@ def get_config():
                         help="by default, do not start evaluation. If set`, start evaluation alongside with training.")
     parser.add_argument("--eval_interval",
                         type=int,
-                        default=25,
+                        default=5,
                         help="time duration between contiunous twice evaluation progress.")
     parser.add_argument("--eval_episodes", type=int, default=32, help="number of episodes of a single evaluation.")
 
