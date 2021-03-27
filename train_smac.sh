@@ -7,11 +7,10 @@ pkill -9 Main_Thread & sleep 0.5
 pkill -9 python3.8 & sleep 0.5
 rm /dev/shm/smac_rpc /dev/shm/smac_ddp
 
-map="6h_vs_8z"
-episode_length=200
+map="MMM2"
+episode_length=50
 
-# 952
-seeds=(168 4356)
+seeds=(952 168 4356)
 num_env_steps=20000000
 
 for seed in ${seeds[@]};
@@ -23,16 +22,16 @@ do
                             --seed ${seed} \
                             --episode_length ${episode_length} \
                             --num_env_steps ${num_env_steps} \
-                            --group_name ${map}"_2x_r10_gate" \
-                            --ppo_epoch 10 \
-                            --num_actors 16 \
-                            --env_per_actor 4 \
-                            --num_split 2 \
+                            --group_name ${map}"_7.5x_r5" \
+                            --ppo_epoch 5 \
+                            --num_actors 4 \
+                            --env_per_actor 2 \
                             --num_trainers 1 \
-                            --num_servers 2 \
+                            --num_servers 1 \
                             --slots_per_update 1 \
                             --server_gpu_ranks 3 \
-                            --use_eval
+                            --use_eval \
+                            --use_wandb
     pkill -9 Main_Thread & sleep 0.5
     pkill -9 python3.8 & sleep 0.5
     rm /dev/shm/smac_rpc /dev/shm/smac_ddp
