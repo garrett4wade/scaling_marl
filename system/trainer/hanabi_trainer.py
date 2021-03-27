@@ -18,7 +18,7 @@ class HanabiTrainer(Trainer):
         # synchronize weights of rollout policy before inference starts
         self.pack_off_weights()
 
-        transition_per_batch = self.episode_length * self.num_actors * self.env_per_split
+        transition_per_batch = self.episode_length * self.num_actors * self.env_per_split * self.slots_per_update
         episodes = int(self.num_env_steps) // transition_per_batch // self.num_trainers
 
         global_tik = local_tik = time.time()
@@ -34,6 +34,7 @@ class HanabiTrainer(Trainer):
             self.pack_off_weights()
 
             total_num_steps = self.buffer.total_timesteps.item()
+            consuemd_num_steps = (episode + 1) * transition_per_batch * self.num_trainers
 
             # save model
             if self.ddp_rank == 0 and (episode % self.save_interval == 0 or episode == episodes - 1):
@@ -44,11 +45,11 @@ class HanabiTrainer(Trainer):
                 tok = time.time()
                 recent_fps = int((total_num_steps - last_total_num_steps) / (tok - local_tik))
                 global_avg_fps = int(total_num_steps / (tok - global_tik))
-                print("\nGame Version {}, Algo {} Exp {} updates {}/{} episodes, total num timesteps {}/{}, "
+                print("\nGame Version {}, Algo {} Exp {} updates {}/{} episodes, consumed num timesteps {}/{}, "
                       "recent FPS {}, global average FPS {}.\n".format(self.all_args.hanabi_name, self.algorithm_name,
                                                                        self.experiment_name, episode, episodes,
-                                                                       total_num_steps, self.num_env_steps, recent_fps,
-                                                                       global_avg_fps))
+                                                                       consuemd_num_steps, self.num_env_steps,
+                                                                       recent_fps, global_avg_fps))
 
                 assert self.env_name == "Hanabi"
                 with self.buffer.summary_lock:  # multiprocessing RLock
@@ -68,22 +69,23 @@ class HanabiTrainer(Trainer):
                             'total_env_steps': total_num_steps,
                             'fps': recent_fps,
                             'buffer_util': buffer_util,
+                            'iteraion': episode + 1,
                         },
-                        step=total_num_steps)
+                        step=consuemd_num_steps)
                 else:
-                    self.writter.add_scalars('average_score', {'average_score': average_score}, total_num_steps)
+                    self.writter.add_scalars('average_score', {'average_score': average_score}, consuemd_num_steps)
 
                 last_total_num_steps = total_num_steps
                 last_elapsed_episode = elapsed_episode
                 last_total_scores = total_scores
                 local_tik = time.time()
 
-                self.log_info(train_infos, total_num_steps)
+                self.log_info(train_infos, consuemd_num_steps)
 
             dist.barrier()
             # eval
             if episode % self.eval_interval == 0 and self.use_eval:
-                self.eval(total_num_steps)
+                self.eval(consuemd_num_steps)
 
     @torch.no_grad()
     def eval(self, total_num_steps):

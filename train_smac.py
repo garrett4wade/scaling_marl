@@ -127,7 +127,7 @@ def init_summary(run_dir, all_args):
 
 def run(rank, world_size, weights_queue, buffer, config):
     all_args = config['all_args']
-    rpc_init_method = 'tcp://192.168.1.103:6379'
+    rpc_init_method = 'file:///dev/shm/smac_rpc'
     ddp_init_method = 'file:///dev/shm/smac_ddp'
     if rank < all_args.num_trainers:
         dist.init_process_group('nccl', init_method=ddp_init_method, rank=rank, world_size=all_args.num_trainers)

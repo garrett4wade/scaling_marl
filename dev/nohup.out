@@ -1,0 +1,88 @@
+Traceback (most recent call last):
+  File "/home/fuwei/workspace/seed_mappo/dev/multi_test_remote.py", line 38, in <module>
+    p.join()
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/multiprocessing/process.py", line 149, in join
+    res = self._popen.wait(timeout)
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/multiprocessing/popen_fork.py", line 47, in wait
+    return self.poll(os.WNOHANG if timeout == 0.0 else 0)
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/multiprocessing/popen_fork.py", line 27, in poll
+    pid, sts = os.waitpid(self.pid, flag)
+KeyboardInterrupt
+Process Process-1:
+Traceback (most recent call last):
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/multiprocessing/process.py", line 315, in _bootstrap
+    self.run()
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/fuwei/workspace/seed_mappo/dev/multi_test_remote.py", line 21, in run
+    rpc.init_rpc('agent_' + str(rank), rank=rank, world_size=world_size, rpc_backend_options=rpc_opt)
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/site-packages/torch/distributed/rpc/__init__.py", line 139, in init_rpc
+    store, _, _ = next(rendezvous_iterator)
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/site-packages/torch/distributed/rendezvous.py", line 133, in _tcp_rendezvous_handler
+    store = TCPStore(result.hostname, result.port, world_size, start_daemon, timeout)
+KeyboardInterrupt
+Process Process-3:
+Traceback (most recent call last):
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/multiprocessing/process.py", line 315, in _bootstrap
+    self.run()
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/fuwei/workspace/seed_mappo/dev/multi_test_remote.py", line 21, in run
+    rpc.init_rpc('agent_' + str(rank), rank=rank, world_size=world_size, rpc_backend_options=rpc_opt)
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/site-packages/torch/distributed/rpc/__init__.py", line 139, in init_rpc
+    store, _, _ = next(rendezvous_iterator)
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/site-packages/torch/distributed/rendezvous.py", line 133, in _tcp_rendezvous_handler
+    store = TCPStore(result.hostname, result.port, world_size, start_daemon, timeout)
+KeyboardInterrupt
+Process Process-5:
+Traceback (most recent call last):
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/multiprocessing/process.py", line 315, in _bootstrap
+    self.run()
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/fuwei/workspace/seed_mappo/dev/multi_test_remote.py", line 21, in run
+    rpc.init_rpc('agent_' + str(rank), rank=rank, world_size=world_size, rpc_backend_options=rpc_opt)
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/site-packages/torch/distributed/rpc/__init__.py", line 139, in init_rpc
+    store, _, _ = next(rendezvous_iterator)
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/site-packages/torch/distributed/rendezvous.py", line 133, in _tcp_rendezvous_handler
+    store = TCPStore(result.hostname, result.port, world_size, start_daemon, timeout)
+KeyboardInterrupt
+Process Process-4:
+Traceback (most recent call last):
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/multiprocessing/process.py", line 315, in _bootstrap
+    self.run()
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/fuwei/workspace/seed_mappo/dev/multi_test_remote.py", line 21, in run
+    rpc.init_rpc('agent_' + str(rank), rank=rank, world_size=world_size, rpc_backend_options=rpc_opt)
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/site-packages/torch/distributed/rpc/__init__.py", line 139, in init_rpc
+    store, _, _ = next(rendezvous_iterator)
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/site-packages/torch/distributed/rendezvous.py", line 133, in _tcp_rendezvous_handler
+    store = TCPStore(result.hostname, result.port, world_size, start_daemon, timeout)
+KeyboardInterrupt
+Process Process-2:
+Traceback (most recent call last):
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/multiprocessing/process.py", line 315, in _bootstrap
+    self.run()
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/fuwei/workspace/seed_mappo/dev/multi_test_remote.py", line 21, in run
+    rpc.init_rpc('agent_' + str(rank), rank=rank, world_size=world_size, rpc_backend_options=rpc_opt)
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/site-packages/torch/distributed/rpc/__init__.py", line 139, in init_rpc
+    store, _, _ = next(rendezvous_iterator)
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/site-packages/torch/distributed/rendezvous.py", line 133, in _tcp_rendezvous_handler
+    store = TCPStore(result.hostname, result.port, world_size, start_daemon, timeout)
+KeyboardInterrupt
+Process Process-6:
+Traceback (most recent call last):
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/multiprocessing/process.py", line 315, in _bootstrap
+    self.run()
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/fuwei/workspace/seed_mappo/dev/multi_test_remote.py", line 21, in run
+    rpc.init_rpc('agent_' + str(rank), rank=rank, world_size=world_size, rpc_backend_options=rpc_opt)
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/site-packages/torch/distributed/rpc/__init__.py", line 139, in init_rpc
+    store, _, _ = next(rendezvous_iterator)
+  File "/home/fuwei/conda/envs/torch-py38/lib/python3.8/site-packages/torch/distributed/rendezvous.py", line 133, in _tcp_rendezvous_handler
+    store = TCPStore(result.hostname, result.port, world_size, start_daemon, timeout)
+KeyboardInterrupt

@@ -4,10 +4,10 @@ algo="mappo"
 bash clean.sh
 
 map="6h_vs_8z"
-episode_length=400
+episode_length=200
 
 seeds=(952 168 4356)
-num_env_steps=15000000
+num_env_steps=20000000
 
 for seed in ${seeds[@]};
 do
@@ -16,19 +16,18 @@ do
     python3.8 train_smac.py --env_name ${env} \
                             --algorithm_name ${algo} \
                             --experiment_name ${exp} \
-                            --group_name ${map}"_2x" \
+                            --group_name ${map}"_2x_r10" \
                             --map_name ${map} \
                             --seed ${seed} \
-                            --n_training_threads 8 \
-                            --num_mini_batch 1 \
+                            --n_training_threads 16 \
                             --n_eval_rollout_threads 4 \
                             --episode_length ${episode_length} \
                             --num_env_steps ${num_env_steps} \
-                            --ppo_epoch 5 \
+                            --ppo_epoch 10 \
                             --use_value_active_masks \
                             --add_center_xy \
                             --use_state_agent \
-                            --num_actors 8 \
+                            --num_actors 16 \
                             --env_per_actor 4 \
                             --num_split 2 \
                             --eval_interval 5 \

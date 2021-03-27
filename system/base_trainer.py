@@ -40,6 +40,7 @@ class Trainer:
         assert self.env_per_actor % self.num_split == 0
         self.episode_length = self.all_args.episode_length
         self.num_env_steps = self.all_args.num_env_steps
+        self.slots_per_update = self.all_args.slots_per_update
         self.n_eval_rollout_threads = self.all_args.n_eval_rollout_threads
         # interval
         self.save_interval = self.all_args.save_interval
