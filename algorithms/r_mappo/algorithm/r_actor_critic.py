@@ -1,7 +1,8 @@
+import torch
 import torch.nn as nn
 from algorithms.utils.util import init
 from algorithms.utils.cnn import CNNBase
-from algorithms.utils.mlp import MLPBase
+from algorithms.utils.mlp import MLPBase, MLPLayer
 from algorithms.utils.rnn import RNNLayer
 from algorithms.utils.act import ACTLayer
 from utils.util import get_shape_from_obs_space
@@ -10,6 +11,7 @@ from utils.util import get_shape_from_obs_space
 class R_Actor(nn.Module):
     def __init__(self, args, obs_space, action_space):
         super(R_Actor, self).__init__()
+        assert args.use_recurrent_policy
         self.hidden_size = args.hidden_size
 
         self._gain = args.gain
@@ -21,17 +23,21 @@ class R_Actor(nn.Module):
         obs_shape = get_shape_from_obs_space(obs_space)
         base = CNNBase if len(obs_shape) == 3 else MLPBase
         self.base = base(args, obs_shape)
+        self.gate_layer = MLPLayer(self.hidden_size, self.hidden_size, 0, self._use_orthogonal, self.args.use_ReLU)
+        self.gate_norm = nn.LayerNorm(self.hidden_size)
 
-        if self._use_recurrent_policy:
-            self.rnn = RNNLayer(self.hidden_size, self.hidden_size, self._recurrent_N, self._use_orthogonal)
+        # if self._use_recurrent_policy:
+        self.rnn = RNNLayer(self.hidden_size, self.hidden_size, self._recurrent_N, self._use_orthogonal)
 
         self.act = ACTLayer(action_space, self.hidden_size, self._use_orthogonal, self._gain)
 
     def forward(self, obs, rnn_states, masks, available_actions=None):
         actor_features = self.base(obs)
+        gating = torch.sigmoid(self.gate_layer(actor_features))
 
-        if self._use_recurrent_policy:
-            actor_features, rnn_states = self.rnn(actor_features, rnn_states, masks)
+        # if self._use_recurrent_policy:
+        rnn_features, rnn_states = self.rnn(actor_features, rnn_states, masks)
+        actor_features = self.gate_norm(actor_features + gating * rnn_features)
 
         (action_dists, action_reduce_fn, log_prob_reduce_fn, action_preprocess_fn, entropy_fn,
          entropy_reduce_fn) = self.act(actor_features, available_actions)
@@ -43,6 +49,7 @@ class R_Actor(nn.Module):
 class R_Critic(nn.Module):
     def __init__(self, args, cent_obs_space):
         super(R_Critic, self).__init__()
+        assert args.use_recurrent_policy
         self.hidden_size = args.hidden_size
         self._use_orthogonal = args.use_orthogonal
         self._use_recurrent_policy = args.use_recurrent_policy
@@ -52,9 +59,11 @@ class R_Critic(nn.Module):
         cent_obs_space = get_shape_from_obs_space(cent_obs_space)
         base = CNNBase if len(cent_obs_space) == 3 else MLPBase
         self.base = base(args, cent_obs_space)
+        self.gate_layer = MLPLayer(self.hidden_size, self.hidden_size, 0, self._use_orthogonal, self.args.use_ReLU)
+        self.gate_norm = nn.LayerNorm(self.hidden_size)
 
-        if self._use_recurrent_policy:
-            self.rnn = RNNLayer(self.hidden_size, self.hidden_size, self._recurrent_N, self._use_orthogonal)
+        # if self._use_recurrent_policy:
+        self.rnn = RNNLayer(self.hidden_size, self.hidden_size, self._recurrent_N, self._use_orthogonal)
 
         def init_(m):
             return init(m, init_method, lambda x: nn.init.constant_(x, 0))
@@ -63,8 +72,11 @@ class R_Critic(nn.Module):
 
     def forward(self, cent_obs, rnn_states, masks):
         critic_features = self.base(cent_obs)
-        if self._use_recurrent_policy:
-            critic_features, rnn_states = self.rnn(critic_features, rnn_states, masks)
-        values = self.v_out(critic_features)
+        gating = torch.sigmoid(self.gate_layer(critic_features))
 
+        # if self._use_recurrent_policy:
+        rnn_features, rnn_states = self.rnn(critic_features, rnn_states, masks)
+        critic_features = self.gate_norm(critic_features + gating * rnn_features)
+
+        values = self.v_out(critic_features)
         return values, rnn_states
