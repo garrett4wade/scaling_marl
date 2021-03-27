@@ -23,7 +23,7 @@ class R_Actor(nn.Module):
         obs_shape = get_shape_from_obs_space(obs_space)
         base = CNNBase if len(obs_shape) == 3 else MLPBase
         self.base = base(args, obs_shape)
-        self.gate_layer = MLPLayer(self.hidden_size, self.hidden_size, 0, self._use_orthogonal, self.args.use_ReLU)
+        self.gate_layer = MLPLayer(self.hidden_size, self.hidden_size, 0, self._use_orthogonal, args.use_ReLU)
         self.gate_norm = nn.LayerNorm(self.hidden_size)
 
         # if self._use_recurrent_policy:
@@ -59,7 +59,7 @@ class R_Critic(nn.Module):
         cent_obs_space = get_shape_from_obs_space(cent_obs_space)
         base = CNNBase if len(cent_obs_space) == 3 else MLPBase
         self.base = base(args, cent_obs_space)
-        self.gate_layer = MLPLayer(self.hidden_size, self.hidden_size, 0, self._use_orthogonal, self.args.use_ReLU)
+        self.gate_layer = MLPLayer(self.hidden_size, self.hidden_size, 0, self._use_orthogonal, args.use_ReLU)
         self.gate_norm = nn.LayerNorm(self.hidden_size)
 
         # if self._use_recurrent_policy:
