@@ -31,7 +31,7 @@ class R_Actor(nn.Module):
         actor_features = self.base(obs)
 
         if self._use_recurrent_policy:
-            rnn_features, rnn_states = self.rnn(actor_features, rnn_states, masks)
+            actor_features, rnn_states = self.rnn(actor_features, rnn_states, masks)
 
         (action_dists, action_reduce_fn, log_prob_reduce_fn, action_preprocess_fn, entropy_fn,
          entropy_reduce_fn) = self.act(actor_features, available_actions)
@@ -63,9 +63,8 @@ class R_Critic(nn.Module):
 
     def forward(self, cent_obs, rnn_states, masks):
         critic_features = self.base(cent_obs)
-
         if self._use_recurrent_policy:
-            rnn_features, rnn_states = self.rnn(critic_features, rnn_states, masks)
-
+            critic_features, rnn_states = self.rnn(critic_features, rnn_states, masks)
         values = self.v_out(critic_features)
+
         return values, rnn_states
