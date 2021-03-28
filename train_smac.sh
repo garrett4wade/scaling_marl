@@ -2,14 +2,15 @@
 rm -rf /tmp/*
 pkill -9 Main_Thread & sleep 0.5
 pkill -9 python3.8 & sleep 0.5
-rm /dev/shm/smac_rpc /dev/shm/smac_ddp
+rm -rf /dev/shm/*
 
 env="StarCraft2"
 algo="rmappo"
 map="MMM2"
 episode_length=400
 
-seeds=(952 168 4356)
+# 952
+seeds=(168 4356)
 num_env_steps=20000000
 
 for seed in ${seeds[@]};
@@ -32,6 +33,6 @@ do
                             --use_eval
     pkill -9 Main_Thread & sleep 0.5
     pkill -9 python3.8 & sleep 0.5
-    rm /dev/shm/smac_rpc /dev/shm/smac_ddp
+    rm -rf /dev/shm/*
 done
 rm -rf /tmp/*
