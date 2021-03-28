@@ -1,14 +1,13 @@
 #!/bin/sh
-env="StarCraft2"
-algo="rmappo"
-
 rm -rf /tmp/*
 pkill -9 Main_Thread & sleep 0.5
 pkill -9 python3.8 & sleep 0.5
 rm /dev/shm/smac_rpc /dev/shm/smac_ddp
 
+env="StarCraft2"
+algo="rmappo"
 map="MMM2"
-episode_length=50
+episode_length=400
 
 seeds=(952 168 4356)
 num_env_steps=20000000
@@ -22,16 +21,15 @@ do
                             --seed ${seed} \
                             --episode_length ${episode_length} \
                             --num_env_steps ${num_env_steps} \
-                            --group_name ${map}"_7.5x_r5" \
+                            --group_name ${map}"_6x_r5_rnn" \
                             --ppo_epoch 5 \
-                            --num_actors 4 \
-                            --env_per_actor 2 \
+                            --num_actors 16 \
+                            --env_per_actor 6 \
                             --num_trainers 1 \
                             --num_servers 1 \
                             --slots_per_update 1 \
                             --server_gpu_ranks 3 \
-                            --use_eval \
-                            --use_wandb
+                            --use_eval
     pkill -9 Main_Thread & sleep 0.5
     pkill -9 python3.8 & sleep 0.5
     rm /dev/shm/smac_rpc /dev/shm/smac_ddp
