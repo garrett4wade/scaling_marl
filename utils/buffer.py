@@ -541,7 +541,7 @@ class SharedPolicyMixin(PolicyMixin):
                                 obs,
                                 rewards,
                                 dones,
-                                force_teriminations,
+                                force_terminations,
                                 available_actions=None):
         slot_id = self._locate(server_id, split_id)
         ep_step = self._ep_step[server_id, split_id]
@@ -558,7 +558,7 @@ class SharedPolicyMixin(PolicyMixin):
         self.masks[slot_id, ep_step, env_slice] = 1 - np.all(dones, axis=1, keepdims=True)
         dones[np.all(dones, axis=1).squeeze(-1)] = 0
         self.active_masks[slot_id, ep_step, env_slice] = 1 - dones
-        self.fct_masks[slot_id, ep_step, env_slice] = 1 - force_teriminations
+        self.fct_masks[slot_id, ep_step, env_slice] = 1 - force_terminations
 
         self.total_timesteps += self.env_per_split
 

@@ -22,16 +22,16 @@ class SMACServer(InferenceServer):
             rewards = np.zeros((self.env_per_split, self.num_agents, 1), dtype=np.float32)
             dones = np.zeros_like(rewards).astype(np.bool)
             infos = None
-            force_teriminations = np.zeros((self.env_per_split, self.num_agents, 1), dtype=np.bool)
+            force_terminations = np.zeros((self.env_per_split, self.num_agents, 1), dtype=np.bool)
         else:
             obs, share_obs, rewards, dones, infos, available_actions = model_inputs
-            force_teriminations = np.array([[agent_info['force_terimination'] for agent_info in info]
-                                            for info in infos])
+            force_terminations = np.array([[[agent_info['force_termination']] for agent_info in info]
+                                           for info in infos])
         # replay buffer
         if not self.use_centralized_V:
             share_obs = obs
         self.buffer.insert_before_inference(self.server_id, actor_id, split_id, share_obs, obs, rewards, dones,
-                                            force_teriminations, available_actions)
+                                            force_terminations, available_actions)
         if infos is not None:
             merged_info = {}
             for all_agent_info in infos:
