@@ -9,9 +9,9 @@ algo="rmappo"
 map="MMM2"
 episode_length=400
 
-# 952
-seeds=(168 4356)
-num_env_steps=20000000
+# 7860 6457 58598 168 4356
+seeds=(952)
+num_env_steps=25000000
 
 for seed in ${seeds[@]};
 do

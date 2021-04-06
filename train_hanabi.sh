@@ -2,12 +2,11 @@
 env="Hanabi"
 algo="rmappo"
 
-rm -rf /dev/shm/hanabi*
-rm -rf /tmp/*
+rm -rf /dev/shm/* /tmp/*
 pkill -9 python3.8
 
 game_version="Hanabi-Full"
-episode_length=100
+episode_length=50
 num_agents=2
 
 seeds=(55 37 28)
@@ -30,16 +29,16 @@ do
                                 --episode_length ${episode_length} \
                                 --num_env_steps ${num_env_steps} \
                                 --ppo_epoch 5 \
-                                --num_actors 4 \
-                                --env_per_actor 4 \
+                                --num_actors 24 \
+                                --env_per_actor 16 \
                                 --num_split 2 \
-                                --num_trainers 1 \
+                                --num_trainers 3 \
                                 --num_servers 2 \
                                 --slots_per_update 1 \
                                 --server_gpu_ranks 3 \
                                 --use_eval \
                                 --use_wandb
     pkill -9 python3.8
-    rm -rf /dev/shm/hanabi*
+    rm -rf /dev/shm/*
 done
 rm -rf /tmp/*

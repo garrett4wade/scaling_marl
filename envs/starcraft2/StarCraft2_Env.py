@@ -448,7 +448,7 @@ class StarCraft2Env(MultiAgentEnv):
     def step(self, actions):
         """A single environment step. Returns reward, terminated, info."""
         terminated = False
-        bad_transition = False
+        force_termination = False
         infos = [{} for i in range(self.n_agents)]
         rewards = np.zeros((self.n_agents, 1), dtype=np.float32)
         dones = np.zeros((self.n_agents, 1), dtype=np.bool)
@@ -491,7 +491,7 @@ class StarCraft2Env(MultiAgentEnv):
                     "battles_draw": self.timeouts,
                     "restarts": self.force_restarts,
                     "won": self.win_counted,
-                    "bad_transition": bad_transition
+                    "force_termination": True,
                 }
                 # termination
                 dones[i] = True
@@ -548,7 +548,7 @@ class StarCraft2Env(MultiAgentEnv):
         elif self._episode_steps >= self.episode_limit:
             # Episode limit reached
             terminated = True
-            bad_transition = True
+            force_termination = True
             if self.continuing_episode:
                 for i in range(self.n_agents):
                     infos[i]["episode_limit"] = True
@@ -562,7 +562,7 @@ class StarCraft2Env(MultiAgentEnv):
                 "battles_draw": self.timeouts,
                 "restarts": self.force_restarts,
                 "won": self.win_counted,
-                "bad_transition": bad_transition
+                "force_termination": force_termination
             }
             dones[i] = terminated or self.death_tracker_ally[i]
 

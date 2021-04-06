@@ -176,6 +176,9 @@ class ReplayBuffer:
         self.masks[:] = 1
         self._amsk_shm, self.active_masks = self.shm_array((*shape_prefix(True), 1), np.float32)
         self.active_masks[:] = 1
+        # force terimination mask
+        self._fctmsk_shm, self.fct_masks = self.shm_array((*shape_prefix(True), 1), np.float32)
+        self.fct_masks[:] = 1
 
         self._r_shm, self.rewards = self.shm_array((*shape_prefix(False), 1), np.float32)
         self._v_shm, self.value_preds = self.shm_array((*shape_prefix(True), 1), np.float32)
@@ -300,6 +303,9 @@ class ReplayBuffer:
                 one_step_return = self.rewards[slots, step] + self.gamma * bootstrap_v * self.masks[slots, step + 1]
                 delta = one_step_return - cur_v
                 gae = delta + self.gamma * self.gae_lambda * gae * self.masks[slots, step + 1]
+                # if env is terminated compulsively, then abandon the finnal step
+                # i.e. advantage of final step is 0, value target of final step is predicted value
+                gae *= self.fct_masks[slots, step + 1]
                 self.returns[slots, step] = gae + cur_v
                 self.advantages[slots, step] = gae
         else:
@@ -311,7 +317,10 @@ class ReplayBuffer:
 
                 discount_r = (self.returns[slots, step + 1] * self.gamma * self.masks[slots, step + 1] +
                               self.rewards[slots, step])
-                self.returns[slots, step] = discount_r
+                fct_mask = self.fct_masks[slots, step + 1]
+                # if env is terminated compulsively, then abandon the finnal step
+                # i.e. advantage of final step is 0, value target of final step is predicted value
+                self.returns[slots, step] = discount_r * fct_mask + (1 - fct_mask) * cur_v
                 self.advantages[slots, step] = self.returns[slots, step] - cur_v
 
         if adv_normalization:
@@ -532,6 +541,7 @@ class SharedPolicyMixin(PolicyMixin):
                                 obs,
                                 rewards,
                                 dones,
+                                force_teriminations,
                                 available_actions=None):
         slot_id = self._locate(server_id, split_id)
         ep_step = self._ep_step[server_id, split_id]
@@ -548,6 +558,7 @@ class SharedPolicyMixin(PolicyMixin):
         self.masks[slot_id, ep_step, env_slice] = 1 - np.all(dones, axis=1, keepdims=True)
         dones[np.all(dones, axis=1).squeeze(-1)] = 0
         self.active_masks[slot_id, ep_step, env_slice] = 1 - dones
+        self.fct_masks[slot_id, ep_step, env_slice] = 1 - force_teriminations
 
         self.total_timesteps += self.env_per_split
 
@@ -721,8 +732,11 @@ class SequentialPolicyMixin(PolicyMixin):
 
 
 class SequentialReplayBuffer(ReplayBuffer, SequentialPolicyMixin):
-    def __init__(self, *args):
-        super().__init__(*args)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # following arrays may not be shared between processes because
+        # 1) only servers can access them (trainers should not access)
+        # 2) each server will access individual parts according to server_id, there's no communication among them
         self._agent_ids = np.zeros((self.num_servers, self.num_split), dtype=np.uint8)
         self._reward_since_last_action = np.zeros(
             (self.num_servers, self.num_split, self.batch_size, self.num_agents, 1), dtype=np.float32)
