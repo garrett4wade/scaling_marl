@@ -6,11 +6,11 @@ rm -rf /dev/shm/*
 
 env="StarCraft2"
 algo="rmappo"
-map="MMM2"
+map="3s5z_vs_3s6z"
 episode_length=400
 
-# 7860 6457 58598 168 4356
-seeds=(952)
+# 7860 6457 58598
+seeds=(952 168 4356)
 num_env_steps=25000000
 
 for seed in ${seeds[@]};
@@ -22,15 +22,15 @@ do
                             --seed ${seed} \
                             --episode_length ${episode_length} \
                             --num_env_steps ${num_env_steps} \
-                            --group_name ${map}"_6x_r5_rnn" \
-                            --ppo_epoch 5 \
-                            --num_actors 16 \
+                            --ppo_epoch 10 \
+                            --num_actors 20 \
                             --env_per_actor 6 \
                             --num_trainers 1 \
                             --num_servers 1 \
                             --slots_per_update 1 \
-                            --server_gpu_ranks 3 \
-                            --use_eval
+                            --server_gpu_ranks 1 \
+                            --use_eval \
+                            --use_wandb
     pkill -9 Main_Thread & sleep 0.5
     pkill -9 python3.8 & sleep 0.5
     rm -rf /dev/shm/*

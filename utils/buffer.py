@@ -370,8 +370,8 @@ class ReplayBuffer:
         if num_mini_batch == 1:
             outputs = (share_obs, obs, rnn_states, rnn_states_critic, actions, value_preds, v_target, masks,
                        active_masks, action_log_probs, advantages, available_actions)
-            for i, item in enumerate(outputs):
-                assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
+            # for i, item in enumerate(outputs):
+            #     assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
             yield outputs
         else:
             rand = torch.randperm(batch_size).numpy()
@@ -399,8 +399,8 @@ class ReplayBuffer:
                 outputs = (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch,
                            value_preds_batch, v_target_batch, masks_batch, active_masks_batch,
                            old_action_log_probs_batch, adv_targ, available_actions_batch)
-                for i, item in enumerate(outputs):
-                    assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
+                # for i, item in enumerate(outputs):
+                #     assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
                 yield outputs
 
     def recurrent_generator(self, slots, train_popart):
@@ -473,8 +473,8 @@ class ReplayBuffer:
             outputs = (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch,
                        value_preds_batch, v_target_batch, masks_batch, active_masks_batch, old_action_log_probs_batch,
                        adv_targ, available_actions_batch)
-            for i, item in enumerate(outputs):
-                assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
+            # for i, item in enumerate(outputs):
+            #     assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
             yield outputs
         else:
             rand = torch.randperm(batch_size).numpy()
@@ -497,8 +497,8 @@ class ReplayBuffer:
                 outputs = (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch,
                            value_preds_batch, v_target_batch, masks_batch, active_masks_batch,
                            old_action_log_probs_batch, adv_targ, available_actions_batch)
-                for i, item in enumerate(outputs):
-                    assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
+                # for i, item in enumerate(outputs):
+                #     assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
                 yield outputs
 
 
