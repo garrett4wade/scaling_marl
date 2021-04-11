@@ -99,8 +99,8 @@ def init_summary(config, all_args):
     import datetime
     algo = all_args.algorithm_name
     network_cls = 'rnn' if algo == 'rmappo' else 'mlp' if algo == 'mappo' else None
-    batch_size_factor = (all_args.episode_length * all_args.num_actors * all_args.env_per_actor / all_args.num_split /
-                         8 / 400)
+    batch_size_factor = (all_args.episode_length * all_args.num_actors * all_args.env_per_actor *
+                         all_args.num_trainers / all_args.num_split / 8 / 400)
     replay = str(all_args.ppo_epoch)
     postfix = '_{:.2f}x_r{}_'.format(batch_size_factor, replay) + network_cls
     exp_name = str(all_args.algorithm_name) + "_" + str(all_args.experiment_name) + "_seed" + str(all_args.seed)

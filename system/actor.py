@@ -27,24 +27,43 @@ class Actor:
         print('-' * 8 + ' Actor {} set up successfully! '.format(self.id) + '-' * 8)
 
     def run(self):
+        request_tik = []
         for i, env in enumerate(self.envs):
             model_inputs = env.reset()
             # obs, state, avail_action
             assert len(model_inputs) == 3
+            request_tik.append(time.time())
+
             action_fut = self.agent_rref.rpc_async().select_action(self.id, i, model_inputs, init=True)
+
             self.action_futures.append(action_fut)
         while True:
+            inf_times = []
             wait_times = []
             delays = []
+            step_times = []
             for i, env in enumerate(self.envs):
                 wait_tik = time.time()
+
                 delay_tik, actions = self.action_futures[i].wait()
+
                 tok = time.time()
+
+                model_inputs = env.step(actions)
+
+                step_tok = time.time()
+
+                inf_times.append((tok - request_tik[i]) * 1e3)
                 wait_times.append((tok - wait_tik) * 1e3)
                 delays.append((tok - delay_tik) * 1e3)
-                model_inputs = env.step(actions)
+                step_times.append((step_tok - tok) * 1e3)
+
                 # obs, state, reward, done, infos, avail_action
                 assert len(model_inputs) == 6
+
+                request_tik[i] = time.time()
                 self.action_futures[i] = self.agent_rref.rpc_async().select_action(self.id, i, model_inputs)
+
             if self.verbose_time:
-                print('actor {} wait time {}ms, delay {}ms'.format(self.id, np.mean(wait_times), np.mean(delays)))
+                print('actor {} inference time {:.2f}ms, env step time {:.2f}ms, wait time {:.2f}ms, delay {:.2f}ms'.
+                      format(self.id, np.mean(inf_times), np.mean(step_times), np.mean(wait_times), np.mean(delays)))

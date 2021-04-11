@@ -87,32 +87,30 @@ def make_eval_env(trainer_id, all_args):
         return ShareSubprocVecEnv([get_env_fn(i) for i in range(all_args.n_eval_rollout_threads)])
 
 
-def init_summary(run_dir, all_args):
+def init_summary(config, all_args):
+    run_dir = config['run_dir']
+    import datetime
+    algo = all_args.algorithm_name
+    network_cls = 'rnn' if algo == 'rmappo' else 'mlp' if algo == 'mappo' else None
+    batch_size_factor = (all_args.episode_length * all_args.num_actors * all_args.env_per_actor *
+                         all_args.num_trainers / all_args.num_split / 1000 / 100)
+    replay = str(all_args.ppo_epoch)
+    postfix = '_{:.2f}x_r{}_'.format(batch_size_factor, replay) + network_cls
+    exp_name = str(all_args.algorithm_name) + "_" + str(all_args.experiment_name) + "_seed" + str(all_args.seed)
     if all_args.use_wandb:
         run = wandb.init(config=all_args,
                          project=all_args.env_name,
                          entity=all_args.user_name,
                          notes=socket.gethostname(),
-                         name=str(all_args.algorithm_name) + "_" + str(all_args.experiment_name) + "_seed" +
-                         str(all_args.seed),
-                         group=all_args.hanabi_name,
+                         name=exp_name,
+                         group=all_args.hanabi_name + postfix,
                          dir=str(run_dir),
                          job_type="training",
                          reinit=True)
         return run
     else:
-        if not run_dir.exists():
-            curr_run = 'run1'
-        else:
-            exst_run_nums = [
-                int(str(folder.name).split('run')[1]) for folder in run_dir.iterdir()
-                if str(folder.name).startswith('run')
-            ]
-            if len(exst_run_nums) == 0:
-                curr_run = 'run1'
-            else:
-                curr_run = 'run%i' % (max(exst_run_nums) + 1)
-        run_dir = run_dir / curr_run
+        curr_run = exp_name + postfix + '_' + str(datetime.datetime.now()).replace(' ', '_')
+        config['run_dir'] = run_dir = run_dir / curr_run
         if not run_dir.exists():
             os.makedirs(str(run_dir))
         return None
@@ -130,7 +128,7 @@ def run(rank, world_size, weights_queue, buffer, config):
         rpc.init_rpc('trainer_' + str(rank), rank=rank, world_size=world_size, rpc_backend_options=rpc_opt)
 
         if rank == 0:
-            run = init_summary(config['run_dir'], all_args)
+            run = init_summary(config, all_args)
 
         trainer = HanabiTrainer(rank, weights_queue, buffer, config)
         trainer.run()

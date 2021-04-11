@@ -1,18 +1,17 @@
 #!/bin/sh
-env="Hanabi"
-algo="rmappo"
-
 rm -rf /dev/shm/* /tmp/*
-pkill -9 python3.8
+pkill -9 python3.8 & sleep 0.5
 
+env="Hanabi"
+algo="mappo"
 game_version="Hanabi-Full"
+
 episode_length=50
 num_agents=2
+replay=10
 
 seeds=(55 37 28)
-num_env_steps=10000000000
-
-exp="mlp_critic1e-3_entropy0.015_v0belief"
+num_env_steps=10000000000  # 10B
 
 for seed in ${seeds[@]};
 do
@@ -28,17 +27,16 @@ do
                                 --n_eval_rollout_threads 32 \
                                 --episode_length ${episode_length} \
                                 --num_env_steps ${num_env_steps} \
-                                --ppo_epoch 5 \
+                                --ppo_epoch ${replay} \
                                 --num_actors 24 \
-                                --env_per_actor 16 \
-                                --num_split 2 \
+                                --env_per_actor 80 \
                                 --num_trainers 3 \
                                 --num_servers 2 \
                                 --slots_per_update 1 \
                                 --server_gpu_ranks 3 \
                                 --use_eval \
                                 --use_wandb
-    pkill -9 python3.8
+    pkill -9 python3.8 & sleep 0.5
     rm -rf /dev/shm/*
 done
 rm -rf /tmp/*

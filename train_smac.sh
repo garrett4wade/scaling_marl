@@ -9,8 +9,8 @@ algo="rmappo"
 map="3s5z_vs_3s6z"
 episode_length=400
 
-# 7860 6457 58598
-seeds=(952 168 4356)
+# 952
+seeds=(168 4356 7860 6457 58598)
 num_env_steps=25000000
 
 for seed in ${seeds[@]};
