@@ -116,34 +116,32 @@ class R_MAPPO:
         for k in summary_keys:
             train_info[k] = 0
 
-        for i in range(self.ppo_epoch):
-            dist.barrier()
-            # only train popart parameter in the first epoch
-            slots, data_generator = buffer.get(train_popart=(i == 0), recur=self._use_recurrent_policy)
+        dist.barrier()
+        # only train popart parameter in the first epoch
+        slots, data_generator = buffer.get(recur=self._use_recurrent_policy)
 
-            # ensure all process get different slot ids
-            tensor_list = [torch.zeros(self.slots_per_update).to(self.device) for _ in range(self.num_trainers)]
-            dist.all_gather(tensor_list, torch.Tensor(slots.tolist()).to(self.device))
-            slot_ids = torch.cat(tensor_list).tolist()
-            assert len(np.unique(slot_ids)) == len(slot_ids)
+        # ensure all process get different slot ids
+        tensor_list = [torch.zeros(self.slots_per_update).to(self.device) for _ in range(self.num_trainers)]
+        dist.all_gather(tensor_list, torch.Tensor(slots.tolist()).to(self.device))
+        slot_ids = torch.cat(tensor_list).tolist()
+        assert len(np.unique(slot_ids)) == len(slot_ids)
 
-            for sample in data_generator:
+        for sample in data_generator:
 
-                infos = self.ppo_update(sample, update_actor)
-                for info in infos:
-                    dist.all_reduce(info)
-                value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm = infos
+            infos = self.ppo_update(sample, update_actor)
+            for info in infos:
+                dist.all_reduce(info)
+            value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm = infos
 
-                for k in summary_keys:
-                    train_info[k] += locals()[k].item()
+            for k in summary_keys:
+                train_info[k] += locals()[k].item()
 
-            if i == self.ppo_epoch - 1:
-                train_info["average_step_rewards"] = np.mean(buffer.rewards[slots])
-                train_info['dead_ratio'] = 1 - buffer.active_masks[slots].sum() / np.prod(
-                    buffer.active_masks[slots].shape)
-            buffer.after_training_step(slots)
+        train_info["average_step_rewards"] = np.mean(buffer.rewards[slots])
+        train_info['dead_ratio'] = 1 - buffer.active_masks[slots].sum() / np.prod(buffer.active_masks[slots].shape)
 
-        reduce_factor = self.ppo_epoch * self.num_mini_batch * self.num_trainers
+        buffer.after_training_step(slots)
+
+        reduce_factor = self.num_mini_batch * self.num_trainers
 
         for k in summary_keys:
             train_info[k] /= reduce_factor

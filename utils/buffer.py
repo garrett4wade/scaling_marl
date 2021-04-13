@@ -1,4 +1,5 @@
 import torch
+import time
 import numpy as np
 from multiprocessing import Lock, Condition
 from multiprocessing.managers import SharedMemoryManager
@@ -40,7 +41,7 @@ def _select_rnn_states(h, num_chunks):
 
 
 class ReplayBuffer:
-    def __init__(self, args, num_agents, obs_space, share_obs_space, act_space):
+    def __init__(self, args, num_agents, obs_space, share_obs_space, act_space, reuse_pattern='recycle'):
         """base buffer, can be integrated with different rollout collection mechanism
 
         Structure is shown below. Because of asynchronous rollout execution,
@@ -133,6 +134,10 @@ class ReplayBuffer:
         self._use_gae = args.use_gae
         self._use_popart = args.use_popart
 
+        self.reuse_pattern = reuse_pattern
+        rp_choices = ['recycle', 'exhaust']
+        assert self.reuse_pattern in rp_choices, 'reuse_pattern must be one of {}'.format(rp_choices)
+
         if self._use_popart:
             self.value_normalizer = PopArt(input_shape=(1, ), num_trainers=args.num_trainers)
         else:
@@ -202,6 +207,8 @@ class ReplayBuffer:
         self._rt_ready_shm, self._is_return_ready = self.shm_array((num_slots, ), np.uint8)
         assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
 
+        self._tm_shm, self._time_stamp = self.shm_array((num_slots, ), np.float32)
+
         self._read_ready = Condition(Lock())
 
         self._timestep_shm, self.total_timesteps = self.shm_array((), np.int64)
@@ -258,20 +265,29 @@ class ReplayBuffer:
             self._is_readable[old_slot_id] = 1
             self._is_writable[old_slot_id] = 0
             assert not self._is_return_ready[old_slot_id]
+            self._time_stamp[old_slot_id] = time.time()
             # if reader is waiting for data, notify it
             if no_availble_before and np.sum(self._is_readable) >= self.target_available_slots:
                 self._read_ready.notify(self.num_trainers)
 
-    def get(self, train_popart=True, recur=True):
+    def get(self, recur=True):
         with self._read_ready:
             self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= self.target_available_slots)
-            slots = np.nonzero(self._is_readable)[0][:self.slots_per_update]
+
+            available_slots = np.nonzero(self._is_readable)[0]
+            latest = np.argsort(self._time_stamp[available_slots])[-self.target_available_slots:]
+            # for multi-gpu training, slots for each gpu is randomly selected from candidates
+            slots = available_slots[np.random.choice(latest, self.slots_per_update, replace=False)]
+
             # indicator readable -> being-read
             self._is_readable[slots] = 0
             self._is_being_read[slots] = 1
+
+            if self.reuse_pattern == 'recycle':
+                self._time_stamp[slots] = np.min(self._time_stamp[available_slots]) - 1
+
             assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
-        return slots, self.recurrent_generator(slots, train_popart) if recur else self.feed_forward_generator(
-            slots, train_popart)
+        return slots, self.recurrent_generator(slots) if recur else self.feed_forward_generator(slots)
 
     def after_training_step(self, slots):
         with self._read_ready:
@@ -330,7 +346,7 @@ class ReplayBuffer:
             std_advantages = np.nanstd(adv)
             self.advantages[slots, :] = (self.advantages[slots, :] - mean_advantages) / (std_advantages + 1e-5)
 
-    def feed_forward_generator(self, slots, train_popart):
+    def feed_forward_generator(self, slots):
         # once we ensure different trainers get different slot_ids,
         # the following few lines do not need lock
         non_ready_slot_ids = []
@@ -356,7 +372,7 @@ class ReplayBuffer:
             available_actions = _flatten(self.available_actions[slots, :-1], 4)
         value_preds = _flatten(self.value_preds[slots, :-1], 4)
         returns = _flatten(self.returns[slots, :-1], 4)
-        v_target = self.value_normalizer(returns, train_popart) if self._use_popart else returns
+        v_target = self.value_normalizer(returns) if self._use_popart else returns
         masks = _flatten(self.masks[slots, :-1], 4)
         active_masks = _flatten(self.active_masks[slots, :-1], 4)
         action_log_probs = _flatten(self.action_log_probs[slots], 4)
@@ -403,7 +419,7 @@ class ReplayBuffer:
                 #     assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
                 yield outputs
 
-    def recurrent_generator(self, slots, train_popart):
+    def recurrent_generator(self, slots):
         # once we ensure different trainers get different slot_ids,
         # the following few lines do not need lock
         non_ready_slot_ids = []
@@ -436,7 +452,7 @@ class ReplayBuffer:
         action_log_probs = _cast(self.action_log_probs[slots])
         value_preds = _cast(self.value_preds[slots, :-1])
         returns = _cast(self.returns[slots, :-1])
-        v_target = self.value_normalizer(returns.reshape(-1, 1), train_popart).reshape(
+        v_target = self.value_normalizer(returns.reshape(-1, 1)).reshape(
             *returns.shape) if self._use_popart else returns
         masks = _cast(self.masks[slots, :-1])
         active_masks = _cast(self.active_masks[slots, :-1])

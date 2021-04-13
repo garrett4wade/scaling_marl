@@ -6,16 +6,16 @@ env="Hanabi"
 algo="mappo"
 game_version="Hanabi-Full"
 
-episode_length=50
+episode_length=10
 num_agents=2
-replay=10
+replay=15
 
 seeds=(55 37 28)
 num_env_steps=10000000000  # 10B
 
 for seed in ${seeds[@]};
 do
-    exp="SEED-RL_"${num_agents}"*"${game_version}
+    exp="CircularBuffer_"${num_agents}"*"${game_version}
     echo "env is ${env}, game version is ${game_version}, algo is ${algo}, exp is ${exp}, seed is ${seed}"
     python3.8 train_hanabi.py --env_name ${env} --algorithm_name ${algo} --hanabi_name ${game_version} \
                                 --experiment_name ${exp} \
@@ -28,10 +28,11 @@ do
                                 --episode_length ${episode_length} \
                                 --num_env_steps ${num_env_steps} \
                                 --ppo_epoch ${replay} \
-                                --num_actors 24 \
-                                --env_per_actor 80 \
+                                --num_actors 12 \
+                                --env_per_actor 60 \
+                                --num_split 1 \
                                 --num_trainers 3 \
-                                --num_servers 2 \
+                                --num_servers 4 \
                                 --slots_per_update 1 \
                                 --server_gpu_ranks 3 \
                                 --use_eval \

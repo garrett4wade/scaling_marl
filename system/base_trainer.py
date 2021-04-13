@@ -106,8 +106,8 @@ class Trainer:
             # send weights to rollout policy
             actor_state_dict, critic_state_dict = self.policy.state_dict()
             # remove prefix 'module.' of DDP models
-            actor_state_dict = {k.replace('module.', ''): v for k, v in actor_state_dict.items()}
-            critic_state_dict = {k.replace('module.', ''): v for k, v in critic_state_dict.items()}
+            actor_state_dict = {k.replace('module.', ''): v.cpu() for k, v in actor_state_dict.items()}
+            critic_state_dict = {k.replace('module.', ''): v.cpu() for k, v in critic_state_dict.items()}
             self.weights_queue.put((actor_state_dict, critic_state_dict))
 
     def training_step(self):

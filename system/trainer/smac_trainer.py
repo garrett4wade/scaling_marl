@@ -61,7 +61,19 @@ class SMACTrainer(Trainer):
                 recent_win_rate = recent_battles_won / recent_battles_game if recent_battles_game > 0 else 0.0
                 print("recent winning rate is {}.".format(recent_win_rate))
 
-                print('buffer utilization before training step: {:.2f}'.format(buffer_util))
+                print('buffer utilization before training step: {}/{}'.format(
+                    round(buffer_util * self.buffer.num_slots), self.buffer.num_slots))
+
+                # as defined in https://cdn.openai.com/dota-2.pdf
+                _t = self.log_interval if episode > 0 else 1
+                recent_consumed_num_steps = _t * transition_per_batch * self.num_trainers
+                recent_num_steps = total_num_steps - last_total_num_steps
+                recent_sample_reuse = recent_consumed_num_steps / recent_num_steps
+
+                global_sample_reuse = consuemd_num_steps / total_num_steps
+
+                print('recent sample reuse: {:.2f}, global average sample reuse: {:.2f}'.format(
+                    recent_sample_reuse, global_sample_reuse))
 
                 if self.use_wandb:
                     wandb.log(

@@ -60,7 +60,19 @@ class HanabiTrainer(Trainer):
                 average_score = recent_total_scores / recent_elapsed_episode
                 print("average score is {}.".format(average_score))
 
-                print('buffer utilization before training step: {:.2f}'.format(buffer_util))
+                print('buffer utilization before training step: {}/{}'.format(
+                    round(buffer_util * self.buffer.num_slots), self.buffer.num_slots))
+
+                # as defined in https://cdn.openai.com/dota-2.pdf
+                _t = self.log_interval if episode > 0 else 1
+                recent_consumed_num_steps = _t * transition_per_batch * self.num_trainers
+                recent_num_steps = total_num_steps - last_total_num_steps
+                recent_sample_reuse = recent_consumed_num_steps / recent_num_steps
+
+                global_sample_reuse = consuemd_num_steps / total_num_steps
+
+                print('recent sample reuse: {:.2f}, global average sample reuse: {:.2f}'.format(
+                    recent_sample_reuse, global_sample_reuse))
 
                 if self.use_wandb:
                     wandb.log(

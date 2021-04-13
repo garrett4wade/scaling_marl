@@ -195,7 +195,7 @@ def get_config():
     parser.add_argument("--num_actors", type=int, default=4)
     parser.add_argument("--env_per_actor", type=int, default=2)
     parser.add_argument("--num_split", type=int, default=2)
-    parser.add_argument("--qsize", type=int, default=16)
+    parser.add_argument("--qsize", type=int, default=4)
     parser.add_argument("--verbose_time", action='store_true', default=False)
     parser.add_argument("--num_trainers", type=int, default=1)
     parser.add_argument("--num_servers", type=int, default=1)
@@ -311,7 +311,7 @@ def get_config():
     # log parameters
     parser.add_argument("--log_interval",
                         type=int,
-                        default=5,
+                        default=25,
                         help="time duration between contiunous twice log printing.")
 
     # eval parameters
@@ -321,7 +321,7 @@ def get_config():
                         help="by default, do not start evaluation. If set`, start evaluation alongside with training.")
     parser.add_argument("--eval_interval",
                         type=int,
-                        default=5,
+                        default=25,
                         help="time duration between contiunous twice evaluation progress.")
     parser.add_argument("--eval_episodes", type=int, default=32, help="number of episodes of a single evaluation.")
 
