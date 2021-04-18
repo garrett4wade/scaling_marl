@@ -6,7 +6,7 @@ env="Hanabi"
 algo="mappo"
 game_version="Hanabi-Full"
 
-episode_length=10
+episode_length=30
 num_agents=2
 replay=15
 
@@ -28,11 +28,10 @@ do
                                 --episode_length ${episode_length} \
                                 --num_env_steps ${num_env_steps} \
                                 --ppo_epoch ${replay} \
-                                --num_actors 12 \
-                                --env_per_actor 60 \
-                                --num_split 1 \
+                                --num_actors 4 \
+                                --env_per_actor 32 \
                                 --num_trainers 3 \
-                                --num_servers 4 \
+                                --num_servers 1 \
                                 --slots_per_update 1 \
                                 --server_gpu_ranks 3 \
                                 --use_eval \

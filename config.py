@@ -195,7 +195,7 @@ def get_config():
     parser.add_argument("--num_actors", type=int, default=4)
     parser.add_argument("--env_per_actor", type=int, default=2)
     parser.add_argument("--num_split", type=int, default=2)
-    parser.add_argument("--qsize", type=int, default=4)
+    parser.add_argument("--qsize", type=int, default=8)
     parser.add_argument("--verbose_time", action='store_true', default=False)
     parser.add_argument("--num_trainers", type=int, default=1)
     parser.add_argument("--num_servers", type=int, default=1)

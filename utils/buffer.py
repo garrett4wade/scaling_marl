@@ -234,6 +234,23 @@ class ReplayBuffer:
         assert self._prev_q_idx[server_id, split_id] >= 0
         return server_id * self.slots_per_server + self._prev_q_idx[server_id, split_id] * self.num_split + split_id
 
+    def _move_next(self, server_id, split_id):
+        slot_id = self._locate(server_id, split_id)
+        # move global queue pointer to next corresponding slot
+        self._prev_q_idx[server_id, split_id] = self._q_idx[server_id, split_id]
+        self._q_idx[server_id, split_id] += 1
+        self._q_idx[server_id, split_id] %= self.qsize
+        new_slot_id = self._locate(server_id, split_id)
+
+        # find next slot which is not busy
+        while self._is_being_read[new_slot_id]:
+            self._q_idx[server_id, split_id] += 1
+            self._q_idx[server_id, split_id] %= self.qsize
+            new_slot_id = self._locate(server_id, split_id)
+        assert new_slot_id != slot_id, 'please increase qsize of buffer!'
+
+        return new_slot_id
+
     def _opening(self, old_slot_id, new_slot_id):
         # start up a new slot
         self.rnn_states[new_slot_id, 0] = self.rnn_states[old_slot_id, -1]
@@ -604,17 +621,7 @@ class SharedPolicyMixin(PolicyMixin):
         if ep_step == self.episode_length - 1:
             self._ep_step[server_id, split_id] = 0
 
-            # move global queue pointer to next corresponding slot
-            cur_q_idx = self._q_idx[server_id, split_id]
-            self._q_idx[server_id, split_id] += 1
-            self._q_idx[server_id, split_id] %= self.qsize
-            new_slot_id = self._locate(server_id, split_id)
-            # find next slot which is not busy
-            while self._is_being_read[new_slot_id]:
-                self._q_idx[server_id, split_id] += 1
-                self._q_idx[server_id, split_id] %= self.qsize
-                new_slot_id = self._locate(server_id, split_id)
-            self._prev_q_idx[server_id, split_id] = cur_q_idx
+            new_slot_id = self._move_next(server_id, split_id)
 
             self._opening(slot_id, new_slot_id)
 
@@ -730,17 +737,7 @@ class SequentialPolicyMixin(PolicyMixin):
             if ep_step == self.episode_length - 1:
                 self._ep_step[server_id, split_id] = 0
 
-                # move global queue pointer to next corresponding slot
-                cur_q_idx = self._q_idx[server_id, split_id]
-                self._q_idx[server_id, split_id] += 1
-                self._q_idx[server_id, split_id] %= self.qsize
-                new_slot_id = self._locate(server_id, split_id)
-                # find next slot which is not busy
-                while self._is_being_read[new_slot_id]:
-                    self._q_idx[server_id, split_id] += 1
-                    self._q_idx[server_id, split_id] %= self.qsize
-                    new_slot_id = self._locate(server_id, split_id)
-                self._prev_q_idx[server_id, split_id] = cur_q_idx
+                new_slot_id = self._move_next(server_id, split_id)
 
                 self._opening(slot_id, new_slot_id)
         else:
