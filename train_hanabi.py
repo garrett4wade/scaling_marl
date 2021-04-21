@@ -183,14 +183,14 @@ def main():
     else:
         raise NotImplementedError
 
-    torch.set_num_threads(all_args.n_training_threads)
+    # NOTE: this line may incur a bug
+    # torch.set_num_threads(all_args.n_training_threads)
     if all_args.cuda_deterministic:
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
 
     # run dir
-    run_dir = Path(os.path.split(os.path.dirname(os.path.abspath(__file__)))[0] + "/results"
-                   ) / all_args.env_name / all_args.hanabi_name / all_args.algorithm_name / all_args.experiment_name
+    run_dir = Path('/summary') / all_args.env_name / all_args.hanabi_name / all_args.algorithm_name / all_args.experiment_name
     if not run_dir.exists():
         os.makedirs(str(run_dir))
 

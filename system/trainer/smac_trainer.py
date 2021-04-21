@@ -83,6 +83,7 @@ class SMACTrainer(Trainer):
                             'fps': recent_fps,
                             'buffer_util': buffer_util,
                             'iteraion': episode + 1,
+                            'sample_reuse': recent_sample_reuse,
                         },
                         step=consuemd_num_steps)
                 else:
