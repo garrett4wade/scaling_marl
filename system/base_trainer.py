@@ -103,12 +103,8 @@ class Trainer:
 
     def pack_off_weights(self):
         if self.ddp_rank == 0:
-            # send weights to rollout policy
-            actor_state_dict, critic_state_dict = self.policy.state_dict()
             # remove prefix 'module.' of DDP models
-            actor_state_dict = {k.replace('module.', ''): v.cpu() for k, v in actor_state_dict.items()}
-            critic_state_dict = {k.replace('module.', ''): v.cpu() for k, v in critic_state_dict.items()}
-            self.weights_queue.put((actor_state_dict, critic_state_dict))
+            self.weights_queue.put({k.replace('module.', ''): v.cpu() for k, v in self.policy.state_dict().items()})
 
     def training_step(self):
         """Train policies with data in buffer. """
@@ -118,18 +114,11 @@ class Trainer:
 
     def save(self):
         """Save policy's actor and critic networks."""
-        policy_actor = self.policy.actor
-        torch.save(policy_actor.state_dict(), str(self.save_dir) + "/actor.pt")
-        policy_critic = self.policy.critic
-        torch.save(policy_critic.state_dict(), str(self.save_dir) + "/critic.pt")
+        torch.save(self.policy.state_dict(), str(self.save_dir) + "/mdoel.pt")
 
     def restore(self):
         """Restore policy's networks from a saved model."""
-        policy_actor_state_dict = torch.load(str(self.model_dir) + '/actor.pt')
-        self.policy.actor.load_state_dict(policy_actor_state_dict)
-        if not self.all_args.use_render:
-            policy_critic_state_dict = torch.load(str(self.model_dir) + '/critic.pt')
-            self.policy.critic.load_state_dict(policy_critic_state_dict)
+        self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model.pt'))
 
     def log_info(self, infos, total_num_steps):
         for k, v in infos.items():

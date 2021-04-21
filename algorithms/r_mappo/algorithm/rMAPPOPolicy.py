@@ -1,6 +1,6 @@
 import torch
 from algorithms.utils.util import check
-from algorithms.r_mappo.algorithm.r_actor_critic import R_Actor, R_Critic
+from algorithms.r_mappo.algorithm.r_actor_critic import R_Actor_Critic
 from utils.util import update_linear_schedule
 from torch.nn.parallel import DistributedDataParallel as DDP
 
@@ -51,7 +51,6 @@ class R_MAPPOPolicy:
         self.device = torch.device(rank)
         self.tpdv = dict(dtype=torch.float32, device=self.device)
         self.lr = args.lr
-        self.critic_lr = args.critic_lr
         self.opti_eps = args.opti_eps
         self.weight_decay = args.weight_decay
 
@@ -59,20 +58,14 @@ class R_MAPPOPolicy:
         self.share_obs_space = cent_obs_space
         self.act_space = act_space
 
-        self.actor = R_Actor(args, self.obs_space, self.act_space).to(rank)
-        self.critic = R_Critic(args, self.share_obs_space).to(rank)
+        self.actor_critic = R_Actor_Critic(args, self.obs_space, self.share_obs_space, self.act_space).to(rank)
         if is_training:
-            self.actor = DDP(self.actor, device_ids=[rank], output_device=rank)
-            self.critic = DDP(self.critic, device_ids=[rank], output_device=rank)
+            self.actor_critic = DDP(self.actor_critic, device_ids=[rank], output_device=rank)
 
-            self.actor_optimizer = torch.optim.Adam(self.actor.parameters(),
-                                                    lr=self.lr,
-                                                    eps=self.opti_eps,
-                                                    weight_decay=self.weight_decay)
-            self.critic_optimizer = torch.optim.Adam(self.critic.parameters(),
-                                                     lr=self.critic_lr,
-                                                     eps=self.opti_eps,
-                                                     weight_decay=self.weight_decay)
+            self.optimizer = torch.optim.Adam(self.actor_critic.parameters(),
+                                                lr=self.lr,
+                                                eps=self.opti_eps,
+                                                weight_decay=self.weight_decay)
 
     def lr_decay(self, episode, episodes):
         """
@@ -80,8 +73,7 @@ class R_MAPPOPolicy:
         :param episode: (int) current training episode.
         :param episodes: (int) total number of training episodes.
         """
-        update_linear_schedule(self.actor_optimizer, episode, episodes, self.lr)
-        update_linear_schedule(self.critic_optimizer, episode, episodes, self.critic_lr)
+        update_linear_schedule(self.optimizer, episode, episodes, self.lr)
 
     def get_actions(self,
                     cent_obs,
@@ -118,11 +110,10 @@ class R_MAPPOPolicy:
             available_actions = check(available_actions).to(**self.tpdv)
 
         (action_dists, action_reduce_fn, log_prob_reduce_fn, _, _, _,
-         rnn_states_actor) = self.actor(obs, rnn_states_actor, masks, available_actions)
+         rnn_states_actor, values, rnn_states_critic) = self.actor_critic(obs, rnn_states_actor, masks, available_actions, cent_obs, rnn_states_critic)
         actions, action_log_probs = get_actions_from_dist(action_dists, action_reduce_fn, log_prob_reduce_fn,
                                                           deterministic)
 
-        values, rnn_states_critic = self.critic(cent_obs, rnn_states_critic, masks)
         return values, actions, action_log_probs, rnn_states_actor, rnn_states_critic
 
     def evaluate_actions(self,
@@ -162,12 +153,11 @@ class R_MAPPOPolicy:
             active_masks = check(active_masks).to(**self.tpdv)
 
         (action_dists, _, log_prob_reduce_fn, action_preprocess_fn, entropy_fn, entropy_reduce_fn,
-         _) = self.actor(obs, rnn_states_actor, masks, available_actions)
+         _, values, _ ) = self.actor_critic(obs, rnn_states_actor, masks, available_actions, cent_obs, rnn_states_critic)
         action_log_probs, dist_entropy = evaluate_actions_from_dist(action_dists, action, log_prob_reduce_fn,
                                                                     action_preprocess_fn, entropy_fn, entropy_reduce_fn,
                                                                     active_masks)
 
-        values, _ = self.critic(cent_obs, rnn_states_critic, masks)
         return values, action_log_probs, dist_entropy
 
     def act(self, obs, rnn_states_actor, masks, available_actions=None, deterministic=False):
@@ -187,23 +177,19 @@ class R_MAPPOPolicy:
             available_actions = check(available_actions).to(**self.tpdv)
 
         (action_dists, action_reduce_fn, log_prob_reduce_fn, _, _, _,
-         rnn_states_actor) = self.actor(obs, rnn_states_actor, masks, available_actions)
+         rnn_states_actor, _, _) = self.actor_critic(obs, rnn_states_actor, masks, available_actions)
         actions, _ = get_actions_from_dist(action_dists, action_reduce_fn, log_prob_reduce_fn, deterministic)
 
         return actions, rnn_states_actor
 
     def state_dict(self):
-        return self.actor.state_dict(), self.critic.state_dict()
+        return self.actor_critic.state_dict()
 
     def load_state_dict(self, state_dict):
-        actor_state_dict, critic_state_dict = state_dict
-        self.actor.load_state_dict(actor_state_dict)
-        self.critic.load_state_dict(critic_state_dict)
+        self.actor_critic.load_state_dict(state_dict)
 
     def train_mode(self):
-        self.actor.train()
-        self.critic.train()
+        self.actor_critic.train()
 
     def eval_mode(self):
-        self.actor.eval()
-        self.critic.eval()
+        self.actor_critic.eval()

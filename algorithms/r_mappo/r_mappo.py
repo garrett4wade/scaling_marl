@@ -18,6 +18,7 @@ class R_MAPPO:
         self.clip_param = args.clip_param
         self.ppo_epoch = args.ppo_epoch
         self.entropy_coef = args.entropy_coef
+        self.value_coef = args.value_coef
         self.max_grad_norm = args.max_grad_norm
 
         self._use_recurrent_policy = args.use_recurrent_policy
@@ -51,6 +52,7 @@ class R_MAPPO:
         return value_loss
 
     def ppo_update(self, sample, update_actor=True):
+        assert update_actor, 'currently ppg not supported'
         (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch, value_preds_batch,
          v_target_batch, masks_batch, active_masks_batch, old_action_log_probs_batch, adv_targ,
          available_actions_batch) = sample
@@ -81,38 +83,26 @@ class R_MAPPO:
 
         policy_loss = policy_action_loss
 
-        self.policy.actor_optimizer.zero_grad()
-
-        if update_actor:
-            (policy_loss - dist_entropy * self.entropy_coef).backward()
-
-        if self._use_max_grad_norm:
-            actor_grad_norm = nn.utils.clip_grad_norm_(self.policy.actor.parameters(), self.max_grad_norm)
-        else:
-            actor_grad_norm = get_gard_norm(self.policy.actor.parameters())
-
-        self.policy.actor_optimizer.step()
-
         # critic update
         value_loss = self.cal_value_loss(values, value_preds_batch, v_target_batch, active_masks_batch)
 
-        self.policy.critic_optimizer.zero_grad()
+        self.policy.optimizer.zero_grad()
 
-        value_loss.backward()
+        (policy_loss + value_loss * self.value_coef - dist_entropy * self.entropy_coef).backward()
 
         if self._use_max_grad_norm:
-            critic_grad_norm = nn.utils.clip_grad_norm_(self.policy.critic.parameters(), self.max_grad_norm)
+            grad_norm = nn.utils.clip_grad_norm_(self.policy.actor_critic.parameters(), self.max_grad_norm)
         else:
-            critic_grad_norm = get_gard_norm(self.policy.critic.parameters())
+            grad_norm = get_gard_norm(self.policy.actor_critic.parameters())
 
-        self.policy.critic_optimizer.step()
+        self.policy.optimizer.step()
 
-        return value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm
+        return value_loss, policy_loss, dist_entropy, grad_norm
 
     def step(self, buffer, update_actor=True):
         train_info = {}
 
-        summary_keys = ['value_loss', 'policy_loss', 'dist_entropy', 'actor_grad_norm', 'critic_grad_norm']
+        summary_keys = ['value_loss', 'policy_loss', 'dist_entropy', 'grad_norm']
         for k in summary_keys:
             train_info[k] = 0
 
@@ -131,7 +121,7 @@ class R_MAPPO:
             infos = self.ppo_update(sample, update_actor)
             for info in infos:
                 dist.all_reduce(info)
-            value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm = infos
+            value_loss, policy_loss, dist_entropy, grad_norm = infos
 
             for k in summary_keys:
                 train_info[k] += locals()[k].item()

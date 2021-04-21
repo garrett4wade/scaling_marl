@@ -76,9 +76,7 @@ def get_config():
 
     Optimizer parameters:
         --lr <float>
-            learning rate parameter,  (default: 5e-4, fixed).
-        --critic_lr <float>
-            learning rate of critic  (default: 5e-4, fixed)
+            learning rate parameter,  (default: 5e-4, fixed)
         --opti_eps <float>
             RMSprop optimizer epsilon (default: 1e-5)
         --weight_decay <float>
@@ -258,7 +256,6 @@ def get_config():
 
     # optimizer parameters
     parser.add_argument("--lr", type=float, default=5e-4, help='learning rate (default: 5e-4)')
-    parser.add_argument("--critic_lr", type=float, default=5e-4, help='critic learning rate (default: 5e-4)')
     parser.add_argument("--opti_eps", type=float, default=1e-5, help='RMSprop optimizer epsilon (default: 1e-5)')
     parser.add_argument("--weight_decay", type=float, default=0)
 
@@ -271,6 +268,7 @@ def get_config():
     parser.add_argument("--clip_param", type=float, default=0.2, help='ppo clip parameter (default: 0.2)')
     parser.add_argument("--num_mini_batch", type=int, default=1, help='number of batches for ppo (default: 1)')
     parser.add_argument("--entropy_coef", type=float, default=0.01, help='entropy term coefficient (default: 0.01)')
+    parser.add_argument("--value_coef", type=float, default=1.0, help='value term coefficient (default: 1.0)')
     parser.add_argument("--use_max_grad_norm",
                         action='store_false',
                         default=True,
