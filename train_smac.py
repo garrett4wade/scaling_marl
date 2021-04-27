@@ -27,8 +27,8 @@ from envs.env_wrappers import ShareDummyVecEnv, ShareSubprocVecEnv
 class SMACBuffer(SharedReplayBuffer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._btwon_shm, self.battles_won = self.shm_array(self.num_slots, np.float32)
-        self._btgm_shm, self.battles_game = self.shm_array(self.num_slots, np.float32)
+        self.battles_won = mp.Manager().dict()
+        self.battles_game = mp.Manager().dict()
         self.summary_lock = mp.RLock()
     
     def insert_before_inference(self,
@@ -50,8 +50,8 @@ class SMACBuffer(SharedReplayBuffer):
                         else:
                             merged_info[k] += v
             with self.summary_lock:  # multiprocessing RLock
-                self.battles_won[self._client_hash[client]] = merged_info['battles_won']
-                self.battles_game[self._client_hash[client]] = merged_info['battles_game']
+                self.battles_won[client] = merged_info['battles_won']
+                self.battles_game[client] = merged_info['battles_game']
 
 
 def parse_args(args, parser):
@@ -187,7 +187,9 @@ def run(rank, world_size, weights_queue, buffer, config):
         actor = Actor(rank - offset, config['env_fn'], all_args)
         actor.run()
     else:
-        broker = Broker(buffer, all_args)
+        offset = all_args.num_trainers + all_args.num_servers + all_args.num_actors
+
+        broker = Broker(rank - offset, buffer, all_args)
         broker.run()
 
     rpc.shutdown()
@@ -239,7 +241,7 @@ def main():
     buffer = SMACBuffer(all_args, num_agents, obs_space, share_obs_space, act_space)
     weights_queue = mp.Queue(maxsize=8)
 
-    world_size = all_args.num_servers + all_args.num_actors + 1 + all_args.num_trainers
+    world_size = all_args.num_servers + all_args.num_actors + all_args.num_trainers + 1
     procs = []
     for i in range(world_size):
         p = mp.Process(target=run, args=(i, world_size, weights_queue, buffer, config))

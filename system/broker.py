@@ -3,29 +3,38 @@ import itertools
 import pyarrow as pa
 import time
 import numpy as np
+import multiprocessing as mp
 
 
 class Broker:
-    def __init__(self, buffer, args):
+    def __init__(self, broker_id, buffer, args):
+        self.id = broker_id
         self.buffer = buffer
 
         self.context = zmq.Context()
         self.frontend = self.context.socket(zmq.ROUTER)
-        self.frontend.bind(args.frontend_addr)
+        if self.id == 0:
+            self.frontend.bind(args.frontend_addr)
+        else:
+            self.frontend.connect(args.frontend_addr)
 
         self.backend = self.context.socket(zmq.ROUTER)
-        self.backend.bind(args.backend_addr)
+        if self.id == 0:
+            self.backend.bind(args.backend_addr)
+        else:
+            self.backend.connect(args.backend_addr)
 
         self.poller = zmq.Poller()
         self.poller.register(self.backend, zmq.POLLIN)
 
         # TODO: auto-tune rollout batch size
         self.rollout_bs = args.rollout_bs
-        self.request_buffer = []
+
+        self.available_servers = []
 
     def run(self):
         backend_ready = False
-        available_servers = []
+        requests = []
 
         while True:
             sockets = dict(self.poller.poll())
@@ -33,8 +42,8 @@ class Broker:
             if self.backend in sockets:
                 msg = self.backend.recv_multipart()
                 server, empty, client0 = msg[:3]
-                available_servers.append(server)
-                if len(available_servers) > 0 and not backend_ready:
+                self.available_servers.append(server)
+                if len(self.available_servers) > 0 and not backend_ready:
                     self.poller.register(self.frontend, zmq.POLLIN)
                     backend_ready = True
                 if client0 != b'READY' and len(msg) > 3:
@@ -60,16 +69,20 @@ class Broker:
                 else:
                     obs, share_obs, rewards, dones, infos, available_actions = step_ret
                 self.buffer.insert_before_inference(client_addr, obs, share_obs, rewards, dones, infos, available_actions)
-                self.request_buffer.append(client_addr)
+                # with self.buffer.request_lock:
+                requests.append(client_addr)
 
-            if len(self.request_buffer) >= self.rollout_bs and len(available_servers) > 0:
-                server = available_servers.pop(0)
-                clients, self.request_buffer = self.request_buffer[:self.rollout_bs], self.request_buffer[self.rollout_bs:]
+            clients = []
+            # with self.buffer.request_lock:
+            if len(requests) >= self.rollout_bs and len(self.available_servers) > 0:
+                server = self.available_servers.pop(0)
+                clients, requests = requests[:self.rollout_bs], requests[self.rollout_bs:]
 
+            if clients:
                 # TODO: the tail 'ok' is just a indicator, for debug only
                 msg = [server] + list(itertools.chain(*[(b'', client) for client in clients])) + [b'', b'ok']
                 self.backend.send_multipart(msg)
 
-                if len(available_servers) == 0:
+                if len(self.available_servers) == 0:
                     self.poller.unregister(self.frontend)
                     backend_ready = False

@@ -53,8 +53,8 @@ class SMACTrainer(Trainer):
 
                 assert self.env_name == "StarCraft2"
                 with self.buffer.summary_lock:  # multiprocessing RLock
-                    battles_won = np.sum(self.buffer.battles_won)
-                    battles_game = np.sum(self.buffer.battles_game)
+                    battles_won = sum(self.buffer.battles_won.values())
+                    battles_game = sum(self.buffer.battles_game.values())
                 recent_battles_won = battles_won - last_battles_won
                 recent_battles_game = battles_game - last_battles_game
 

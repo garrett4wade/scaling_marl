@@ -181,6 +181,7 @@ class ReplayBuffer:
                 # readable -> busy
                 self._is_readable[slot_id] = 0
             self._is_busy[slot_id] = 1
+            self._is_return_ready[slot_id] = 0
             assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
 
         if client in self._client_hash.keys():
