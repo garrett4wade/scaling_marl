@@ -4,6 +4,7 @@ import threading
 from system.actor import Actor
 from torch.distributed import rpc
 from queue import Empty
+import zmq
 
 
 def _t2n(x):
@@ -13,7 +14,6 @@ def _t2n(x):
 
 class InferenceServer:
     def __init__(self, rpc_rank, gpu_rank, weights_queue, buffer, config):
-        # NOTE: inference servers rpc_ranks come after trainers rpc_ranks
         self.rpc_rank = rpc_rank
         self.gpu_rank = gpu_rank
         self.all_args = config['all_args']
@@ -39,7 +39,7 @@ class InferenceServer:
 
         self.episode_length = self.all_args.episode_length
         self.num_env_steps = self.all_args.num_env_steps
-        self.rollout_batch_size = self.num_actors * self.env_per_split
+        self.rollout_bs = self.all_args.rollout_bs
         self.use_render = self.all_args.use_render
 
         from algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
@@ -59,45 +59,65 @@ class InferenceServer:
                                      is_training=False)
         self.rollout_policy.eval_mode()
 
-        # actors
-        self.rref = rpc.RRef(self)
-        self.actor_rrefs = None
-        self.actor_job_rrefs = None
-
-        self.locks = [threading.Lock() for _ in range(self.num_split)]
-        self.future_outputs = [torch.futures.Future() for _ in range(self.num_split)]
-        self.queued_cnt = np.zeros((self.num_split, ), dtype=np.float32)
-
         # synchronization utilities
         self.buffer = buffer
         self.weights_queue = weights_queue
 
+        # actors
+        self.socket = zmq.Context().socket(zmq.REQ)
+        self.socket.identity = "Server-{}".format(self.server_id).encode("ascii")
+        self.socket.connect(self.all_args.backend_addr)
+
+        # tell broker (rounter) that server is prepared to conduct inference
+        self.socket.send(b'READY')
+
     def load_weights(self, block=False):
+        # TODO: use pub/sub instead of queue
         try:
             state_dict = self.weights_queue.get(block)
         except Empty:
             # for debug
             # print("queue empty, load weights failed")
             return
-        for lock in self.locks:
-            lock.acquire()
 
         self.rollout_policy.load_state_dict(state_dict)
 
-        for lock in self.locks:
-            lock.release()
-
-    @rpc.functions.async_execution
-    def select_action(self, actor_id, split_id, model_inputs, init=False):
+    def select_action(self, *args, **kwargs):
         raise NotImplementedError
 
-    def setup_actors(self):
-        self.load_weights(block=True)
-        self.actor_rrefs = []
-        self.actor_job_rrefs = []
-        for i in range(self.num_actors):
-            # NOTE: actor ids of any server is [0, 1, ..., #actors-1]
-            name = 'actor_' + str(i + self.server_id * self.num_actors)
-            actor_rref = rpc.remote(name, Actor, args=(i, self.env_fn, self.rref, self.all_args))
-            self.actor_job_rrefs.append(actor_rref.remote().run())
-            self.actor_rrefs.append(actor_rref)
+    def serve(self):
+        while True:
+            self.load_weights(block=False)
+
+            msg = self.socket.recv_multipart()
+            clients = list(filter(lambda x: x != b'', msg))[:-1]
+
+            policy_inputs = self.buffer.get_policy_inputs(clients)
+
+            policy_outputs = self.select_action(policy_inputs)
+
+            self.buffer.insert_after_inference(clients, *policy_outputs)
+
+            # directly send received message back such that broker can fetch actions from buffer
+            self.socket.send_multipart(msg)
+
+
+class HanabiServer(InferenceServer):
+    @torch.no_grad()
+    def select_action(self, policy_inputs):
+        policy_outputs = self.rollout_policy.get_actions(*map(
+            lambda x: x.reshape(self.rollout_bs * self.env_per_split, *x.shape[2:]), policy_inputs))
+        policy_outputs = map(lambda x: _t2n(x).reshape(self.rollout_bs, self.env_per_split, *x.shape[1:]), policy_outputs)
+
+        return policy_outputs
+
+
+class SMACServer(InferenceServer):
+    @torch.no_grad()
+    def select_action(self, policy_inputs):
+        policy_outputs = self.rollout_policy.get_actions(*map(
+            lambda x: x.reshape(self.rollout_bs * self.num_agents * self.env_per_split, *x.shape[3:]), policy_inputs))
+
+        policy_outputs = map(lambda x: _t2n(x).reshape(self.rollout_bs, self.env_per_split, self.num_agents, *x.shape[1:]), policy_outputs)
+
+        return policy_outputs

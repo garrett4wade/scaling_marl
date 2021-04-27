@@ -13,7 +13,9 @@ import torch.distributed as dist
 from torch.distributed import rpc
 
 from system.trainer.smac_trainer import SMACTrainer
-from system.server.smac_server import SMACServer
+from system.inference_server import SMACServer
+from system.actor import Actor
+from system.broker import Broker
 from utils.buffer import SharedReplayBuffer
 from config import get_config
 from envs.starcraft2.StarCraft2_Env import StarCraft2Env
@@ -25,10 +27,31 @@ from envs.env_wrappers import ShareDummyVecEnv, ShareSubprocVecEnv
 class SMACBuffer(SharedReplayBuffer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        summary_shp = (self.num_servers, self.num_actors, self.num_split)
-        self._btwon_shm, self.battles_won = self.shm_array(summary_shp, np.float32)
-        self._btgm_shm, self.battles_game = self.shm_array(summary_shp, np.float32)
+        self._btwon_shm, self.battles_won = self.shm_array(self.num_slots, np.float32)
+        self._btgm_shm, self.battles_game = self.shm_array(self.num_slots, np.float32)
         self.summary_lock = mp.RLock()
+    
+    def insert_before_inference(self,
+                                client,
+                                obs,
+                                share_obs,
+                                rewards,
+                                dones,
+                                infos,
+                                available_actions=None):
+        super().insert_before_inference(client, obs, share_obs, rewards, dones, infos, available_actions)
+        if infos is not None:
+            merged_info = {}
+            for all_agent_info in infos:
+                for k, v in all_agent_info[0].items():
+                    if not isinstance(v, bool):
+                        if k not in merged_info.keys():
+                            merged_info[k] = v
+                        else:
+                            merged_info[k] += v
+            with self.summary_lock:  # multiprocessing RLock
+                self.battles_won[self._client_hash[client]] = merged_info['battles_won']
+                self.battles_game[self._client_hash[client]] = merged_info['battles_game']
 
 
 def parse_args(args, parser):
@@ -125,14 +148,9 @@ def init_summary(config, all_args):
 
 def run(rank, world_size, weights_queue, buffer, config):
     all_args = config['all_args']
-    rpc_init_method = 'file:///dev/shm/smac_rpc'
     ddp_init_method = 'file:///dev/shm/smac_ddp'
     if rank < all_args.num_trainers:
         dist.init_process_group('nccl', init_method=ddp_init_method, rank=rank, world_size=all_args.num_trainers)
-
-        rpc_opt = rpc.TensorPipeRpcBackendOptions(init_method=rpc_init_method, rpc_timeout=300)
-
-        rpc.init_rpc('trainer_' + str(rank), rank=rank, world_size=world_size, rpc_backend_options=rpc_opt)
 
         if rank == 0:
             run = init_summary(config, all_args)
@@ -152,12 +170,6 @@ def run(rank, world_size, weights_queue, buffer, config):
     elif rank >= all_args.num_trainers and rank < all_args.num_trainers + all_args.num_servers:
         offset = all_args.num_trainers
 
-        rpc_opt = rpc.TensorPipeRpcBackendOptions(init_method=rpc_init_method,
-                                                  num_worker_threads=max(16, all_args.num_actors),
-                                                  rpc_timeout=300)
-
-        rpc.init_rpc('agent_' + str(rank - offset), rank=rank, world_size=world_size, rpc_backend_options=rpc_opt)
-
         server_gpu_ranks = all_args.server_gpu_ranks
         if len(server_gpu_ranks) == 1:
             gpu_rank = server_gpu_ranks[0]
@@ -167,14 +179,16 @@ def run(rank, world_size, weights_queue, buffer, config):
             raise RuntimeError('server_gpu_ranks needs to either have length 1 or length #num_servers.')
 
         server = SMACServer(rank, gpu_rank, weights_queue, buffer, config)
-        server.setup_actors()
+        server.serve()
 
-    else:
+    elif rank >= all_args.num_trainers + all_args.num_servers and rank < all_args.num_trainers + all_args.num_servers + all_args.num_actors:
         offset = all_args.num_servers + all_args.num_trainers
 
-        rpc_opt = rpc.TensorPipeRpcBackendOptions(init_method=rpc_init_method, rpc_timeout=300)
-
-        rpc.init_rpc('actor_' + str(rank - offset), rank=rank, world_size=world_size, rpc_backend_options=rpc_opt)
+        actor = Actor(rank - offset, config['env_fn'], all_args)
+        actor.run()
+    else:
+        broker = Broker(buffer, all_args)
+        broker.run()
 
     rpc.shutdown()
 
@@ -225,7 +239,7 @@ def main():
     buffer = SMACBuffer(all_args, num_agents, obs_space, share_obs_space, act_space)
     weights_queue = mp.Queue(maxsize=8)
 
-    world_size = all_args.num_servers * (all_args.num_actors + 1) + all_args.num_trainers
+    world_size = all_args.num_servers + all_args.num_actors + 1 + all_args.num_trainers
     procs = []
     for i in range(world_size):
         p = mp.Process(target=run, args=(i, world_size, weights_queue, buffer, config))

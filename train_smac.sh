@@ -6,11 +6,11 @@ rm -rf /dev/shm/*
 
 env="StarCraft2"
 algo="rmappo"
-map="5m_vs_6m"
+map="3m"
 episode_length=100
 
 # 952 168 4356 7860
-seeds=(58598 952 167 4356 7861)
+seeds=(58598)
 num_env_steps=250000000
 
 for seed in ${seeds[@]};
@@ -22,7 +22,7 @@ do
                             --seed ${seed} \
                             --episode_length ${episode_length} \
                             --num_env_steps ${num_env_steps} \
-                            --ppo_epoch 15 \
+                            --ppo_epoch 10 \
                             --num_actors 4 \
                             --env_per_actor 2 \
                             --num_trainers 1 \

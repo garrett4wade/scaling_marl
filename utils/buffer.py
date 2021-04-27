@@ -1,6 +1,7 @@
 import torch
 import time
 import numpy as np
+import multiprocessing as mp
 from multiprocessing import Lock, Condition
 from multiprocessing.managers import SharedMemoryManager
 from utils.popart import PopArt
@@ -42,77 +43,16 @@ def _select_rnn_states(h, num_chunks):
 
 class ReplayBuffer:
     def __init__(self, args, num_agents, obs_space, share_obs_space, act_space, reuse_pattern='recycle'):
-        """base buffer, can be integrated with different rollout collection mechanism
-
-        Structure is shown below. Because of asynchronous rollout execution,
-        buffer has multiple queue positions such that actor and inference server
-        does not need to wait for the completion of optimization, instead it
-        continues rollout and just takes up next queue position.
-
-        Envs in each actor have #env_split splits, each split has multiple envs
-        and takes up a section of actor (a minibatch of data). Env splits of all
-        actors with the same id compose of a slot in buffer, i.e. composition
-        of all actors' minibatch data corresponding to the same env split. A slot
-        is also a (normal) batch that will be loaded into GPU for loss computation
-        and optimization.
-
-        If buffer is shared among multiple inference servers,
-        then this buffer is just the concatenation of single-server buffers,
-        e.g. first half slots are prepared for server 0 and second half
-        slots are prepared for server 1, such that there is no read/write
-        interleaving.
-
-        (suppose num_actors=3, qsize=5, num_split=2, single-server)
-
-        +++++++++++ ————————————————
-                  +                 | =========================
-                  +                 |    section of actor 0
-                  +                 | -------------------------
-                  +    env split 0  |    section of actor 1
-                  +  (slot/batch 0) | -------------------------
-                  +                 |    section of actor 2
-          queue   +                 | =========================
-         position +  ————————————————
-            0     +                 | =========================
-                  +                 |    section of actor 0
-                  +                 | -------------------------
-                  +    env split 1  |    section of actor 1
-                  +  (slot/batch 1) | -------------------------
-                  +                 |    section of actor 2
-                  +                 | =========================
-        +++++++++++  ————————————————
-        ...
-        ...
-        +++++++++++ ————————————————
-                  +                 | =========================
-                  +                 |    section of actor 0
-                  +                 | -------------------------
-                  +    env split 0  |    section of actor 1
-                  +  (slot/batch 8) | -------------------------
-                  +                 |    section of actor 2
-          queue   +                 | =========================
-         position +  ————————————————
-            4     +                 | =========================
-                  +                 |    section of actor 0
-                  +                 | -------------------------
-                  +    env split 1  |    section of actor 1
-                  +  (slot/batch 9) | -------------------------
-                  +                 |    section of actor 2
-                  +                 | =========================
-        +++++++++++  ————————————————
-        """
         # storage shape configuration
         # NOTE: #actors = #clients per inference server
         # NOTE: actor ids of any server is [0, 1, ..., #actors-1]
         self.num_actors = num_actors = args.num_actors
         self.num_split = num_split = args.num_split
-        self.num_servers = num_servers = args.num_servers
+        assert args.env_per_actor % args.num_split == 0
+        self.env_per_split = env_per_split = args.env_per_actor // args.num_split
         self.qsize = qsize = args.qsize
 
-        self.num_slots = num_slots = qsize * num_split * num_servers
-        self.slots_per_server = qsize * num_split
-        self.env_per_split = env_per_split = args.env_per_actor // num_split
-        self.batch_size = bs = num_actors * env_per_split
+        self.num_slots = num_slots = qsize * num_split * num_actors
 
         self.num_agents = num_agents
         self.num_trainers = args.num_trainers
@@ -149,7 +89,7 @@ class ReplayBuffer:
         # initialize storage
         def shape_prefix(bootstrap):
             t = ep_l + 1 if bootstrap else ep_l
-            return (num_slots, t, bs, num_agents)
+            return (num_slots, t, env_per_split, num_agents)
 
         obs_shape = get_shape_from_obs_space(obs_space)
         share_obs_shape = get_shape_from_obs_space(share_obs_space)
@@ -190,22 +130,22 @@ class ReplayBuffer:
         self._rt_shm, self.returns = self.shm_array((*shape_prefix(True), 1), np.float32)
         self._adv_shm, self.advantages = self.shm_array((*shape_prefix(False), 1), np.float32)
 
-        # queue index
-        self._prev_q_shm, self._prev_q_idx = self.shm_array((num_servers, num_split), np.int16)
-        self._prev_q_idx[:] = -1
-        self._q_shm, self._q_idx = self.shm_array((num_servers, num_split), np.uint8)
+        # hash table mapping client identity to slot id
+        self._client_hash = mp.Manager().dict()
+        self._prev_client_hash = mp.Manager().dict()
 
         # episode step record
-        self._step_shm, self._ep_step = self.shm_array((num_servers, num_split), np.int32)
+        self._step_shm, self._ep_step = self.shm_array((num_slots, ), np.int32)
 
         # buffer indicators
         self._ut_shm, self._used_times = self.shm_array((num_slots, ), np.uint8)
+
         self._read_shm, self._is_readable = self.shm_array((num_slots, ), np.uint8)
-        self._being_read_shm, self._is_being_read = self.shm_array((num_slots, ), np.uint8)
+        self._busy_shm, self._is_busy = self.shm_array((num_slots, ), np.uint8)
         self._wrt_shm, self._is_writable = self.shm_array((num_slots, ), np.uint8)
         self._is_writable[:] = 1
         self._rt_ready_shm, self._is_return_ready = self.shm_array((num_slots, ), np.uint8)
-        assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
+        assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
 
         self._tm_shm, self._time_stamp = self.shm_array((num_slots, ), np.float32)
 
@@ -227,62 +167,54 @@ class ReplayBuffer:
         shm_array = np.ndarray(shape, dtype=dtype, buffer=shm.buf)
         return shm, shm_array
 
-    def _locate(self, server_id, split_id):
-        return server_id * self.slots_per_server + self._q_idx[server_id, split_id] * self.num_split + split_id
-
-    def _locate_prev(self, server_id, split_id):
-        assert self._prev_q_idx[server_id, split_id] >= 0
-        return server_id * self.slots_per_server + self._prev_q_idx[server_id, split_id] * self.num_split + split_id
-
-    def _move_next(self, server_id, split_id):
-        slot_id = self._locate(server_id, split_id)
-        # move global queue pointer to next corresponding slot
-        self._prev_q_idx[server_id, split_id] = self._q_idx[server_id, split_id]
-        self._q_idx[server_id, split_id] += 1
-        self._q_idx[server_id, split_id] %= self.qsize
-        new_slot_id = self._locate(server_id, split_id)
-
-        # find next slot which is not busy
-        while self._is_being_read[new_slot_id]:
-            self._q_idx[server_id, split_id] += 1
-            self._q_idx[server_id, split_id] %= self.qsize
-            new_slot_id = self._locate(server_id, split_id)
-        assert new_slot_id != slot_id, 'please increase qsize of buffer!'
-
-        return new_slot_id
-
-    def _opening(self, old_slot_id, new_slot_id):
-        # start up a new slot
-        self.rnn_states[new_slot_id, 0] = self.rnn_states[old_slot_id, -1]
-        self.rnn_states_critic[new_slot_id, 0] = self.rnn_states_critic[old_slot_id, -1]
-
+    def _allocate(self, client):
         with self._read_ready:
-            # if the next corresponding slot is readable, overwrite it
-            if self._is_readable[new_slot_id]:
-                # reset indicator for overwriting
-                self._is_return_ready[new_slot_id] = 0
-                self._is_readable[new_slot_id] = 0
-                self._is_writable[new_slot_id] = 1
-            assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
+            writable_slots = np.nonzero(self._is_writable)[0]
+            if len(writable_slots) > 0:
+                slot_id = writable_slots[0]
+                # writable -> busy
+                self._is_writable[slot_id] = 0
+            else:
+                readable_slots = np.nonzero(self._is_readable)[0]
+                assert len(readable_slots) > 0, 'please increase qsize!'
+                slot_id = readable_slots[0]
+                # readable -> busy
+                self._is_readable[slot_id] = 0
+            self._is_busy[slot_id] = 1
+            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
 
-    def _closure(self, old_slot_id, new_slot_id):
+        if client in self._client_hash.keys():
+            self._prev_client_hash[client] = self._client_hash[client]
+
+        self._client_hash[client] = slot_id
+
+    def _opening(self, old_slots, new_slots):
+        with self._read_ready:
+            assert np.all(self._is_busy[old_slots]) and np.all(self._is_busy[new_slots])
+
+        self.rnn_states[new_slots, 0] = self.rnn_states[old_slots, -1]
+        self.rnn_states_critic[new_slots, 0] = self.rnn_states_critic[old_slots, -1]
+
+    def _closure(self, old_slots, new_slots):
         # complete bootstrap data & indicator of a written slot
-        self.share_obs[old_slot_id, -1] = self.share_obs[new_slot_id, 0]
-        self.obs[old_slot_id, -1] = self.obs[new_slot_id, 0]
-        self.masks[old_slot_id, -1] = self.masks[new_slot_id, 0]
-        self.rewards[old_slot_id, -1] = self.rewards[new_slot_id, 0]
-        self.active_masks[old_slot_id, -1] = self.active_masks[new_slot_id, 0]
+        self.share_obs[old_slots, -1] = self.share_obs[new_slots, 0]
+        self.obs[old_slots, -1] = self.obs[new_slots, 0]
+        self.masks[old_slots, -1] = self.masks[new_slots, 0]
+        self.rewards[old_slots, -1] = self.rewards[new_slots, 0]
+        self.active_masks[old_slots, -1] = self.active_masks[new_slots, 0]
         if hasattr(self, 'available_actions'):
-            self.available_actions[old_slot_id, -1] = self.available_actions[new_slot_id, 0]
-        self.value_preds[old_slot_id, -1] = self.value_preds[new_slot_id, 0]
+            self.available_actions[old_slots, -1] = self.available_actions[new_slots, 0]
+        self.value_preds[old_slots, -1] = self.value_preds[new_slots, 0]
 
         with self._read_ready:
+            assert np.all(self._is_busy[old_slots]) and np.all(self._is_busy[new_slots])
             # update indicator of current slot
             no_availble_before = np.sum(self._is_readable) < self.target_available_slots
-            self._is_readable[old_slot_id] = 1
-            self._is_writable[old_slot_id] = 0
-            assert not self._is_return_ready[old_slot_id]
-            self._time_stamp[old_slot_id] = time.time()
+            # readable -> busy (being written)
+            self._is_readable[old_slots] = 1
+            self._is_busy[old_slots] = 0
+            assert not np.any(self._is_return_ready[old_slots])
+            self._time_stamp[old_slots] = time.time()
             # if reader is waiting for data, notify it
             if no_availble_before and np.sum(self._is_readable) >= self.target_available_slots:
                 self._read_ready.notify(self.num_trainers)
@@ -296,20 +228,20 @@ class ReplayBuffer:
             # for multi-gpu training, slots for each gpu is randomly selected from candidates
             slots = available_slots[np.random.choice(latest, self.slots_per_update, replace=False)]
 
-            # indicator readable -> being-read
+            # readable -> busy (being-read)
             self._is_readable[slots] = 0
-            self._is_being_read[slots] = 1
+            self._is_busy[slots] = 1
 
             if self.reuse_pattern == 'recycle':
                 self._time_stamp[slots] = np.min(self._time_stamp[available_slots]) - 1
 
-            assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
+            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
         return slots, self.recurrent_generator(slots) if recur else self.feed_forward_generator(slots)
 
     def after_training_step(self, slots):
         with self._read_ready:
-            # reset indicator, being-read -> writable
-            self._is_being_read[slots] = 0
+            # reset indicator, busy (being-read) -> readable/writable, depending on maximum reuse times
+            self._is_busy[slots] = 0
             self._used_times[slots] += 1
             assert np.all(self._is_return_ready[slots])
             for slot_id in slots:
@@ -319,7 +251,7 @@ class ReplayBuffer:
                     self._used_times[slot_id] = 0
                 else:
                     self._is_readable[slot_id] = 1
-            assert np.all(self._is_readable + self._is_being_read + self._is_writable == 1)
+            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
 
     def _compute_returns(self, slots, adv_normalization=True):
         value_normalizer = self.value_normalizer
@@ -375,7 +307,7 @@ class ReplayBuffer:
             self._is_return_ready[non_ready_slot_ids] = 1
 
         num_mini_batch = self.num_mini_batch
-        batch_size = self.batch_size * self.episode_length * self.num_agents
+        batch_size = self.env_per_split * self.slots_per_update * self.episode_length * self.num_agents
 
         assert batch_size >= num_mini_batch and batch_size % num_mini_batch == 0
         mini_batch_size = batch_size // num_mini_batch
@@ -450,9 +382,10 @@ class ReplayBuffer:
         data_chunk_length = self.data_chunk_length
         num_mini_batch = self.num_mini_batch
         assert self.episode_length % data_chunk_length == 0
-        assert self.batch_size >= num_mini_batch and self.batch_size % num_mini_batch == 0
         num_chunks = self.episode_length // data_chunk_length
-        batch_size = self.batch_size * self.num_agents * num_chunks
+        batch_size = self.env_per_split * self.slots_per_update * num_chunks * self.num_agents
+        assert batch_size >= num_mini_batch and batch_size % num_mini_batch == 0
+
         mini_batch_size = batch_size // num_mini_batch
 
         def _cast(x):
@@ -558,72 +491,95 @@ class PolicyMixin:
 
 
 class SharedPolicyMixin(PolicyMixin):
-    def get_policy_inputs(self, server_id, split_id):
-        slot_id = self._locate(server_id, split_id)
-        ep_step = self._ep_step[server_id, split_id]
+    def get_actions(self, client):
+        slot_id = self._client_hash[client]
+        ep_step = self._ep_step[slot_id]
 
-        return (self.share_obs[slot_id, ep_step], self.obs[slot_id, ep_step], self.rnn_states[slot_id, ep_step],
-                self.rnn_states_critic[slot_id, ep_step], self.masks[slot_id, ep_step], self.available_actions[slot_id,
-                                                                                                               ep_step])
+        if ep_step == 0:
+            prev_slot_id = self._prev_client_hash[client]
+            return self.actions[prev_slot_id, -1]
+
+        return self.actions[slot_id, ep_step - 1]
+
+    def get_policy_inputs(self, clients):
+        slots = [self._client_hash[client] for client in clients]
+        ep_steps = self._ep_step[slots]
+
+        return (self.share_obs[slots, ep_steps], self.obs[slots, ep_steps], self.rnn_states[slots, ep_steps],
+                self.rnn_states_critic[slots, ep_steps], self.masks[slots, ep_steps], self.available_actions[slots, ep_steps])
 
     def insert_before_inference(self,
-                                server_id,
-                                actor_id,
-                                split_id,
-                                share_obs,
+                                client,
                                 obs,
+                                share_obs,
                                 rewards,
                                 dones,
-                                force_terminations,
+                                infos,
                                 available_actions=None):
-        slot_id = self._locate(server_id, split_id)
-        ep_step = self._ep_step[server_id, split_id]
-        env_slice = slice(actor_id * self.env_per_split, (actor_id + 1) * self.env_per_split)
+        if client not in self._client_hash.keys():
+            self._allocate(client)
+        slot_id = self._client_hash[client]
+        ep_step = self._ep_step[slot_id]
 
         # env step returns
-        self.share_obs[slot_id, ep_step, env_slice] = share_obs
-        self.obs[slot_id, ep_step, env_slice] = obs
+        self.share_obs[slot_id, ep_step] = share_obs
+        self.obs[slot_id, ep_step] = obs
         if ep_step >= 1:
-            self.rewards[slot_id, ep_step - 1, env_slice] = rewards
+            self.rewards[slot_id, ep_step - 1] = rewards
         if available_actions is not None:
-            self.available_actions[slot_id, ep_step, env_slice] = available_actions
+            self.available_actions[slot_id, ep_step] = available_actions
 
-        self.masks[slot_id, ep_step, env_slice] = 1 - np.all(dones, axis=1, keepdims=True)
-        dones[np.all(dones, axis=1).squeeze(-1)] = 0
-        self.active_masks[slot_id, ep_step, env_slice] = 1 - dones
-        self.fct_masks[slot_id, ep_step, env_slice] = 1 - force_terminations
+        self.masks[slot_id, ep_step] = 1 - np.all(dones, axis=1, keepdims=True)
+        dones_cp = dones.copy()
+        dones_cp[np.all(dones, axis=1).squeeze(-1)] = 0
+        self.active_masks[slot_id, ep_step] = 1 - dones_cp
+
+        if infos is not None:
+            force_terminations = np.array([[[agent_info['force_termination']] for agent_info in info]
+                                            for info in infos])
+            self.fct_masks[slot_id, ep_step] = 1 - force_terminations
 
         self.total_timesteps += self.env_per_split
 
-    def insert_after_inference(self, server_id, split_id, value_preds, actions, action_log_probs, rnn_states,
+    def insert_after_inference(self, clients, value_preds, actions, action_log_probs, rnn_states,
                                rnn_states_critic):
-        slot_id = self._locate(server_id, split_id)
-        ep_step = self._ep_step[server_id, split_id]
+        slots = [self._client_hash[client] for client in clients]
+        ep_steps = self._ep_step[slots]
 
-        self.value_preds[slot_id, ep_step] = value_preds
+        self.value_preds[slots, ep_steps] = value_preds
 
-        if ep_step == 0 and self._prev_q_idx[server_id, split_id] >= 0:
-            old_slot_id = self._locate_prev(server_id, split_id)
-            # fill bootstrap data in previous slot
-            self._closure(old_slot_id, slot_id)
+        closure_new_slots = []
+        closure_old_slots = []
+        for slot, ep_step, client in zip(slots, ep_steps, clients):
+            if ep_step == 0 and client in self._prev_client_hash.keys():
+                closure_old_slots.append(self._prev_client_hash[client])
+                closure_new_slots.append(slot)
+
+        if len(closure_new_slots) > 0:
+            self._closure(closure_old_slots, closure_new_slots)
 
         # model inference returns
-        self.actions[slot_id, ep_step] = actions
-        self.action_log_probs[slot_id, ep_step] = action_log_probs
+        self.actions[slots, ep_steps] = actions
+        self.action_log_probs[slots, ep_steps] = action_log_probs
 
-        rnn_mask = np.expand_dims(self.masks[slot_id, ep_step], -1)
-        self.rnn_states[slot_id, ep_step + 1] = rnn_states * rnn_mask
-        self.rnn_states_critic[slot_id, ep_step + 1] = rnn_states_critic * rnn_mask
+        rnn_mask = np.expand_dims(self.masks[slots, ep_steps], -1)
+        self.rnn_states[slots, ep_steps + 1] = rnn_states * rnn_mask
+        self.rnn_states_critic[slots, ep_steps + 1] = rnn_states_critic * rnn_mask
 
-        self._ep_step[server_id, split_id] += 1
+        self._ep_step[slots] += 1
+        opening_clients = np.array(clients)[ep_steps == self.episode_length - 1]
 
         # section of this actor in current slot is full except for bootstrap step
-        if ep_step == self.episode_length - 1:
-            self._ep_step[server_id, split_id] = 0
+        if len(opening_clients) > 0:
+            opening_old_slots = [self._client_hash[client] for client in opening_clients]
+            self._ep_step[opening_old_slots] = 0
 
-            new_slot_id = self._move_next(server_id, split_id)
+            for client in opening_clients:
+                self._allocate(client)
 
-            self._opening(slot_id, new_slot_id)
+            opening_new_slots = [self._client_hash[client] for client in opening_clients]
+
+            self._opening(opening_old_slots, opening_new_slots)
 
 
 class SharedReplayBuffer(ReplayBuffer, SharedPolicyMixin):
@@ -631,6 +587,12 @@ class SharedReplayBuffer(ReplayBuffer, SharedPolicyMixin):
 
 
 class SequentialPolicyMixin(PolicyMixin):
+    def get_actions(self, client):
+        slot_id = self._client_hash[client]
+        ep_step = self._ep_step[slot_id]
+
+        pass
+
     def get_policy_inputs(self, server_id, split_id):
         slot_id = self._locate(server_id, split_id)
         ep_step = self._ep_step[server_id, split_id]

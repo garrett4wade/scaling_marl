@@ -1,10 +1,12 @@
 import time
 from envs.env_wrappers import ShareDummyVecEnv
 import numpy as np
+import zmq
+import pyarrow as pa
 
 
 class Actor:
-    def __init__(self, actor_id, env_fn, agent_rref, args):
+    def __init__(self, actor_id, env_fn, args):
         self.id = actor_id
         self.num_split = num_split = args.num_split
         self.env_per_actor = env_per_actor = args.env_per_actor
@@ -14,7 +16,14 @@ class Actor:
         self.verbose_time = args.verbose_time
 
         self.episode_length = args.episode_length
-        self.agent_rref = agent_rref
+
+        self.context = zmq.Context()
+        self.sockets = []
+        for i in range(self.num_split):
+            socket = self.context.socket(zmq.REQ)
+            socket.identity = "Client-{}-Split-{}".format(self.id, i).encode("ascii")
+            socket.connect(args.frontend_addr)
+            self.sockets.append(socket)
 
         self.envs = []
         for i in range(self.num_split):
@@ -23,20 +32,17 @@ class Actor:
                     lambda: env_fn(self.id * self.env_per_actor + i * self.env_per_split + j, args)
                     for j in range(self.env_per_split)
                 ]))
-        self.action_futures = []
         print('-' * 8 + ' Actor {} set up successfully! '.format(self.id) + '-' * 8)
 
     def run(self):
         request_tik = []
         for i, env in enumerate(self.envs):
-            model_inputs = env.reset()
+            step_ret = env.reset()
             # obs, state, avail_action
-            assert len(model_inputs) == 3
+            assert len(step_ret) == 3
             request_tik.append(time.time())
-
-            action_fut = self.agent_rref.rpc_async().select_action(self.id, i, model_inputs, init=True)
-
-            self.action_futures.append(action_fut)
+            # TODO: compression may be unnecessary here because data seg is small
+            self.sockets[i].send(pa.serialize(step_ret).to_buffer())
         while True:
             inf_times = []
             wait_times = []
@@ -45,11 +51,12 @@ class Actor:
             for i, env in enumerate(self.envs):
                 wait_tik = time.time()
 
-                delay_tik, actions = self.action_futures[i].wait()
+                msg = self.sockets[i].recv()
+                delay_tik, actions = pa.deserialize(msg)
 
                 tok = time.time()
 
-                model_inputs = env.step(actions)
+                step_ret = env.step(actions)
 
                 step_tok = time.time()
 
@@ -59,10 +66,10 @@ class Actor:
                 step_times.append((step_tok - tok) * 1e3)
 
                 # obs, state, reward, done, infos, avail_action
-                assert len(model_inputs) == 6
+                assert len(step_ret) == 6
 
                 request_tik[i] = time.time()
-                self.action_futures[i] = self.agent_rref.rpc_async().select_action(self.id, i, model_inputs)
+                self.sockets[i].send(pa.serialize(step_ret).to_buffer())
 
             if self.verbose_time:
                 print('actor {} inference time {:.2f}ms, env step time {:.2f}ms, wait time {:.2f}ms, delay {:.2f}ms'.
