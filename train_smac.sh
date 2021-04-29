@@ -23,11 +23,12 @@ do
                             --episode_length ${episode_length} \
                             --num_env_steps ${num_env_steps} \
                             --ppo_epoch 10 \
-                            --num_actors 4 \
-                            --env_per_actor 2 \
+                            --num_actors 16 \
+                            --env_per_actor 6 \
                             --num_trainers 1 \
-                            --num_servers 1 \
-                            --slots_per_update 1 \
+                            --num_servers 4 \
+                            --rollout_bs 16 \
+                            --slots_per_update 16 \
                             --server_gpu_ranks 1 \
                             --use_eval \
                             --use_wandb

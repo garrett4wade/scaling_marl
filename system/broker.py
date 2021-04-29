@@ -4,6 +4,8 @@ import pyarrow as pa
 import time
 import numpy as np
 import multiprocessing as mp
+import threading
+import queue
 
 
 class Broker:
@@ -31,14 +33,25 @@ class Broker:
         self.rollout_bs = args.rollout_bs
 
         self.available_servers = []
+        self.ready_clients = queue.Queue(maxsize=args.num_actors * args.num_split)
 
+    def send_action(self):
+        while True:
+            client = self.ready_clients.get()
+            actions = self.buffer.get_actions(client)
+            data_serialized = pa.serialize((time.time(), actions)).to_buffer()
+            self.frontend.send_multipart([client, b'', data_serialized])
+            
     def run(self):
         backend_ready = False
         requests = []
+        send_job = threading.Thread(target=self.send_action)
+        send_job.start()
 
         while True:
             sockets = dict(self.poller.poll())
 
+            tik1 = time.time()
             if self.backend in sockets:
                 msg = self.backend.recv_multipart()
                 server, empty, client0 = msg[:3]
@@ -52,10 +65,10 @@ class Broker:
                     clients = list(filter(lambda x: x != b'', msg))[1:-1]
                     assert len(clients) == self.rollout_bs
                     for client in clients:
-                        actions = self.buffer.get_actions(client)
-                        data_serialized = pa.serialize((time.time(), actions)).to_buffer()
-                        self.frontend.send_multipart([client, b'', data_serialized])
+                        self.ready_clients.put(client)
+            # print("broker part1 time: {}".format(time.time() - tik1))
 
+            tik2 = time.time()
             if self.frontend in sockets:
                 client_addr, empty, request = self.frontend.recv_multipart()
                 step_ret = pa.deserialize(request)
@@ -71,7 +84,9 @@ class Broker:
                 self.buffer.insert_before_inference(client_addr, obs, share_obs, rewards, dones, infos, available_actions)
                 # with self.buffer.request_lock:
                 requests.append(client_addr)
+            # print("broker part2 time: {}".format(time.time() - tik2))
 
+            tik3 = time.time()
             clients = []
             # with self.buffer.request_lock:
             if len(requests) >= self.rollout_bs and len(self.available_servers) > 0:
@@ -86,3 +101,4 @@ class Broker:
                 if len(self.available_servers) == 0:
                     self.poller.unregister(self.frontend)
                     backend_ready = False
+            # print("broker part3 time: {}".format(time.time() - tik3))
