@@ -2,170 +2,81 @@ import torch
 import time
 import numpy as np
 import multiprocessing as mp
-from multiprocessing import Lock, Condition
-from multiprocessing.managers import SharedMemoryManager
-from utils.popart import PopArt
-from utils.util import get_shape_from_obs_space, get_shape_from_act_space
-
-
-def byte_of_dtype(dtype):
-    if '16' in str(dtype):
-        byte_per_digit = 2
-    elif '32' in str(dtype):
-        byte_per_digit = 4
-    elif '64' in str(dtype):
-        byte_per_digit = 8
-    elif 'bool' in str(dtype) or '8' in str(dtype):
-        byte_per_digit = 1
-    else:
-        raise NotImplementedError
-    return byte_per_digit
-
-
-def _flatten(x, ndim):
-    return x.reshape(-1, *x.shape[ndim:])
-
-
-def _to_chunk(x, num_chunks):
-    # split along 'time dimension' then concatenate along 'batch dimension'
-    # then merge 'batch dimension' and 'agent dimension'
-    x = np.concatenate(np.split(x, num_chunks), axis=1)
-    return x.reshape(x.shape[0], -1, *x.shape[3:])
-
-
-def _select_rnn_states(h, num_chunks):
-    episode_length = h.shape[0]
-    assert episode_length % num_chunks == 0
-    chunk_len = h.shape[0] // num_chunks
-    inds = np.arange(episode_length, step=chunk_len)
-    return h[inds].reshape(-1, *h.shape[3:]).swapaxes(0, 1)
+from algorithms.storage_registries import get_ppo_storage_specs, to_numpy_type
 
 
 class ReplayBuffer:
-    def __init__(self, args, num_agents, obs_space, share_obs_space, act_space, reuse_pattern='recycle'):
-        # storage shape configuration
-        # NOTE: #actors = #clients per inference server
-        # NOTE: actor ids of any server is [0, 1, ..., #actors-1]
+    def __init__(self, args, num_agents, obs_space, share_obs_space, act_space):
+        # NOTE: value target computation is deferred to centralized trainer in consistent with off-policy correction
+        # e.g. V-trace and Retrace
+
+        # system configuration
         self.num_actors = num_actors = args.num_actors
-        self.num_split = num_split = args.num_split
-        assert args.env_per_actor % args.num_split == 0
-        self.env_per_split = env_per_split = args.env_per_actor // args.num_split
+        self.num_splits = num_splits = args.num_splits
+        assert args.env_per_actor % args.num_splits == 0
+        self.env_per_split = env_per_split = args.env_per_actor // args.num_splits
         self.qsize = qsize = args.qsize
 
-        self.num_slots = num_slots = qsize * num_split * num_actors
+        self.num_slots = num_slots = qsize * num_splits * num_actors
 
+        # storage shape configuration
         self.num_agents = num_agents
-        self.num_trainers = args.num_trainers
-        assert args.env_per_actor % num_split == 0
-        self.slots_per_update = args.slots_per_update
-        self.target_available_slots = self.slots_per_update * self.num_trainers
-
         self.episode_length = ep_l = args.episode_length
-        self.hidden_size = hs = args.hidden_size
-        self.recurrent_N = rec_n = args.recurrent_N
 
-        self.data_chunk_length = args.data_chunk_length
-        self.num_mini_batch = args.num_mini_batch
-
-        # RL specific configuration
-        self.gamma = args.gamma
-        self.gae_lambda = args.gae_lambda
-        self.sample_reuse = args.ppo_epoch
-        self._use_gae = args.use_gae
-        self._use_popart = args.use_popart
-
-        self.reuse_pattern = reuse_pattern
-        rp_choices = ['recycle', 'exhaust']
-        assert self.reuse_pattern in rp_choices, 'reuse_pattern must be one of {}'.format(rp_choices)
-
-        if self._use_popart:
-            self.value_normalizer = PopArt(input_shape=(1, ), num_trainers=args.num_trainers)
-        else:
-            self.value_normalizer = None
-
-        self._smm = SharedMemoryManager()
-        self._smm.start()
+        # TODO: support n-step bootstrap
+        # self.bootstrap_step = bootstrap_step = args.bootstrap_step
 
         # initialize storage
         def shape_prefix(bootstrap):
             t = ep_l + 1 if bootstrap else ep_l
             return (num_slots, t, env_per_split, num_agents)
 
-        obs_shape = get_shape_from_obs_space(obs_space)
-        share_obs_shape = get_shape_from_obs_space(share_obs_space)
+        # TODO: replace get_ppo_storage_specs with get_${algorithm}_storage_specs
+        self.storage_specs, self.policy_input_keys, self.policy_output_keys = get_ppo_storage_specs(
+            args, obs_space, share_obs_space, act_space)
+        self.storage_keys = [storage_spec.name for storage_spec in self.storage_specs]
+        self.storage_registries = {}
 
-        if type(obs_shape[-1]) == list:
-            obs_shape = obs_shape[:1]
+        for storage_spec in self.storage_specs:
+            name, shape, dtype, bootstrap, init_value = storage_spec
+            assert init_value == 0 or init_value == 1
+            init_method = torch.zeros if init_value == 0 else torch.ones
+            setattr(self, '_' + name, init_method((*shape_prefix, *shape), dtype).share_memory_())
+            setattr(self, name, getattr(self, '_' + name).numpy())
+            self.storage_registries[name] = ((*shape_prefix, *shape), to_numpy_type(dtype))
 
-        if type(share_obs_shape[-1]) == list:
-            share_obs_shape = share_obs_shape[:1]
-
-        self._share_obs_shm, self.share_obs = self.shm_array((*shape_prefix(True), *share_obs_shape), np.float32)
-        self._obs_shm, self.obs = self.shm_array((*shape_prefix(True), *obs_shape), np.float32)
-
-        if act_space.__class__.__name__ == 'Discrete':
-            self._avail_shm, self.available_actions = self.shm_array((*shape_prefix(True), act_space.n), np.float32)
-            self.available_actions[:] = 1
-        else:
-            self.available_actions = None
-
-        act_shape = get_shape_from_act_space(act_space)
-
-        self._act_shm, self.actions = self.shm_array((*shape_prefix(False), act_shape), np.float32)
-        self._logp_shm, self.action_log_probs = self.shm_array((*shape_prefix(False), act_shape), np.float32)
-
-        self._h_shm, self.rnn_states = self.shm_array((*shape_prefix(True), rec_n, hs), np.float32)
-        self._hc_shm, self.rnn_states_critic = self.shm_array((*shape_prefix(True), rec_n, hs), np.float32)
-
-        self._msk_shm, self.masks = self.shm_array((*shape_prefix(True), 1), np.float32)
-        self.masks[:] = 1
-        self._amsk_shm, self.active_masks = self.shm_array((*shape_prefix(True), 1), np.float32)
-        self.active_masks[:] = 1
-        # force terimination mask
-        self._fctmsk_shm, self.fct_masks = self.shm_array((*shape_prefix(True), 1), np.float32)
-        self.fct_masks[:] = 1
-
-        self._r_shm, self.rewards = self.shm_array((*shape_prefix(False), 1), np.float32)
-        self._v_shm, self.value_preds = self.shm_array((*shape_prefix(True), 1), np.float32)
-        self._rt_shm, self.returns = self.shm_array((*shape_prefix(True), 1), np.float32)
-        self._adv_shm, self.advantages = self.shm_array((*shape_prefix(False), 1), np.float32)
+        # self._storage is torch.Tensor handle while storage is numpy.array handle
+        # the 2 handles point to the same block of memory
+        self._storage = {k: getattr(self, '_' + k) for k in self.storage_keys}
+        self.storage = {k: getattr(self, k) for k in self.storage_keys}
 
         # hash table mapping client identity to slot id
-        self._client_hash = mp.Manager().dict()
-        self._prev_client_hash = mp.Manager().dict()
+        self._mp_mgr = mp.Manager()
+        self._client_hash = self._mp_mgr.dict()
+        self._prev_client_hash = self._mp_mgr.dict()
 
         # episode step record
-        self._step_shm, self._ep_step = self.shm_array((num_slots, ), np.int32)
+        self._ep_step = torch.zeros((num_slots, ), torch.int32).share_memory_().numpy()
 
         # buffer indicators
-        self._ut_shm, self._used_times = self.shm_array((num_slots, ), np.uint8)
-
-        self._read_shm, self._is_readable = self.shm_array((num_slots, ), np.uint8)
-        self._busy_shm, self._is_busy = self.shm_array((num_slots, ), np.uint8)
-        self._wrt_shm, self._is_writable = self.shm_array((num_slots, ), np.uint8)
-        self._is_writable[:] = 1
-        self._rt_ready_shm, self._is_return_ready = self.shm_array((num_slots, ), np.uint8)
+        self._is_readable = torch.zeros((num_slots, ), torch.uint8).share_memory_().numpy()
+        self._is_busy = torch.zeros((num_slots, ), torch.uint8).share_memory_().numpy()
+        self._is_writable = torch.ones((num_slots, ), torch.uint8).share_memory_().numpy()
         assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
 
-        self._tm_shm, self._time_stamp = self.shm_array((num_slots, ), np.float32)
+        self._time_stamp = torch.zeros((num_slots, ), torch.float32).share_memory_().numpy()
 
-        self._read_ready = Condition(Lock())
+        self._read_ready = mp.Condition()
 
-        self._timestep_shm, self.total_timesteps = self.shm_array((), np.int64)
+        self.total_timesteps = torch.zeros((), torch.int64)
 
         # to read/write env-specific summary info, e.g. winning rate, scores
-        self.summary_lock = Lock()
+        self.summary_lock = mp.Lock()
 
     def get_utilization(self):
         with self._read_ready:
             available_slots = np.sum(self._is_readable)
         return available_slots / self.num_slots
-
-    def shm_array(self, shape, dtype):
-        byte_per_digit = byte_of_dtype(dtype)
-        shm = self._smm.SharedMemory(size=byte_per_digit * np.prod(shape))
-        shm_array = np.ndarray(shape, dtype=dtype, buffer=shm.buf)
-        return shm, shm_array
 
     def _allocate(self, client):
         with self._read_ready:
@@ -181,7 +92,6 @@ class ReplayBuffer:
                 # readable -> busy
                 self._is_readable[slot_id] = 0
             self._is_busy[slot_id] = 1
-            self._is_return_ready[slot_id] = 0
             assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
 
         if client in self._client_hash.keys():
@@ -190,283 +100,61 @@ class ReplayBuffer:
         self._client_hash[client] = slot_id
 
     def _opening(self, old_slots, new_slots):
+        # when a slot (old_slot) is full, we should open up a new slot for data storage
         with self._read_ready:
             assert np.all(self._is_busy[old_slots]) and np.all(self._is_busy[new_slots])
 
-        self.rnn_states[new_slots, 0] = self.rnn_states[old_slots, -1]
-        self.rnn_states_critic[new_slots, 0] = self.rnn_states_critic[old_slots, -1]
+        # copy rnn states of previous slots into new ones, which serve as the policy input at next inference time
+        # note that other policy inputs (e.g. obs, share_obs) will be filled into new slots before the next inference
+        # (in self.insert_before_inference)
+        for k in self.storage_keys:
+            if 'rnn_states' in k:
+                self.storage[k][new_slots, 0] = self.storage[k][old_slots, -1]
 
     def _closure(self, old_slots, new_slots):
-        # complete bootstrap data & indicator of a written slot
-        self.share_obs[old_slots, -1] = self.share_obs[new_slots, 0]
-        self.obs[old_slots, -1] = self.obs[new_slots, 0]
-        self.masks[old_slots, -1] = self.masks[new_slots, 0]
+        # when filling the first timestep of a new slot, we should copy data into the previous slot as a bootstrap
+        # specifially, copied data includes all data except for rnn states needs to be bootstrapped (see storage specs)
+        # and rewards, because rewards is 1-step behind other aligned data,
+        # i.e., env.step() returns observations of current step, and rewards of previous step
+        for storage_spec in self.storage_specs:
+            name, _, _, bootstrap, _ = storage_spec
+            if 'rnn_states' not in name and bootstrap:
+                self.storage[name][old_slots, -1] = self.storage[name][new_slots, 0]
+
         self.rewards[old_slots, -1] = self.rewards[new_slots, 0]
-        self.active_masks[old_slots, -1] = self.active_masks[new_slots, 0]
-        if hasattr(self, 'available_actions'):
-            self.available_actions[old_slots, -1] = self.available_actions[new_slots, 0]
-        self.value_preds[old_slots, -1] = self.value_preds[new_slots, 0]
 
         with self._read_ready:
             assert np.all(self._is_busy[old_slots]) and np.all(self._is_busy[new_slots])
             # update indicator of current slot
-            no_availble_before = np.sum(self._is_readable) < self.target_available_slots
+            no_availble_before = np.sum(self._is_readable) < 1
             # readable -> busy (being written)
             self._is_readable[old_slots] = 1
             self._is_busy[old_slots] = 0
-            assert not np.any(self._is_return_ready[old_slots])
             self._time_stamp[old_slots] = time.time()
             # if reader is waiting for data, notify it
-            if no_availble_before and np.sum(self._is_readable) >= self.target_available_slots:
-                self._read_ready.notify(self.num_trainers)
+            if no_availble_before and np.sum(self._is_readable) >= 1:
+                self._read_ready.notify(1)
 
-    def get(self, recur=True):
+    def get(self):
         with self._read_ready:
-            self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= self.target_available_slots)
+            self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= 1)
 
             available_slots = np.nonzero(self._is_readable)[0]
-            latest = np.argsort(self._time_stamp[available_slots])[-self.target_available_slots:]
-            # for multi-gpu training, slots for each gpu is randomly selected from candidates
-            slots = available_slots[np.random.choice(latest, self.slots_per_update, replace=False)]
+            slot = available_slots[np.argsort(self._time_stamp[available_slots])[0]]
 
             # readable -> busy (being-read)
-            self._is_readable[slots] = 0
-            self._is_busy[slots] = 1
-
-            if self.reuse_pattern == 'recycle':
-                self._time_stamp[slots] = np.min(self._time_stamp[available_slots]) - 1
+            self._is_readable[slot] = 0
+            self._is_busy[slot] = 1
 
             assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
-        return slots, self.recurrent_generator(slots) if recur else self.feed_forward_generator(slots)
+        return {k: v[slot] for k, v in self.storage.items()}
 
-    def after_training_step(self, slots):
+    def after_sending(self, slot_id):
         with self._read_ready:
-            # reset indicator, busy (being-read) -> readable/writable, depending on maximum reuse times
-            self._is_busy[slots] = 0
-            self._used_times[slots] += 1
-            assert np.all(self._is_return_ready[slots])
-            for slot_id in slots:
-                if self._used_times[slot_id] >= self.sample_reuse:
-                    self._is_return_ready[slot_id] = 0
-                    self._is_writable[slot_id] = 1
-                    self._used_times[slot_id] = 0
-                else:
-                    self._is_readable[slot_id] = 1
+            # reset indicator, busy (being-read) -> writable
+            self._is_busy[slot_id] = 0
+            self._is_writable[slot_id] = 1
             assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
-
-    def _compute_returns(self, slots, adv_normalization=True):
-        value_normalizer = self.value_normalizer
-        if self._use_gae:
-            gae = 0
-            for step in reversed(range(self.episode_length)):
-                if self._use_popart:
-                    bootstrap_v = value_normalizer.denormalize(self.value_preds[slots, step + 1])
-                    cur_v = value_normalizer.denormalize(self.value_preds[slots, step])
-                else:
-                    bootstrap_v = self.value_preds[slots, step + 1]
-                    cur_v = self.value_preds[slots, step]
-
-                one_step_return = self.rewards[slots, step] + self.gamma * bootstrap_v * self.masks[slots, step + 1]
-                delta = one_step_return - cur_v
-                gae = delta + self.gamma * self.gae_lambda * gae * self.masks[slots, step + 1]
-                # if env is terminated compulsively, then abandon the finnal step
-                # i.e. advantage of final step is 0, value target of final step is predicted value
-                gae *= self.fct_masks[slots, step + 1]
-                self.returns[slots, step] = gae + cur_v
-                self.advantages[slots, step] = gae
-        else:
-            for step in reversed(range(self.rewards.shape[0])):
-                if self._use_popart:
-                    cur_v = value_normalizer.denormalize(self.value_preds[slots, step])
-                else:
-                    cur_v = self.value_preds[slots, step]
-
-                discount_r = (self.returns[slots, step + 1] * self.gamma * self.masks[slots, step + 1] +
-                              self.rewards[slots, step])
-                fct_mask = self.fct_masks[slots, step + 1]
-                # if env is terminated compulsively, then abandon the finnal step
-                # i.e. advantage of final step is 0, value target of final step is predicted value
-                self.returns[slots, step] = discount_r * fct_mask + (1 - fct_mask) * cur_v
-                self.advantages[slots, step] = self.returns[slots, step] - cur_v
-
-        if adv_normalization:
-            adv = self.advantages[slots, :].copy()
-            adv[self.active_masks[slots, :-1] == 0.0] = np.nan
-            mean_advantages = np.nanmean(adv)
-            std_advantages = np.nanstd(adv)
-            self.advantages[slots, :] = (self.advantages[slots, :] - mean_advantages) / (std_advantages + 1e-5)
-
-    def feed_forward_generator(self, slots):
-        # once we ensure different trainers get different slot_ids,
-        # the following few lines do not need lock
-        non_ready_slot_ids = []
-        for slot_id in slots:
-            if not self._is_return_ready[slot_id]:
-                non_ready_slot_ids.append(slot_id)
-        if len(non_ready_slot_ids) > 0:
-            self._compute_returns(non_ready_slot_ids)
-            self._is_return_ready[non_ready_slot_ids] = 1
-
-        num_mini_batch = self.num_mini_batch
-        batch_size = self.env_per_split * self.slots_per_update * self.episode_length * self.num_agents
-
-        assert batch_size >= num_mini_batch and batch_size % num_mini_batch == 0
-        mini_batch_size = batch_size // num_mini_batch
-
-        # flatten first 4 dims
-        # [N, T, B, A, D] -> [N * T * B * A, D]
-        share_obs = _flatten(self.share_obs[slots, :-1], 4)
-        obs = _flatten(self.obs[slots, :-1], 4)
-        actions = _flatten(self.actions[slots], 4)
-        if hasattr(self, 'available_actions'):
-            available_actions = _flatten(self.available_actions[slots, :-1], 4)
-        value_preds = _flatten(self.value_preds[slots, :-1], 4)
-        returns = _flatten(self.returns[slots, :-1], 4)
-        v_target = self.value_normalizer(returns) if self._use_popart else returns
-        masks = _flatten(self.masks[slots, :-1], 4)
-        active_masks = _flatten(self.active_masks[slots, :-1], 4)
-        action_log_probs = _flatten(self.action_log_probs[slots], 4)
-        advantages = _flatten(self.advantages[slots], 4)
-
-        # TODO: although rnn_state is useless when using MLP,
-        # we must return it to ensure the correctness of model dataflow ...
-        rnn_states = _flatten(self.rnn_states[slots, :-1], 4)
-        rnn_states_critic = _flatten(self.rnn_states_critic[slots, :-1], 4)
-
-        if num_mini_batch == 1:
-            outputs = (share_obs, obs, rnn_states, rnn_states_critic, actions, value_preds, v_target, masks,
-                       active_masks, action_log_probs, advantages, available_actions)
-            # for i, item in enumerate(outputs):
-            #     assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
-            yield outputs
-        else:
-            rand = torch.randperm(batch_size).numpy()
-            sampler = [rand[i * mini_batch_size:(i + 1) * mini_batch_size] for i in range(num_mini_batch)]
-            for indices in sampler:
-                share_obs_batch = share_obs[indices]
-                obs_batch = obs[indices]
-                rnn_states_batch = rnn_states[indices]
-                rnn_states_critic_batch = rnn_states_critic[indices]
-                actions_batch = actions[indices]
-                if hasattr(self, 'available_actions'):
-                    available_actions_batch = available_actions[indices]
-                else:
-                    available_actions_batch = None
-                value_preds_batch = value_preds[indices]
-                v_target_batch = v_target[indices]
-                masks_batch = masks[indices]
-                active_masks_batch = active_masks[indices]
-                old_action_log_probs_batch = action_log_probs[indices]
-                if advantages is None:
-                    adv_targ = None
-                else:
-                    adv_targ = advantages[indices]
-
-                outputs = (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch,
-                           value_preds_batch, v_target_batch, masks_batch, active_masks_batch,
-                           old_action_log_probs_batch, adv_targ, available_actions_batch)
-                # for i, item in enumerate(outputs):
-                #     assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
-                yield outputs
-
-    def recurrent_generator(self, slots):
-        # once we ensure different trainers get different slot_ids,
-        # the following few lines do not need lock
-        non_ready_slot_ids = []
-        for slot_id in slots:
-            if not self._is_return_ready[slot_id]:
-                non_ready_slot_ids.append(slot_id)
-        if len(non_ready_slot_ids) > 0:
-            self._compute_returns(non_ready_slot_ids)
-            self._is_return_ready[non_ready_slot_ids] = 1
-
-        data_chunk_length = self.data_chunk_length
-        num_mini_batch = self.num_mini_batch
-        assert self.episode_length % data_chunk_length == 0
-        num_chunks = self.episode_length // data_chunk_length
-        batch_size = self.env_per_split * self.slots_per_update * num_chunks * self.num_agents
-        assert batch_size >= num_mini_batch and batch_size % num_mini_batch == 0
-
-        mini_batch_size = batch_size // num_mini_batch
-
-        def _cast(x):
-            # [N, T, B, A, D] -> [T, N, B, A, D] -> [T, N * B, A, D]
-            x = x.swapaxes(0, 1)
-            x = x.reshape(x.shape[0], -1, *x.shape[3:])
-            # B <- N * B, B' = T * B * A / L
-            # [T, B, A, D] -> [L, T*B/L, A, D] -> [L, B', D]
-            return _to_chunk(x, num_chunks)
-
-        share_obs = _cast(self.share_obs[slots, :-1])
-        obs = _cast(self.obs[slots, :-1])
-        actions = _cast(self.actions[slots])
-        action_log_probs = _cast(self.action_log_probs[slots])
-        value_preds = _cast(self.value_preds[slots, :-1])
-        returns = _cast(self.returns[slots, :-1])
-        v_target = self.value_normalizer(returns.reshape(-1, 1)).reshape(
-            *returns.shape) if self._use_popart else returns
-        masks = _cast(self.masks[slots, :-1])
-        active_masks = _cast(self.active_masks[slots, :-1])
-        advantages = _cast(self.advantages[slots])
-
-        if hasattr(self, 'available_actions'):
-            available_actions = _cast(self.available_actions[slots, :-1])
-
-        def _cast_h(h):
-            # [N, T, B, A, rN, D] -> [T, N, B, A, rN, D] -> [T, N * B, A, rN, D]
-            h = h.swapaxes(0, 1)
-            h = h.reshape(h.shape[0], -1, *h.shape[3:])
-            # B <- N * B, B' = T * B * A / L
-            # [T, B, A, rN, D] -> [T/L, B, A, rN, D] -> [B', rN, D] -> [rN, B', D]
-            return _select_rnn_states(h, num_chunks)
-
-        rnn_states = _cast_h(self.rnn_states[slots, :-1])
-        rnn_states_critic = _cast_h(self.rnn_states_critic[slots, :-1])
-
-        if num_mini_batch == 1:
-            share_obs_batch = share_obs
-            obs_batch = obs
-            rnn_states_batch = rnn_states
-            rnn_states_critic_batch = rnn_states_critic
-            actions_batch = actions
-            available_actions_batch = None if self.available_actions is None else available_actions
-            value_preds_batch = value_preds
-            v_target_batch = v_target
-            masks_batch = masks
-            active_masks_batch = active_masks
-            old_action_log_probs_batch = action_log_probs
-            adv_targ = advantages
-
-            outputs = (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch,
-                       value_preds_batch, v_target_batch, masks_batch, active_masks_batch, old_action_log_probs_batch,
-                       adv_targ, available_actions_batch)
-            # for i, item in enumerate(outputs):
-            #     assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
-            yield outputs
-        else:
-            rand = torch.randperm(batch_size).numpy()
-            sampler = [rand[i * mini_batch_size:(i + 1) * mini_batch_size] for i in range(num_mini_batch)]
-
-            for indices in sampler:
-                share_obs_batch = share_obs[:, indices]
-                obs_batch = obs[:, indices]
-                rnn_states_batch = np.swapaxes(rnn_states[:, indices], 0, 1)
-                rnn_states_critic_batch = np.swapaxes(rnn_states_critic[:, indices], 0, 1)
-                actions_batch = actions[:, indices]
-                available_actions_batch = None if self.available_actions is None else available_actions[:, indices]
-                value_preds_batch = value_preds[:, indices]
-                v_target_batch = v_target[:, indices]
-                masks_batch = masks[:, indices]
-                active_masks_batch = active_masks[:, indices]
-                old_action_log_probs_batch = action_log_probs[:, indices]
-                adv_targ = advantages[:, indices]
-
-                outputs = (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch,
-                           value_preds_batch, v_target_batch, masks_batch, active_masks_batch,
-                           old_action_log_probs_batch, adv_targ, available_actions_batch)
-                # for i, item in enumerate(outputs):
-                #     assert np.all(1 - np.isnan(item)) and np.all(1 - np.isinf(item)), i
-                yield outputs
 
 
 class PolicyMixin:
@@ -506,17 +194,13 @@ class SharedPolicyMixin(PolicyMixin):
         slots = [self._client_hash[client] for client in clients]
         ep_steps = self._ep_step[slots]
 
-        return (self.share_obs[slots, ep_steps], self.obs[slots, ep_steps], self.rnn_states[slots, ep_steps],
-                self.rnn_states_critic[slots, ep_steps], self.masks[slots, ep_steps], self.available_actions[slots, ep_steps])
+        policy_inputs = {}
+        for k in self.policy_input_keys:
+            if hasattr(self, k):
+                policy_inputs[k] = self.storage[k][slots, ep_steps]
+        return policy_inputs
 
-    def insert_before_inference(self,
-                                client,
-                                obs,
-                                share_obs,
-                                rewards,
-                                dones,
-                                infos,
-                                available_actions=None):
+    def insert_before_inference(self, client, obs, share_obs, rewards, dones, infos=None, available_actions=None):
         if client not in self._client_hash.keys():
             self._allocate(client)
         slot_id = self._client_hash[client]
@@ -527,50 +211,50 @@ class SharedPolicyMixin(PolicyMixin):
         self.obs[slot_id, ep_step] = obs
         if ep_step >= 1:
             self.rewards[slot_id, ep_step - 1] = rewards
-        if available_actions is not None:
+        self.masks[slot_id, ep_step] = 1 - np.all(dones, axis=1, keepdims=True)
+
+        if hasattr(self, 'available_actions') and available_actions is not None:
             self.available_actions[slot_id, ep_step] = available_actions
 
-        self.masks[slot_id, ep_step] = 1 - np.all(dones, axis=1, keepdims=True)
-        dones_cp = dones.copy()
-        dones_cp[np.all(dones, axis=1).squeeze(-1)] = 0
-        self.active_masks[slot_id, ep_step] = 1 - dones_cp
+        if hasattr(self, 'active_masks'):
+            dones_cp = dones.copy()
+            dones_cp[np.all(dones, axis=1).squeeze(-1)] = 0
+            self.active_masks[slot_id, ep_step] = 1 - dones_cp
 
-        if infos is not None:
+        if hasattr(self, 'fct_masks') and infos is not None:
             force_terminations = np.array([[[agent_info['force_termination']] for agent_info in info]
-                                            for info in infos])
+                                           for info in infos])
             self.fct_masks[slot_id, ep_step] = 1 - force_terminations
 
         self.total_timesteps += self.env_per_split
 
-    def insert_after_inference(self, clients, value_preds, actions, action_log_probs, rnn_states,
-                               rnn_states_critic):
+    def insert_after_inference(self, clients, **policy_outputs):
         slots = [self._client_hash[client] for client in clients]
         ep_steps = self._ep_step[slots]
 
-        self.value_preds[slots, ep_steps] = value_preds
+        # model inference returns
+        rnn_mask = np.expand_dims(self.masks[slots, ep_steps], -1)
+        for k in policy_outputs.keys():
+            if 'rnn_states' in k:
+                self.storage[k][slots, ep_steps + 1] = policy_outputs[k] * rnn_mask
+            else:
+                self.storage[k][slots, ep_steps] = policy_outputs[k]
 
+        # closure on the previous slot
         closure_new_slots = []
         closure_old_slots = []
         for slot, ep_step, client in zip(slots, ep_steps, clients):
             if ep_step == 0 and client in self._prev_client_hash.keys():
                 closure_old_slots.append(self._prev_client_hash[client])
                 closure_new_slots.append(slot)
-
         if len(closure_new_slots) > 0:
             self._closure(closure_old_slots, closure_new_slots)
 
-        # model inference returns
-        self.actions[slots, ep_steps] = actions
-        self.action_log_probs[slots, ep_steps] = action_log_probs
-
-        rnn_mask = np.expand_dims(self.masks[slots, ep_steps], -1)
-        self.rnn_states[slots, ep_steps + 1] = rnn_states * rnn_mask
-        self.rnn_states_critic[slots, ep_steps + 1] = rnn_states_critic * rnn_mask
-
+        # advance 1 timestep
         self._ep_step[slots] += 1
-        opening_clients = np.array(clients)[ep_steps == self.episode_length - 1]
 
-        # section of this actor in current slot is full except for bootstrap step
+        # if a slot is full except for the bootstrap step, allocate a new slot for the corresponding client
+        opening_clients = np.array(clients)[ep_steps == self.episode_length - 1]
         if len(opening_clients) > 0:
             opening_old_slots = [self._client_hash[client] for client in opening_clients]
             self._ep_step[opening_old_slots] = 0
@@ -587,134 +271,135 @@ class SharedReplayBuffer(ReplayBuffer, SharedPolicyMixin):
     pass
 
 
-class SequentialPolicyMixin(PolicyMixin):
-    def get_actions(self, client):
-        slot_id = self._client_hash[client]
-        ep_step = self._ep_step[slot_id]
+# class SequentialPolicyMixin(PolicyMixin):
+#     def get_actions(self, client):
+#         slot_id = self._client_hash[client]
+#         ep_step = self._ep_step[slot_id]
 
-        pass
+#         pass
 
-    def get_policy_inputs(self, server_id, split_id):
-        slot_id = self._locate(server_id, split_id)
-        ep_step = self._ep_step[server_id, split_id]
-        agent_id = self._agent_ids[server_id, split_id]
+#     def get_policy_inputs(self, server_id, split_id):
+#         slot_id = self._locate(server_id, split_id)
+#         ep_step = self._ep_step[server_id, split_id]
+#         agent_id = self._agent_ids[server_id, split_id]
 
-        return (self.share_obs[slot_id, ep_step, :, agent_id], self.obs[slot_id, ep_step, :, agent_id],
-                self.rnn_states[slot_id, ep_step, :, agent_id], self.rnn_states_critic[slot_id, ep_step, :, agent_id],
-                self.masks[slot_id, ep_step, :, agent_id], self.available_actions[slot_id, ep_step, :, agent_id])
+#         return (self.share_obs[slot_id, ep_step, :, agent_id], self.obs[slot_id, ep_step, :, agent_id],
+#                 self.rnn_states[slot_id, ep_step, :, agent_id], self.rnn_states_critic[slot_id, ep_step, :, agent_id],
+#                 self.masks[slot_id, ep_step, :, agent_id], self.available_actions[slot_id, ep_step, :, agent_id])
 
-    def insert_before_inference(self,
-                                server_id,
-                                actor_id,
-                                split_id,
-                                share_obs,
-                                obs,
-                                rewards,
-                                dones,
-                                available_actions=None):
-        assert share_obs.shape == (self.env_per_split, *self.share_obs.shape[4:]), (share_obs.shape,
-                                                                                    (self.env_per_split,
-                                                                                     *self.share_obs.shape[4:]))
-        assert obs.shape == (self.env_per_split, *self.obs.shape[4:]), (obs.shape, (self.env_per_split,
-                                                                                    *self.obs.shape[4:]))
+#     def insert_before_inference(self,
+#                                 server_id,
+#                                 actor_id,
+#                                 split_id,
+#                                 share_obs,
+#                                 obs,
+#                                 rewards,
+#                                 dones,
+#                                 available_actions=None):
+#         assert share_obs.shape == (self.env_per_split, *self.share_obs.shape[4:]), (share_obs.shape,
+#                                                                                     (self.env_per_split,
+#                                                                                      *self.share_obs.shape[4:]))
+#         assert obs.shape == (self.env_per_split, *self.obs.shape[4:]), (obs.shape, (self.env_per_split,
+#                                                                                     *self.obs.shape[4:]))
 
-        slot_id = self._locate(server_id, split_id)
-        ep_step = self._ep_step[server_id, split_id]
-        agent_id = self._agent_ids[server_id, split_id]
-        env_slice = slice(actor_id * self.env_per_split, (actor_id + 1) * self.env_per_split)
+#         slot_id = self._locate(server_id, split_id)
+#         ep_step = self._ep_step[server_id, split_id]
+#         agent_id = self._agent_ids[server_id, split_id]
+#         env_slice = slice(actor_id * self.env_per_split, (actor_id + 1) * self.env_per_split)
 
-        # env step returns
-        self.share_obs[slot_id, ep_step, env_slice, agent_id] = share_obs
-        self.obs[slot_id, ep_step, env_slice, agent_id] = obs
+#         # env step returns
+#         self.share_obs[slot_id, ep_step, env_slice, agent_id] = share_obs
+#         self.obs[slot_id, ep_step, env_slice, agent_id] = obs
 
-        assert rewards.shape == (self.env_per_split, self.num_agents, 1), (rewards.shape, (self.env_per_split,
-                                                                                           self.num_agents, 1))
-        # accumulate reward first, and then record final accumulated reward when env terminates,
-        # because if current step is 'done', reported reward is from previous transition, which
-        # belongs to the previous episode (current step is the opening of the next episode)
-        self._reward_since_last_action[server_id, split_id, env_slice] += rewards
-        if ep_step >= 1:
-            is_done_before = self._env_done_trigger[server_id, split_id, env_slice] > 0
-            not_done_yet = (1 - is_done_before).astype(np.bool)
+#         assert rewards.shape == (self.env_per_split, self.num_agents, 1), (rewards.shape, (self.env_per_split,
+#                                                                                            self.num_agents, 1))
+#         # accumulate reward first, and then record final accumulated reward when env terminates,
+#         # because if current step is 'done', reported reward is from previous transition, which
+#         # belongs to the previous episode (current step is the opening of the next episode)
+#         self._reward_since_last_action[server_id, split_id, env_slice] += rewards
+#         if ep_step >= 1:
+#             is_done_before = self._env_done_trigger[server_id, split_id, env_slice] > 0
+#             not_done_yet = (1 - is_done_before).astype(np.bool)
 
-            accumulated_reward = self._reward_since_last_action[server_id, split_id, env_slice][not_done_yet, agent_id]
-            self.rewards[slot_id, ep_step - 1, env_slice][not_done_yet, agent_id] = accumulated_reward
-            self._reward_since_last_action[server_id, split_id, env_slice][not_done_yet, agent_id] = 0
+#             accumulated_reward = self._reward_since_last_action[server_id,
+#                                           split_id, env_slice][not_done_yet, agent_id]
+#             self.rewards[slot_id, ep_step - 1, env_slice][not_done_yet, agent_id] = accumulated_reward
+#             self._reward_since_last_action[server_id, split_id, env_slice][not_done_yet, agent_id] = 0
 
-            saved_reward = self._reward_when_env_done[server_id, split_id, env_slice][is_done_before, agent_id]
-            self.rewards[slot_id, ep_step - 1, env_slice][is_done_before, agent_id] = saved_reward
+#             saved_reward = self._reward_when_env_done[server_id, split_id, env_slice][is_done_before, agent_id]
+#             self.rewards[slot_id, ep_step - 1, env_slice][is_done_before, agent_id] = saved_reward
 
-        # record final accumulated reward when env terminates
-        self._reward_when_env_done[server_id, split_id, env_slice][dones.squeeze(-1)] = self._reward_since_last_action[
-            server_id, split_id, env_slice][dones.squeeze(-1)]
-        self._reward_since_last_action[server_id, split_id, env_slice][dones.squeeze(-1)] = 0
+#         # record final accumulated reward when env terminates
+#         self._reward_when_env_done[server_id, split_id, env_slice][
+#               dones.squeeze(-1)] = self._reward_since_last_action[server_id, split_id, env_slice][dones.squeeze(-1)]
+#         self._reward_since_last_action[server_id, split_id, env_slice][dones.squeeze(-1)] = 0
 
-        if available_actions is not None:
-            assert available_actions.shape == (self.env_per_split,
-                                               *self.available_actions.shape[4:]), (available_actions.shape,
-                                                                                    (self.env_per_split,
-                                                                                     *self.available_actions.shape[4:]))
-            self.available_actions[slot_id, ep_step, env_slice, agent_id] = available_actions
+#         if available_actions is not None:
+#             assert available_actions.shape == (self.env_per_split,
+#                                                *self.available_actions.shape[4:]), (available_actions.shape,
+#                                                                                     (self.env_per_split,
+#                                                                                      *self.available_actions.shape[4:]))
+#             self.available_actions[slot_id, ep_step, env_slice, agent_id] = available_actions
 
-        assert dones.shape == (self.env_per_split, 1), (dones.shape, (self.env_per_split, 1))
-        assert dones.dtype == np.bool, dones.dtype
-        # once env is done, fill the next #agents timestep with 0 to mask bootstrap values
-        # env_done_trigger records remaining timesteps to be filled with 0
-        trigger = self._env_done_trigger[server_id, split_id, env_slice]
-        trigger[dones.squeeze(-1)] = self.num_agents
-        # NOTE: mask is initialized as all 1, hence we only care about filling 0
-        self.masks[slot_id, ep_step, env_slice, agent_id][trigger > 0] = 0
-        self._env_done_trigger[server_id, split_id, env_slice] = np.maximum(trigger - 1, 0)
-        assert np.all(self._env_done_trigger >= 0) and np.all(self._env_done_trigger <= self.num_agents)
+#         assert dones.shape == (self.env_per_split, 1), (dones.shape, (self.env_per_split, 1))
+#         assert dones.dtype == np.bool, dones.dtype
+#         # once env is done, fill the next #agents timestep with 0 to mask bootstrap values
+#         # env_done_trigger records remaining timesteps to be filled with 0
+#         trigger = self._env_done_trigger[server_id, split_id, env_slice]
+#         trigger[dones.squeeze(-1)] = self.num_agents
+#         # NOTE: mask is initialized as all 1, hence we only care about filling 0
+#         self.masks[slot_id, ep_step, env_slice, agent_id][trigger > 0] = 0
+#         self._env_done_trigger[server_id, split_id, env_slice] = np.maximum(trigger - 1, 0)
+#         assert np.all(self._env_done_trigger >= 0) and np.all(self._env_done_trigger <= self.num_agents)
 
-        # active_mask is always 1 because env automatically resets when any agent induces termination
+#         # active_mask is always 1 because env automatically resets when any agent induces termination
 
-        if agent_id == self.num_agents - 1:
-            self.total_timesteps += self.env_per_split
+#         if agent_id == self.num_agents - 1:
+#             self.total_timesteps += self.env_per_split
 
-    def insert_after_inference(self, server_id, split_id, value_preds, actions, action_log_probs, rnn_states,
-                               rnn_states_critic):
-        slot_id = self._locate(server_id, split_id)
-        ep_step = self._ep_step[server_id, split_id]
-        agent_id = self._agent_ids[server_id, split_id]
+#     def insert_after_inference(self, server_id, split_id, value_preds, actions, action_log_probs, rnn_states,
+#                                rnn_states_critic):
+#         slot_id = self._locate(server_id, split_id)
+#         ep_step = self._ep_step[server_id, split_id]
+#         agent_id = self._agent_ids[server_id, split_id]
 
-        self.value_preds[slot_id, ep_step, :, agent_id] = value_preds
+#         self.value_preds[slot_id, ep_step, :, agent_id] = value_preds
 
-        if ep_step == 0 and agent_id == self.num_agents - 1 and self._prev_q_idx[server_id, split_id] >= 0:
-            old_slot_id = self._locate_prev(server_id, split_id)
-            # fill bootstrap data in previous slot
-            self._closure(old_slot_id, slot_id)
+#         if ep_step == 0 and agent_id == self.num_agents - 1 and self._prev_q_idx[server_id, split_id] >= 0:
+#             old_slot_id = self._locate_prev(server_id, split_id)
+#             # fill bootstrap data in previous slot
+#             self._closure(old_slot_id, slot_id)
 
-        # model inference returns
-        self.actions[slot_id, ep_step, :, agent_id] = actions
-        self.action_log_probs[slot_id, ep_step, :, agent_id] = action_log_probs
+#         # model inference returns
+#         self.actions[slot_id, ep_step, :, agent_id] = actions
+#         self.action_log_probs[slot_id, ep_step, :, agent_id] = action_log_probs
 
-        rnn_mask = np.expand_dims(self.masks[slot_id, ep_step, :, agent_id], -1)
-        self.rnn_states[slot_id, ep_step + 1, :, agent_id] = rnn_states * rnn_mask
-        self.rnn_states_critic[slot_id, ep_step + 1, :, agent_id] = rnn_states_critic * rnn_mask
+#         rnn_mask = np.expand_dims(self.masks[slot_id, ep_step, :, agent_id], -1)
+#         self.rnn_states[slot_id, ep_step + 1, :, agent_id] = rnn_states * rnn_mask
+#         self.rnn_states_critic[slot_id, ep_step + 1, :, agent_id] = rnn_states_critic * rnn_mask
 
-        if agent_id == self.num_agents - 1:
-            self._agent_ids[server_id, split_id] = 0
-            self._ep_step[server_id, split_id] += 1
-            # section of this actor in current slot is full except for bootstrap step
-            if ep_step == self.episode_length - 1:
-                self._ep_step[server_id, split_id] = 0
+#         if agent_id == self.num_agents - 1:
+#             self._agent_ids[server_id, split_id] = 0
+#             self._ep_step[server_id, split_id] += 1
+#             # section of this actor in current slot is full except for bootstrap step
+#             if ep_step == self.episode_length - 1:
+#                 self._ep_step[server_id, split_id] = 0
 
-                new_slot_id = self._move_next(server_id, split_id)
+#                 new_slot_id = self._move_next(server_id, split_id)
 
-                self._opening(slot_id, new_slot_id)
-        else:
-            self._agent_ids[server_id, split_id] += 1
+#                 self._opening(slot_id, new_slot_id)
+#         else:
+#             self._agent_ids[server_id, split_id] += 1
 
 
-class SequentialReplayBuffer(ReplayBuffer, SequentialPolicyMixin):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # following arrays may not be shared between processes because
-        # 1) only servers can access them (trainers should not access)
-        # 2) each server will access individual parts according to server_id, there's no communication among them
-        self._agent_ids = np.zeros((self.num_servers, self.num_split), dtype=np.uint8)
-        self._reward_since_last_action = np.zeros(
-            (self.num_servers, self.num_split, self.batch_size, self.num_agents, 1), dtype=np.float32)
-        self._reward_when_env_done = np.zeros_like(self._reward_since_last_action)
-        self._env_done_trigger = np.zeros((self.num_servers, self.num_split, self.batch_size), dtype=np.int16)
+# class SequentialReplayBuffer(ReplayBuffer, SequentialPolicyMixin):
+#     def __init__(self, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
+#         # following arrays may not be shared between processes because
+#         # 1) only servers can access them (trainers should not access)
+#         # 2) each server will access individual parts according to server_id, there's no communication among them
+#         self._agent_ids = np.zeros((self.num_servers, self.num_splits), dtype=np.uint8)
+#         self._reward_since_last_action = np.zeros(
+#             (self.num_servers, self.num_splits, self.batch_size, self.num_agents, 1), dtype=np.float32)
+#         self._reward_when_env_done = np.zeros_like(self._reward_since_last_action)
+#         self._env_done_trigger = np.zeros((self.num_servers, self.num_splits, self.batch_size), dtype=np.int16)

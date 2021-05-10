@@ -192,19 +192,34 @@ def get_config():
     # system parameters
     parser.add_argument("--num_actors", type=int, default=4)
     parser.add_argument("--env_per_actor", type=int, default=2)
-    parser.add_argument("--num_split", type=int, default=2)
+    parser.add_argument("--num_splits", type=int, default=2)
     parser.add_argument("--qsize", type=int, default=8)
-    parser.add_argument('--rollout_bs', type=int, default=4)
+    parser.add_argument("--stats_avg", type=int, default=100)
 
-    parser.add_argument("--verbose_time", action='store_true', default=False)
+    parser.add_argument("--force_envs_single_thread", type=bool, default=True, action='store_false')
+    parser.add_argument("--set_workers_cpu_affinity", type=bool, default=True, action='store_false')
+
+    parser.add_argument("--model_weights_addr", type=str, default='tcp://localhost:8889')
+    parser.add_argument("--min_num_requests", type=int, default=-1)
+    parser.add_argument('--benchmark', default=False, action='store_true', help='Benchmark mode')
+
+    parser.add_argument("--default_niceness", default=0, type=int)
+    parser.add_argument("--actor_worker_gpus", default=0, type=int)
+
     parser.add_argument("--num_trainers", type=int, default=1)
-    parser.add_argument("--num_servers", type=int, default=1)
+    parser.add_argument("--num_policy_workers", type=int, default=1)
 
-    parser.add_argument('--server_gpu_ranks', type=int, nargs='+')
     parser.add_argument("--slots_per_update", type=int, default=1)
 
-    parser.add_argument("--frontend_addr", type=str, default='tcp://127.0.0.1:8888')
-    parser.add_argument("--backend_addr", type=str, default='tcp://127.0.0.1:8887')
+    parser.add_argument("--reset_timeout_seconds", type=int, default=60)
+    parser.add_argument('--train_for_env_steps',
+                        default=int(1e10),
+                        type=int,
+                        help='Stop after all policies are trained for this many env steps')
+    parser.add_argument('--train_for_seconds',
+                        default=int(1e10),
+                        type=int,
+                        help='Stop training after this many seconds')
 
     # env parameters
     parser.add_argument("--env_name", type=str, default='StarCraft2', help="specify the name of environment")

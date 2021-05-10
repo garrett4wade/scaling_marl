@@ -122,7 +122,7 @@ class ShareVecEnv(ABC):
 
     @property
     def unwrapped(self):
-        if isinstance(self, VecEnvWrapper):
+        if isinstance(self, ShareVecEnv):
             return self.venv.unwrapped
         else:
             return self
@@ -717,12 +717,19 @@ class ShareDummyVecEnv(ShareVecEnv):
                     obs[i], share_obs[i], available_actions[i] = self.envs[i].reset()
         self.actions = None
 
-        return obs, share_obs, rews, dones, infos, available_actions
+        return {
+            'obs': obs,
+            'share_obs': share_obs,
+            'rewards': rews,
+            'dones': dones,
+            'infos': infos,
+            'available_actions': available_actions
+        }
 
     def reset(self):
         results = [env.reset() for env in self.envs]
         obs, share_obs, available_actions = map(np.array, zip(*results))
-        return obs, share_obs, available_actions
+        return {'obs': obs, 'share_obs': share_obs, 'available_actions': available_actions}
 
     def close(self):
         for env in self.envs:
