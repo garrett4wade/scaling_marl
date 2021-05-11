@@ -300,7 +300,7 @@ def kill_processes(processes):
 
 
 def set_global_cuda_envvars(cfg):
-    if cfg.device == 'cpu':
+    if not cfg.cuda:
         available_gpus = ''
     else:
         available_gpus = get_gpus_without_triggering_pytorch_cuda_initialization(os.environ)

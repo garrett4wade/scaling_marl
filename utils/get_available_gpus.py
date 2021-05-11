@@ -18,7 +18,7 @@ def get_gpus_without_triggering_pytorch_cuda_initialization(envvars):
         )
 
     log.debug('Queried available GPUs: %s', text_output)
-    return text_output.repalce('\n', '')
+    return text_output.replace('\n', '')
 
 
 def main():

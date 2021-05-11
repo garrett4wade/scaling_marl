@@ -41,9 +41,9 @@ class ReplayBuffer:
             name, shape, dtype, bootstrap, init_value = storage_spec
             assert init_value == 0 or init_value == 1
             init_method = torch.zeros if init_value == 0 else torch.ones
-            setattr(self, '_' + name, init_method((*shape_prefix, *shape), dtype).share_memory_())
+            setattr(self, '_' + name, init_method((*shape_prefix(bootstrap), *shape), dtype=dtype).share_memory_())
             setattr(self, name, getattr(self, '_' + name).numpy())
-            self.storage_registries[name] = ((*shape_prefix, *shape), to_numpy_type(dtype))
+            self.storage_registries[name] = ((*shape_prefix(bootstrap), *shape), to_numpy_type(dtype))
 
         # self._storage is torch.Tensor handle while storage is numpy.array handle
         # the 2 handles point to the same block of memory
@@ -56,19 +56,19 @@ class ReplayBuffer:
         self._prev_client_hash = self._mp_mgr.dict()
 
         # episode step record
-        self._ep_step = torch.zeros((num_slots, ), torch.int32).share_memory_().numpy()
+        self._ep_step = torch.zeros((num_slots, ), dtype=torch.int32).share_memory_().numpy()
 
         # buffer indicators
-        self._is_readable = torch.zeros((num_slots, ), torch.uint8).share_memory_().numpy()
-        self._is_busy = torch.zeros((num_slots, ), torch.uint8).share_memory_().numpy()
-        self._is_writable = torch.ones((num_slots, ), torch.uint8).share_memory_().numpy()
+        self._is_readable = torch.zeros((num_slots, ), dtype=torch.uint8).share_memory_().numpy()
+        self._is_busy = torch.zeros((num_slots, ), dtype=torch.uint8).share_memory_().numpy()
+        self._is_writable = torch.ones((num_slots, ), dtype=torch.uint8).share_memory_().numpy()
         assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
 
-        self._time_stamp = torch.zeros((num_slots, ), torch.float32).share_memory_().numpy()
+        self._time_stamp = torch.zeros((num_slots, ), dtype=torch.float32).share_memory_().numpy()
 
         self._read_ready = mp.Condition()
 
-        self.total_timesteps = torch.zeros((), torch.int64)
+        self.total_timesteps = torch.zeros((), dtype=torch.int64)
 
         # to read/write env-specific summary info, e.g. winning rate, scores
         self.summary_lock = mp.Lock()

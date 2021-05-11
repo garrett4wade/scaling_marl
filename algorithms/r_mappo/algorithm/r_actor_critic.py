@@ -3,7 +3,7 @@ from algorithms.utils.util import init
 from algorithms.utils.mlp import MLPBase
 from algorithms.utils.rnn import RNNLayer
 from algorithms.utils.act import ACTLayer
-from utils.util import get_shape_from_obs_space
+from utils.utils import get_shape_from_obs_space
 
 
 class R_Actor_Critic(nn.Module):

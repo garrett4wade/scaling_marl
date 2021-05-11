@@ -1,7 +1,7 @@
 import torch
 from algorithms.utils.util import check
 from algorithms.r_mappo.algorithm.r_actor_critic import R_Actor_Critic
-from utils.util import update_linear_schedule
+from utils.utils import update_linear_schedule
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 

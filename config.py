@@ -196,8 +196,8 @@ def get_config():
     parser.add_argument("--qsize", type=int, default=8)
     parser.add_argument("--stats_avg", type=int, default=100)
 
-    parser.add_argument("--force_envs_single_thread", type=bool, default=True, action='store_false')
-    parser.add_argument("--set_workers_cpu_affinity", type=bool, default=True, action='store_false')
+    parser.add_argument("--force_envs_single_thread", default=True, action='store_false')
+    parser.add_argument("--set_workers_cpu_affinity", default=True, action='store_false')
 
     parser.add_argument("--model_weights_addr", type=str, default='tcp://localhost:8889')
     parser.add_argument("--min_num_requests", type=int, default=-1)
@@ -269,7 +269,7 @@ def get_config():
     parser.add_argument("--gain", type=float, default=0.01, help="The gain # of last action layer")
 
     # recurrent parameters
-    parser.add_argument("--recurrent_N", type=int, default=1, help="The number of recurrent layers.")
+    parser.add_argument("--rec_n", type=int, default=1, help="The number of recurrent layers.")
     parser.add_argument("--data_chunk_length",
                         type=int,
                         default=10,
@@ -306,14 +306,14 @@ def get_config():
                         action='store_false',
                         default=True,
                         help="by default, use huber loss. If set, do not use huber loss.")
-    parser.add_argument("--use_value_active_masks",
+    parser.add_argument("--use_active_masks",
                         action='store_false',
                         default=True,
-                        help="by default True, whether to mask useless data in value loss.")
-    parser.add_argument("--use_policy_active_masks",
+                        help="by default True, whether to mask useless data in losses.")
+    parser.add_argument("--use_fct_masks",
                         action='store_false',
                         default=True,
-                        help="by default True, whether to mask useless data in policy loss.")
+                        help="by default True, whether to mask the last frame of force terminated episodes")
     parser.add_argument("--huber_delta", type=float, default=10.0, help=" coefficience of huber loss.")
 
     # run parameters

@@ -35,8 +35,10 @@ class PolicyWorker:
         self.action_space = action_space
 
         self.num_agents = cfg.num_agents
-        self.env_per_split = cfg.env_per_split
+        self.env_per_actor = cfg.env_per_actor
         self.num_splits = cfg.num_splits
+        assert self.env_per_actor % self.num_splits == 0
+        self.env_per_split = self.env_per_actor // self.num_splits
 
         self.device = None
         self.actor_critic = None
@@ -60,7 +62,7 @@ class PolicyWorker:
         self.initialized_event.clear()
 
         self.buffer = buffer
-        self.storage_registry = self.buffer.storage_registry
+        self.storage_registries = self.buffer.storage_registries
         # TODO: stop experience collection signal
 
         self.latest_policy_version = -1
@@ -136,7 +138,7 @@ class PolicyWorker:
         for i in range(len(msg) // 2):
             key, value = msg[2 * i].decode('ascii'), msg[2 * i + 1]
 
-            dtype, shape = self.storage_registry[key]
+            dtype, shape = self.storage_registries[key]
             tensor = torch.from_numpy(np.frombuffer(memoryview(value), dtype=dtype).reshape(*shape))
 
             state_dict[key] = tensor

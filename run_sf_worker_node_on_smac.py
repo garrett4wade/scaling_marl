@@ -8,6 +8,7 @@ from config import get_config
 from envs.starcraft2.StarCraft2_Env import StarCraft2Env
 from envs.env_wrappers import ShareDummyVecEnv, ShareSubprocVecEnv
 from sf_woker_node import SFWorkerNode
+from envs.starcraft2.smac_maps import get_map_params
 """Train script for SMAC."""
 
 
@@ -101,6 +102,8 @@ def main():
         0] if all_args.use_centralized_V else example_env.observation_space[0]
     all_args.observation_space = example_env.observation_space[0]
     all_args.action_space = example_env.action_space[0]
+
+    all_args.num_agents = get_map_params(all_args.map_name)["n_agents"]
 
     node = SFWorkerNode(all_args, build_actor_env)
     node.run()

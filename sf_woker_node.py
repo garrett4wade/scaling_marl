@@ -56,9 +56,10 @@ class SFWorkerNode:
 
         # we should not use CUDA in the main thread, only on the workers
         set_global_cuda_envvars(cfg)
+        self.cfg = cfg
 
         self.obs_space = cfg.observation_space
-        self.share_obs_space = cfg.share_obs_space
+        self.share_obs_space = cfg.share_observation_space
         self.action_space = cfg.action_space
         self.num_agents = cfg.num_agents
 
