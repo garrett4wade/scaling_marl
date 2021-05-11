@@ -45,9 +45,7 @@ class PolicyWorker:
         self.policy_lock = policy_lock
         self.resume_experience_collection_cv = resume_experience_collection_cv
 
-        self.model_weights_socket = zmq.Context().socket(zmq.SUB)
-        self.model_weights_socket.connect(cfg.model_weights_addr)
-        self.model_weights_socket.setsockopt(zmq.SUBSCRIBE, b'')
+        self.model_weights_socket = None
 
         self.policy_queue = policy_queue
         self.actor_queues = actor_queues
@@ -118,7 +116,7 @@ class PolicyWorker:
             with timing.add_time('insert_after_inference'):
                 self.buffer.insert_after_inference(self.request_clients, **policy_outputs)
                 for ready_client in self.request_clients:
-                    actor_id, split_id = ready_client // self.num_splits, ready_client % self.num_splits
+                    actor_id, _ = ready_client // self.num_splits, ready_client % self.num_splits
                     # TODO: specify task type
                     self.actor_queues[actor_id].put((TaskType.ROLLOUT_STEP, ready_client))
 
@@ -193,6 +191,12 @@ class PolicyWorker:
                                          is_training=False)
             self.rollout_policy.eval_mode()
 
+            self.model_weights_socket = zmq.Context().socket(zmq.SUB)
+            self.model_weights_socket.connect(self.cfg.model_weights_addr)
+            self.model_weights_socket.setsockopt(zmq.SUBSCRIBE, b'')
+
+            # TODO: the next line should be uncommented if a learner participates in the system
+            # self._update_weights(timing, block=True)
             log.info('Initialized model on the policy worker %d!', self.worker_idx)
 
         last_report = last_cache_cleanup = time.time()
@@ -232,7 +236,6 @@ class PolicyWorker:
                     except Empty:
                         pass
 
-                # TODO: update weights block is always False, while it should be True first and then False in the next few rounds
                 self._update_weights(timing)
 
                 with timing.timeit('one_step'), timing.add_time('handle_policy_step'):
@@ -286,6 +289,7 @@ class PolicyWorker:
                 log.exception('Unknown exception on policy worker')
                 self.terminate = True
 
+        self.model_weights_socket.close()
         time.sleep(0.2)
         log.info('Policy worker avg. requests %.2f, timing: %s', np.mean(request_count), timing)
 

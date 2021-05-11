@@ -1,11 +1,6 @@
 import zmq
 import numpy as np
-import torch
-import torch.nn as nn
-from collections import OrderedDict
 import time
-from collections import deque
-
 
 socket = zmq.Context().socket(zmq.ROUTER)
 socket.bind('tcp://*:12345')
@@ -27,10 +22,10 @@ while True:
         assert len(msg) % 2 == 0
         seg_dict = {}
         for i in range(len(msg) // 2):
-            k, v = msg[2*i], msg[2*i+1]
+            k, v = msg[2 * i], msg[2 * i + 1]
             array = np.frombuffer(memoryview(v), dtype=np.float32)
             seg_dict[k.decode('ascii')] = array
-        
+
         frames += 400
         ts.append(time.time() - tik)
 
