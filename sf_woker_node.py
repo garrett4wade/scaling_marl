@@ -18,7 +18,6 @@ import time
 from collections import deque
 from queue import Empty
 
-import numpy as np
 import torch
 from torch.multiprocessing import JoinableQueue as TorchJoinableQueue
 
@@ -27,8 +26,7 @@ from system.policy_worker import PolicyWorker
 from system.transmitter import Transmitter
 from utils.buffer import SharedReplayBuffer
 from utils.timing import Timing
-from utils.utils import iterate_recursively, log, memory_consumption_mb, set_global_cuda_envvars, \
-    list_child_processes, kill_processes, AttrDict
+from utils.utils import log, set_global_cuda_envvars, list_child_processes, kill_processes
 
 if os.name == 'nt':
     from sample_factory.utils import Queue as MpQueue
@@ -267,31 +265,8 @@ class SFWorkerNode:
     def process_report(self, report):
         """Process stats from various types of workers."""
 
-        if 'policy_id' in report:
-            policy_id = report['policy_id']
-
-            if 'learner_env_steps' in report:
-                if policy_id in self.env_steps:
-                    delta = report['learner_env_steps'] - self.env_steps[policy_id]
-                    self.total_env_steps_since_resume += delta
-                self.env_steps[policy_id] = report['learner_env_steps']
-
-            if 'episodic' in report:
-                s = report['episodic']
-                for _, key, value in iterate_recursively(s):
-                    if key not in self.policy_avg_stats:
-                        self.policy_avg_stats[key] = deque(maxlen=self.cfg.stats_avg)
-
-                    self.policy_avg_stats[key].append(value)
-
-                    for extra_stat_func in EXTRA_EPISODIC_STATS_PROCESSING:
-                        extra_stat_func(policy_id, key, value, self.cfg)
-
-            if 'train' in report:
-                self.report_train_summaries(report['train'], policy_id)
-
-            if 'samples' in report:
-                self.samples_collected += report['samples']
+        if 'samples' in report:
+            self.samples_collected += report['samples']
 
         if 'timing' in report:
             for k, v in report['timing'].items():
@@ -307,21 +282,7 @@ class SFWorkerNode:
         Called periodically (every X seconds, see report_interval).
         Print experiment stats (FPS, avg rewards) to console and dump TF summaries collected from workers to disk.
         """
-
-        if len(self.env_steps) == 0:
-            return
-
         now = time.time()
-        self.fps_stats.append((now, self.total_env_steps_since_resume))
-        if len(self.fps_stats) <= 1:
-            return
-
-        fps = []
-        for avg_interval in self.avg_stats_intervals:
-            past_moment, past_frames = self.fps_stats[max(0, len(self.fps_stats) - 1 - avg_interval)]
-            fps.append((self.total_env_steps_since_resume - past_frames) / (now - past_moment))
-
-        sample_throughput = dict()
         self.throughput_stats.append((now, self.samples_collected))
         if len(self.throughput_stats) > 1:
             past_moment, past_samples = self.throughput_stats[0]
@@ -329,92 +290,26 @@ class SFWorkerNode:
         else:
             sample_throughput = math.nan
 
-        total_env_steps = sum(self.env_steps.values())
-        self.print_stats(fps, sample_throughput, total_env_steps)
+        self.print_stats(sample_throughput)
 
         if time.time() - self.last_experiment_summaries > self.log_interval:
-            self.report_experiment_summaries(fps[0], sample_throughput)
-            self.last_experiment_summaries = time.time()
+            # TODO: write to wandb/TensorBoard
+            pass
 
-    def print_stats(self, fps, sample_throughput, total_env_steps):
-        fps_str = []
-        for interval, fps_value in zip(self.avg_stats_intervals, fps):
-            fps_str.append(f'{int(interval * self.report_interval)} sec: {fps_value:.1f}')
-        fps_str = f'({", ".join(fps_str)})'
-
-        samples_per_policy = ', '.join([f'{p}: {s:.1f}' for p, s in sample_throughput.items()])
-
-        lag_stats = self.policy_lag[0]
-        lag = AttrDict()
-        for key in ['min', 'avg', 'max']:
-            lag[key] = lag_stats.get(f'version_diff_{key}', -1)
-        policy_lag_str = f'min: {lag.min:.1f}, avg: {lag.avg:.1f}, max: {lag.max:.1f}'
-
+    def print_stats(self, sample_throughput, total_env_steps):
         log.debug(
-            'Fps is %s. Total num frames: %d. Throughput: %s. Samples: %d. Policy #0 lag: (%s)',
-            fps_str,
-            total_env_steps,
-            samples_per_policy,
-            sum(self.samples_collected),
-            policy_lag_str,
+            'Throughput: %s. Samples: %d.',
+            sample_throughput,
+            self.samples_collected,
         )
 
-        if 'reward' in self.policy_avg_stats:
-            policy_reward_stats = []
-            reward_stats = self.policy_avg_stats['reward']
-            if len(reward_stats) > 0:
-                policy_reward_stats.append(f'{np.mean(reward_stats):.3f}')
-            log.debug('Avg episode reward: %r', policy_reward_stats)
-
-    def report_train_summaries(self, stats, policy_id):
-        for key, scalar in stats.items():
-            self.writers[policy_id].add_scalar(f'train/{key}', scalar, self.env_steps[policy_id])
-            if 'version_diff' in key:
-                self.policy_lag[policy_id][key] = scalar
-
-    def report_experiment_summaries(self, fps, sample_throughput):
-        memory_mb = memory_consumption_mb()
-
-        default_policy = 0
-        for policy_id, env_steps in self.env_steps.items():
-            if policy_id == default_policy:
-                self.writers[policy_id].add_scalar('0_aux/_fps', fps, env_steps)
-                self.writers[policy_id].add_scalar('0_aux/master_process_memory_mb', float(memory_mb), env_steps)
-                for key, value in self.avg_stats.items():
-                    if len(value) >= value.maxlen or (len(value) > 10 and self.total_train_seconds > 300):
-                        self.writers[policy_id].add_scalar(f'stats/{key}', np.mean(value), env_steps)
-
-                for key, value in self.stats.items():
-                    self.writers[policy_id].add_scalar(f'stats/{key}', value, env_steps)
-
-            if not math.isnan(sample_throughput[policy_id]):
-                self.writers[policy_id].add_scalar('0_aux/_sample_throughput', sample_throughput[policy_id], env_steps)
-
-            for key, stat in self.policy_avg_stats.items():
-                if len(stat[policy_id]) >= stat[policy_id].maxlen or (len(stat[policy_id]) > 10
-                                                                      and self.total_train_seconds > 300):
-                    stat_value = np.mean(stat[policy_id])
-                    writer = self.writers[policy_id]
-
-                    # custom summaries have their own sections in tensorboard
-                    if '/' in key:
-                        avg_tag = key
-                        min_tag = f'{key}_min'
-                        max_tag = f'{key}_max'
-                    else:
-                        avg_tag = f'0_aux/avg_{key}'
-                        min_tag = f'0_aux/avg_{key}_min'
-                        max_tag = f'0_aux/avg_{key}_max'
-
-                    writer.add_scalar(avg_tag, float(stat_value), env_steps)
-
-                    # for key stats report min/max as well
-                    if key in ('reward', 'true_reward', 'len'):
-                        writer.add_scalar(min_tag, float(min(stat[policy_id])), env_steps)
-                        writer.add_scalar(max_tag, float(max(stat[policy_id])), env_steps)
-
-            for extra_summaries_func in EXTRA_PER_POLICY_SUMMARIES:
-                extra_summaries_func(policy_id, self.policy_avg_stats, env_steps, self.writers[policy_id], self.cfg)
+        # TODO: episodic summary, e.g. reward & winning rate
+        # if 'reward' in self.policy_avg_stats:
+        #     policy_reward_stats = []
+        #     reward_stats = self.policy_avg_stats['reward']
+        #     if len(reward_stats) > 0:
+        #         policy_reward_stats.append(f'{np.mean(reward_stats):.3f}')
+        #     log.debug('Avg episode reward: %r', policy_reward_stats)
 
     def _should_end_training(self):
         end = len(self.env_steps) > 0 and all(s > self.cfg.train_for_env_steps for s in self.env_steps.values())
