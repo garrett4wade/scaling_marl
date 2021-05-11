@@ -232,6 +232,7 @@ class PolicyWorker:
                     except Empty:
                         pass
 
+                # TODO: update weights block is always False, while it should be True first and then False in the next few rounds
                 self._update_weights(timing)
 
                 with timing.timeit('one_step'), timing.add_time('handle_policy_step'):

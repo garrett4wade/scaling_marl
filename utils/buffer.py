@@ -2,6 +2,7 @@ import torch
 import time
 import numpy as np
 import multiprocessing as mp
+from queue import Empty
 from algorithms.storage_registries import get_ppo_storage_specs, to_numpy_type
 
 
@@ -135,9 +136,11 @@ class ReplayBuffer:
             if no_availble_before and np.sum(self._is_readable) >= 1:
                 self._read_ready.notify(1)
 
-    def get(self):
+    def get(self, block=True, timeout=None):
         with self._read_ready:
-            self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= 1)
+            if np.sum(self._is_readable) == 0 and not block:
+                raise Empty
+            self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= 1, timeout=timeout)
 
             available_slots = np.nonzero(self._is_readable)[0]
             slot = available_slots[np.argsort(self._time_stamp[available_slots])[0]]
@@ -147,7 +150,20 @@ class ReplayBuffer:
             self._is_busy[slot] = 1
 
             assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
-        return {k: v[slot] for k, v in self.storage.items()}
+        return slot
+    
+    def get_many(self, timeout=None):
+        with self._read_ready:
+            self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= 1, timeout=timeout)
+
+            available_slots = np.nonzero(self._is_readable)[0]
+
+            # readable -> busy (being-read)
+            self._is_readable[available_slots] = 0
+            self._is_busy[available_slots] = 1
+
+            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
+        return available_slots
 
     def after_sending(self, slot_id):
         with self._read_ready:

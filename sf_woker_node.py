@@ -24,6 +24,7 @@ from torch.multiprocessing import JoinableQueue as TorchJoinableQueue
 
 from system.actor_worker import ActorWorker
 from system.policy_worker import PolicyWorker
+from system.transmitter import Transmitter
 from utils.buffer import SharedReplayBuffer
 from utils.timing import Timing
 from utils.utils import iterate_recursively, log, memory_consumption_mb, set_global_cuda_envvars, \
@@ -71,6 +72,7 @@ class SFWorkerNode:
 
         self.actor_workers = []
         self.policy_workers = []
+        self.transmitters = []
 
         self.report_queue = MpQueue(40 * 1000 * 1000)
         # TODO: policy queue -> policy queues to support PBT
@@ -250,6 +252,11 @@ class SFWorkerNode:
             workers = self.init_subset(actor_indices[i:i + max_parallel_init], actor_queues)
             self.actor_workers.extend(workers)
 
+    def init_transmitters(self):
+        for idx in range(self.cfg.num_transmitters):
+            t = Transmitter(self.cfg, idx, self.buffer)
+            self.transmitters.append(t)
+
     def finish_initialization(self):
         """Wait until policy workers are fully initialized."""
         for w in self.policy_workers:
@@ -428,6 +435,7 @@ class SFWorkerNode:
 
         status = ExperimentStatus.SUCCESS
 
+        self.init_transmitters()
         self.init_workers()
         self.finish_initialization()
 

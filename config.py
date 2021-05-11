@@ -195,11 +195,14 @@ def get_config():
     parser.add_argument("--num_splits", type=int, default=2)
     parser.add_argument("--qsize", type=int, default=8)
     parser.add_argument("--stats_avg", type=int, default=100)
+    parser.add_argument("--num_transmitters", type=int, default=1)
 
     parser.add_argument("--force_envs_single_thread", default=True, action='store_false')
     parser.add_argument("--set_workers_cpu_affinity", default=True, action='store_false')
 
-    parser.add_argument("--model_weights_addr", type=str, default='tcp://localhost:8889')
+    parser.add_argument("--model_weights_addr", type=str, default='tcp://127.0.0.1:8889')
+    parser.add_argument("--seg_addr", type=str, default='tcp://127.0.0.1:12345')
+
     parser.add_argument("--min_num_requests", type=int, default=-1)
     parser.add_argument('--benchmark', default=False, action='store_true', help='Benchmark mode')
 
@@ -229,7 +232,7 @@ def get_config():
                         help="Whether to use global state or concatenated obs")
 
     # replay buffer parameters
-    parser.add_argument("--episode_length", type=int, default=200, help="Max length for any episode")
+    parser.add_argument("--episode_length", type=int, default=400, help="Max length for any episode")
 
     # network parameters
     parser.add_argument("--share_policy",
@@ -330,7 +333,7 @@ def get_config():
     # log parameters
     parser.add_argument("--log_interval",
                         type=int,
-                        default=25,
+                        default=20,
                         help="time duration between contiunous twice log printing.")
 
     # eval parameters
