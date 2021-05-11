@@ -168,7 +168,7 @@ class ActorWorker:
         # TODO: deal with episodic summary data
 
         with timing.add_time('enqueue_policy_requests'):
-            self.policy_queue.put((TaskType.ROLLOUT_STEP, client_id))
+            self.policy_queue.put(client_id)
 
     def _run(self):
         """

@@ -120,7 +120,7 @@ class PolicyWorker:
                 for ready_client in self.request_clients:
                     actor_id, split_id = ready_client // self.num_splits, ready_client % self.num_splits
                     # TODO: specify task type
-                    self.actor_queues[actor_id].put((TaskType.ROLLOUT_STEP, split_id))
+                    self.actor_queues[actor_id].put((TaskType.ROLLOUT_STEP, ready_client))
 
         self.request_clients = []
 

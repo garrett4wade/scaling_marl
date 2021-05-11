@@ -26,7 +26,7 @@ def get_ppo_storage_specs(args, obs_space, share_obs_space, act_space):
     ppo_storage_specs = [
         StorageSpec('obs', obs_shape, torch.float32, True, 0),
         StorageSpec('share_obs', share_obs_shape, torch.float32, True, 0),
-        StorageSpec('masks', (1, ), torch.uint8, True, 1),
+        StorageSpec('masks', (1, ), torch.float32, True, 1),
         StorageSpec('rewards', (1, ), torch.float32, False, 0),
         StorageSpec('actions', (act_dim, ), torch.float32, False, 0),
         StorageSpec('action_log_probs', (act_dim, ), torch.float32, False, 0),
@@ -36,13 +36,13 @@ def get_ppo_storage_specs(args, obs_space, share_obs_space, act_space):
     ]
 
     if isinstance(act_space, gym.spaces.Discrete):
-        ppo_storage_specs.append(StorageSpec('availalbe_actions', (act_space.n, ), torch.uint8, True, 1))
+        ppo_storage_specs.append(StorageSpec('available_actions', (act_space.n, ), torch.float32, True, 1))
 
     if args.use_active_masks:
-        ppo_storage_specs.append(StorageSpec('active_masks', (1, ), torch.uint8, True, 1))
+        ppo_storage_specs.append(StorageSpec('active_masks', (1, ), torch.float32, True, 1))
 
     if args.use_fct_masks:
-        ppo_storage_specs.append(StorageSpec('fct_masks', (1, ), torch.uint8, True, 1))
+        ppo_storage_specs.append(StorageSpec('fct_masks', (1, ), torch.float32, True, 1))
 
     policy_input_keys = ['share_obs', 'obs', 'available_actions', 'masks', 'rnn_states', 'rnn_states_critic']
     policy_output_keys = ['actions', 'action_log_probs', 'values', 'rnn_states', 'rnn_states_critic']
