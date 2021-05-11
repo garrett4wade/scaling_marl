@@ -140,6 +140,7 @@ class SFWorkerNode:
         last_env_initialized = dict()
         for i in indices:
             w = self.create_actor_worker(i, actor_queues[i])
+            w.start_process()
             w.init()
             w.request_reset()
             workers[i] = w
@@ -189,6 +190,7 @@ class SFWorkerNode:
                     stuck_worker.process.kill()
 
                     new_worker = self.create_actor_worker(worker_idx, actor_queues[worker_idx])
+                    w.start_process()
                     new_worker.init()
                     new_worker.request_reset()
 
@@ -450,7 +452,6 @@ class SFWorkerNode:
                         self.total_train_seconds += now - self.last_report
                         self.last_report = now
 
-                        self.update_env_steps_actor()
             except Exception:
                 log.exception('Exception in driver loop')
                 status = ExperimentStatus.FAILURE

@@ -4,12 +4,12 @@ import torch.nn as nn
 
 
 class RNNLayer(nn.Module):
-    def __init__(self, inputs_dim, outputs_dim, recurrent_N, use_orthogonal):
+    def __init__(self, inputs_dim, outputs_dim, rec_n, use_orthogonal):
         super(RNNLayer, self).__init__()
-        self._recurrent_N = recurrent_N
+        self._rec_n = rec_n
         self._use_orthogonal = use_orthogonal
 
-        self.rnn = nn.GRU(inputs_dim, outputs_dim, num_layers=self._recurrent_N)
+        self.rnn = nn.GRU(inputs_dim, outputs_dim, num_layers=self._rec_n)
         for name, param in self.rnn.named_parameters():
             if 'bias' in name:
                 nn.init.constant_(param, 0)

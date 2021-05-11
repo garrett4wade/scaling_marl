@@ -104,12 +104,12 @@ class ActorWorker:
             threadpool_limits(limits=1, user_api=None)
 
         if self.cfg.set_workers_cpu_affinity:
-            set_process_cpu_affinity(self.worker_idx, self.cfg.num_workers)
+            set_process_cpu_affinity(self.worker_idx, self.cfg.num_actors)
         psutil.Process().nice(min(self.cfg.default_niceness + 10, 20))
 
-        self.client_ids = [i + self.num_splits * self.worker_idx for i in range(self.num_split)]
+        self.client_ids = [i + self.num_splits * self.worker_idx for i in range(self.num_splits)]
         self.env_runners = []
-        for i in range(self.num_split):
+        for i in range(self.num_splits):
             self.env_runners.append(
                 ShareDummyVecEnv([
                     lambda: self.env_fn(self.worker_idx * self.env_per_actor + i * self.env_per_split + j, self.cfg)
@@ -135,7 +135,7 @@ class ActorWorker:
             policy_inputs['infos'] = None
             client_id = self.client_ids[split_idx]
             self.buffer.insert_before_inference(client_id, **policy_inputs)
-            self.policy_queue.put((TaskType.ROLLOUT_STEP, client_id))
+            self.policy_queue.put(client_id)
 
         log.info('Finished reset for worker %d', self.worker_idx)
         # TODO: figure out what report queue is doing

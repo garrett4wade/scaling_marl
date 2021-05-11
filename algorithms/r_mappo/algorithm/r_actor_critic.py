@@ -13,9 +13,8 @@ class R_Actor_Critic(nn.Module):
 
         self._gain = args.gain
         self._use_orthogonal = args.use_orthogonal
-        self._use_policy_active_masks = args.use_policy_active_masks
         self._use_recurrent_policy = args.use_recurrent_policy
-        self._recurrent_N = args.recurrent_N
+        self._rec_n = args.rec_n
 
         init_method = [nn.init.xavier_uniform_, nn.init.orthogonal_][self._use_orthogonal]
 
@@ -28,8 +27,8 @@ class R_Actor_Critic(nn.Module):
         self.critic_base = MLPBase(args, cent_obs_space)
 
         if self._use_recurrent_policy:
-            self.actor_rnn = RNNLayer(self.hidden_size, self.hidden_size, self._recurrent_N, self._use_orthogonal)
-            self.critic_rnn = RNNLayer(self.hidden_size, self.hidden_size, self._recurrent_N, self._use_orthogonal)
+            self.actor_rnn = RNNLayer(self.hidden_size, self.hidden_size, self._rec_n, self._use_orthogonal)
+            self.critic_rnn = RNNLayer(self.hidden_size, self.hidden_size, self._rec_n, self._use_orthogonal)
 
         self.act = ACTLayer(action_space, self.hidden_size, self._use_orthogonal, self._gain)
         self.v_out = init_(nn.Linear(self.hidden_size, 1))

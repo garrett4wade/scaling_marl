@@ -89,9 +89,9 @@ class PolicyWorker:
             with timing.add_time('prepare_policy_inputs'):
                 policy_inputs = self.buffer.get_policy_inputs(self.request_clients)
 
-            with time.add_time('inference_preprosessing'):
+            with timing.add_time('inference_preprosessing'):
                 rollout_bs = num_requests * self.env_per_split
-                shared = policy_inputs['obs'].shape[:2] == (rollout_bs, self.num_agents)
+                shared = policy_inputs['obs'].shape[:3] == (num_requests, self.env_per_split, self.num_agents)
                 if shared:
                     # all agents simultaneously advance an environment step, e.g. SMAC and MPE
                     for k, v in policy_inputs.items():
@@ -187,14 +187,11 @@ class PolicyWorker:
 
             self.rollout_policy = Policy(0,
                                          self.cfg,
-                                         self.observation_space,
-                                         self.share_observation_space,
+                                         self.obs_space,
+                                         self.share_obs_space,
                                          self.action_space,
                                          is_training=False)
             self.rollout_policy.eval_mode()
-
-            for p in self.rollout_policy.parameters():
-                p.requires_grad = False  # we don't train anything here
 
             log.info('Initialized model on the policy worker %d!', self.worker_idx)
 
@@ -210,7 +207,7 @@ class PolicyWorker:
         # batches)
         min_num_requests = self.cfg.min_num_requests
         if min_num_requests is None or min_num_requests == -1:
-            min_num_requests = self.cfg.num_workers // self.cfg.num_policy_workers
+            min_num_requests = self.cfg.num_actors // self.cfg.num_policy_workers
             min_num_requests //= 3
             min_num_requests = max(1, min_num_requests)
         log.info('Min num requests: %d', min_num_requests)
