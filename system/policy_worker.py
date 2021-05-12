@@ -121,6 +121,7 @@ class PolicyWorker:
                     self.actor_queues[actor_id].put((TaskType.ROLLOUT_STEP, ready_client))
 
         self.request_clients = []
+        self.total_num_samples += rollout_bs
 
     def _update_weights(self, timing, block=False):
         flags = 0 if block else zmq.NOBLOCK
@@ -203,6 +204,7 @@ class PolicyWorker:
         last_report_samples = 0
         request_count = deque(maxlen=50)
 
+        # TODO: system throughput does not increase as num_policy_worker increases
         # very conservative limit on the minimum number of requests to wait for
         # this will almost guarantee that the system will continue collecting experience
         # at max rate even when 2/3 of workers are stuck for some reason (e.g. doing a long env reset)

@@ -69,7 +69,7 @@ class ReplayBuffer:
 
         self._read_ready = mp.Condition()
 
-        self.total_timesteps = torch.zeros((), dtype=torch.int64)
+        self.total_timesteps = torch.zeros((), dtype=torch.int64).share_memory_()
 
         # to read/write env-specific summary info, e.g. winning rate, scores
         self.summary_lock = mp.Lock()

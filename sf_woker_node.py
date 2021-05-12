@@ -77,7 +77,6 @@ class SFWorkerNode:
         self.policy_queue = MpQueue()
 
         self.policy_avg_stats = dict()
-        self.policy_lag = dict()
 
         self.last_timing = dict()
         self.env_steps = dict()
@@ -96,8 +95,7 @@ class SFWorkerNode:
 
         self.avg_stats_intervals = (2, 12, 60)  # 10 seconds, 1 minute, 5 minutes
 
-        self.fps_stats = deque([], maxlen=max(self.avg_stats_intervals))
-        self.throughput_stats = deque([], maxlen=5)
+        self.throughput_stats = [deque([], maxlen=stat_len) for stat_len in self.avg_stats_intervals]
         self.avg_stats = dict()
         self.stats = dict()  # regular (non-averaged) stats
 
@@ -283,25 +281,24 @@ class SFWorkerNode:
         Print experiment stats (FPS, avg rewards) to console and dump TF summaries collected from workers to disk.
         """
         now = time.time()
-        self.throughput_stats.append((now, self.samples_collected))
-        if len(self.throughput_stats) > 1:
-            past_moment, past_samples = self.throughput_stats[0]
-            sample_throughput = (self.samples_collected - past_samples) / (now - past_moment)
-        else:
-            sample_throughput = math.nan
+        sample_throughputs = []
+        for throughput_stat in self.throughput_stats:
+            throughput_stat.append((now, self.samples_collected))
+            if len(throughput_stat) > 1:
+                past_moment, past_samples = throughput_stat[0]
+                sample_throughput = (self.samples_collected - past_samples) / (now - past_moment)
+            else:
+                sample_throughput = math.nan
+            sample_throughputs.append(sample_throughput)
 
-        self.print_stats(sample_throughput)
+        self.print_stats(sample_throughputs)
 
         if time.time() - self.last_experiment_summaries > self.log_interval:
             # TODO: write to wandb/TensorBoard
             pass
 
-    def print_stats(self, sample_throughput, total_env_steps):
-        log.debug(
-            'Throughput: %s. Samples: %d.',
-            sample_throughput,
-            self.samples_collected,
-        )
+    def print_stats(self, sample_throughputs):
+        log.debug('Throughput: {:.2f} (10 sec), {:.2f} (1 min), {:.2f} (5 mins). Samples: {}.'.format(*sample_throughputs, self.samples_collected))
 
         # TODO: episodic summary, e.g. reward & winning rate
         # if 'reward' in self.policy_avg_stats:
