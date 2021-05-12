@@ -84,7 +84,7 @@ class PolicyWorker:
         with torch.no_grad():
             num_requests = len(self.request_clients)
             # NOTE: self.request_clients will not change throughout this function
-            with timing.add_time('prepare_policy_inputs'):
+            with timing.add_time('inference_prepare_policy_inputs'):
                 policy_inputs = self.buffer.get_policy_inputs(self.request_clients)
 
             with timing.add_time('inference_preprosessing'):
@@ -99,7 +99,7 @@ class PolicyWorker:
                     for k, v in policy_inputs.items():
                         policy_inputs[k] = v.reshape(rollout_bs, *v.shape[2:])
 
-            with timing.add_time('to_device_and_inference'):
+            with timing.add_time('inference_to_device_and_inference'):
                 policy_outputs = self.rollout_policy.get_actions(**policy_inputs)
 
             with timing.add_time('inference_to_cpu_and_postprosessing'):
@@ -113,7 +113,7 @@ class PolicyWorker:
                     for k, v in policy_outputs.items():
                         policy_outputs[k] = _t2n(v).reshape(num_requests, self.env_per_split, *v.shape[1:])
 
-            with timing.add_time('insert_after_inference'):
+            with timing.add_time('inference_insert_after_inference'):
                 self.buffer.insert_after_inference(self.request_clients, **policy_outputs)
                 for ready_client in self.request_clients:
                     actor_id, _ = ready_client // self.num_splits, ready_client % self.num_splits
@@ -229,22 +229,21 @@ class PolicyWorker:
                 #         self.resume_experience_collection_cv.wait(timeout=0.05)
 
                 waiting_started = time.time()
-                while len(self.request_clients
-                          ) < min_num_requests and time.time() - waiting_started < wait_for_min_requests:
-                    try:
-                        with timing.timeit('wait_policy'), timing.add_time('wait_policy_total'):
+                with timing.time_avg('wait_for_envstep'), timing.add_time('waiting'):
+                    while len(self.request_clients
+                            ) < min_num_requests and time.time() - waiting_started < wait_for_min_requests:
+                        try:
                             policy_requests = self.policy_queue.get_many(timeout=0.005)
-                        self.request_clients.extend(policy_requests)
-                    except Empty:
-                        pass
+                            self.request_clients.extend(policy_requests)
+                        except Empty:
+                            pass
 
                 self._update_weights(timing)
 
-                with timing.timeit('one_step'), timing.add_time('handle_policy_step'):
-                    if self.initialized:
-                        if len(self.request_clients) > 0:
-                            request_count.append(len(self.request_clients))
-                            self._handle_policy_steps(timing)
+                with timing.time_avg('one_inference_step'), timing.add_time('inference'):
+                    if self.initialized and len(self.request_clients) > 0:
+                        request_count.append(len(self.request_clients))
+                        self._handle_policy_steps(timing)
 
                 try:
                     task_type, data = self.task_queue.get_nowait()
@@ -262,8 +261,8 @@ class PolicyWorker:
                 except Empty:
                     pass
 
-                if time.time() - last_report > 3.0 and 'one_step' in timing:
-                    timing_stats = dict(wait_policy=timing.wait_policy, step_policy=timing.one_step)
+                if time.time() - last_report > 3.0 and 'one_inference_step' in timing:
+                    timing_stats = dict(wait_policy=timing.wait_for_envstep, step_policy=timing.one_inference_step)
                     samples_since_last_report = self.total_num_samples - last_report_samples
 
                     stats = memory_stats('policy_worker', self.device)

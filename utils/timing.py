@@ -50,7 +50,7 @@ class Timing(AttrDict):
     def add_time(self, key):
         return TimingContext(self, key, additive=True)
 
-    def time_avg(self, key, average=10):
+    def time_avg(self, key, average=20):
         return TimingContext(self, key, average=average)
 
     def __str__(self):

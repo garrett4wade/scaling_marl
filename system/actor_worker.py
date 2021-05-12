@@ -72,8 +72,6 @@ class ActorWorker:
 
         self.terminate = False
 
-        self.num_complete_rollouts = 0
-
         self.env_per_actor = cfg.env_per_actor
         self.num_splits = cfg.num_splits
         assert self.env_per_actor % self.num_splits == 0
@@ -156,18 +154,18 @@ class ActorWorker:
 
         env = self.env_runners[split_idx]
 
-        with timing.add_time('get_action'):
+        with timing.add_time('envstep_get_action'):
             actions = self.buffer.get_actions(client_id)
 
-        with timing.add_time('env_step'):
+        with timing.add_time('envstep_simulation'):
             envstep_outputs = env.step(actions)
 
-        with timing.add_time('insert_before_inference'):
+        with timing.add_time('envstep_insert_before_inference'):
             self.buffer.insert_before_inference(client_id, **envstep_outputs)
 
         # TODO: deal with episodic summary data
 
-        with timing.add_time('enqueue_policy_requests'):
+        with timing.add_time('envstep_enqueue_policy_requests'):
             self.policy_queue.put(client_id)
 
     def _run(self):
@@ -199,7 +197,7 @@ class ActorWorker:
             while not self.terminate:
                 try:
                     try:
-                        with timing.add_time('waiting'), timing.timeit('wait_actor'):
+                        with timing.add_time('waiting'), timing.time_avg('wait_for_inference'):
                             tasks = self.task_queue.get_many(timeout=0.1)
                     except Empty:
                         tasks = []
@@ -217,17 +215,17 @@ class ActorWorker:
 
                         # handling actual workload
                         if task_type == TaskType.ROLLOUT_STEP:
-                            if 'work' not in timing:
+                            if 'env_step' not in timing:
                                 timing.waiting = 0  # measure waiting only after real work has started
 
-                            with timing.add_time('work'), timing.timeit('one_step'):
+                            with timing.add_time('env_step'), timing.time_avg('one_env_step'):
                                 self._advance_rollouts(data, timing)
                         elif task_type == TaskType.RESET:
-                            with timing.add_time('reset'):
+                            with timing.add_time('first_reset'):
                                 self._handle_reset()
 
-                    if time.time() - last_report > 5.0 and 'one_step' in timing:
-                        timing_stats = dict(wait_actor=timing.wait_actor, step_actor=timing.one_step)
+                    if time.time() - last_report > 5.0 and 'one_env_step' in timing:
+                        timing_stats = dict(wait_actor=timing.wait_for_inference, step_actor=timing.one_env_step)
                         memory_mb = memory_consumption_mb()
                         stats = dict(memory_actor=memory_mb)
                         safe_put(self.report_queue, dict(timing=timing_stats, stats=stats), queue_name='report')
@@ -247,10 +245,9 @@ class ActorWorker:
         if self.worker_idx <= 1:
             time.sleep(0.1)
             log.info(
-                'Env runner %d, CPU aff. %r, rollouts %d: timing %s',
+                'Env runner %d, CPU aff. %r, timing %s',
                 self.worker_idx,
                 psutil.Process().cpu_affinity(),
-                self.num_complete_rollouts,
                 timing,
             )
 

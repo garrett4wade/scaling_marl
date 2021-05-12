@@ -1,4 +1,5 @@
 import signal
+import time
 from queue import Empty
 
 import torch
@@ -57,7 +58,7 @@ class Transmitter:
                     msg = None
 
                 if msg:
-                    with timing.add_time('waiting'), timing.timeit('wait_seg'):
+                    with timing.add_time('waiting'), timing.time_avg('wait_seg'):
                         try:
                             slot = self.seg_queue.get(block=False)
                         except Empty:
@@ -69,22 +70,26 @@ class Transmitter:
                     with timing.add_time('after_sending'):
                         self.buffer.after_sending(slot)
 
-                try:
-                    slots = self.buffer.get_many(timeout=0.02)
-                except RuntimeError:
-                    slots = []
+                with timing.add_time('prefetching'):
+                    try:
+                        slots = self.buffer.get_many(timeout=0.02)
+                    except RuntimeError:
+                        slots = []
 
-                for slot in slots:
-                    self.seg_queue.put(slot)
+                    for slot in slots:
+                        self.seg_queue.put(slot)
 
             except RuntimeError as exc:
                 log.warning('Error while transmitting data tran: %d, exception: %s', self.transmitter_idx, exc)
                 log.warning('Terminate process...')
                 self.terminate = True
             except KeyboardInterrupt:
+                log.warning('Keyboard interrupt detected on Transmitter %d', self.transmitter_idx)
                 self.terminate = True
             except Exception:
                 log.exception('Unknown exception in Transmitter')
                 self.terminate = True
 
         self.socket.close()
+        time.sleep(0.2)
+        log.info('Transmitter timing: %s', timing)
