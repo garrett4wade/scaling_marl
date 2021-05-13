@@ -6,36 +6,51 @@ import torch
 import multiprocessing as mp
 
 from utils.timing import Timing
-from utils.utils import log
+from utils.utils import log, join_or_kill, TaskType, SocketState
 import zmq
 from faster_fifo import Queue
+from collections import deque
+import numpy as np
 
 
 class Transmitter:
-    def __init__(self, cfg, idx, buffer):
+    def __init__(self, cfg, idx, task_queue, buffer):
         self.cfg = cfg
         self.transmitter_idx = idx
         self.buffer = buffer
 
+        self.task_queue = task_queue
+
         self.socket = None
+        self.socket_state = SocketState.RECV
 
         self.seg_queue = Queue()
 
+        self.sending_delays = deque([], maxlen=100)
+        self.last_recv_time = None
+
         self.terminate = False
+
+        self.initialized = False
 
         self.process = mp.Process(target=self._run)
         self.process.start()
 
-    def init(self):
+    def _init(self):
         self.socket = zmq.Context().socket(zmq.REQ)
         self.socket.connect(self.cfg.seg_addr)
         self.socket.send(b'ready')
+        self.socket_state = SocketState.SEND
+
+        self.initialized = True
 
     def _pack_msg(self, slot):
         msg = []
         for k, data in self.buffer.storage.items():
             msg.extend([k.encode('ascii'), data[slot]])
         self.socket.send_multipart(msg)
+        self.sending_delays.append(time.time() - self.last_recv_time)
+        self.socket_state = SocketState.SEND
         log.info('Successfully sending data to head node on Transmitter %d...', self.transmitter_idx)
 
     def _run(self):
@@ -51,26 +66,45 @@ class Transmitter:
         self.init()
         while not self.terminate:
             try:
+                # receive INIT and TERMINATE signal from the main process
                 try:
-                    msg = self.socket.recv(flags=zmq.NOBLOCK)
-                    log.info('Receiving data request from head node on Transmitter %d...', self.transmitter_idx)
-                except zmq.ZMQError:
-                    msg = None
+                    task_type = self.task_queue.get_nowait()
 
-                if msg:
-                    with timing.add_time('waiting'), timing.time_avg('wait_seg'):
-                        try:
-                            slot = self.seg_queue.get(block=False)
-                        except Empty:
-                            slot = self.buffer.get(block=True)
+                    # task from the task_queue
+                    if task_type == TaskType.INIT:
+                        self._init()
+                    elif task_type == TaskType.TERMINATE:
+                        self.terminate = True
+                        break
 
-                    with timing.add_time('pack_seg'):
-                        self._pack_msg(slot)
+                    self.task_queue.task_done()
+                except Empty:
+                    pass
 
-                    with timing.add_time('after_sending'):
-                        self.buffer.after_sending(slot)
+                if self.initialized and self.socket_state == SocketState.SEND:
+                    try:
+                        # we don't care what we receive from the head node
+                        _ = self.socket.recv(flags=zmq.NOBLOCK)
+                        self.last_recv_time = time.time()
+                        self.socket_state = SocketState.RECV
+                        log.info('Receiving data request from head node on Transmitter %d...', self.transmitter_idx)
+                    except zmq.ZMQError:
+                        pass
 
-                with timing.add_time('prefetching'):
+                if self.initialized and self.socket_state == SocketState.RECV:
+                    try:
+                        slot = self.seg_queue.get(block=False)
+                    except Empty:
+                        slot = None
+
+                    if slot is not None:
+                        with timing.add_time('pack_seg'):
+                            self._pack_msg(slot)
+
+                        with timing.add_time('after_sending'):
+                            self.buffer.after_sending(slot)
+
+                with timing.add_time('waiting_and_prefetching'):
                     try:
                         slots = self.buffer.get_many(timeout=0.02)
                     except RuntimeError:
@@ -92,4 +126,13 @@ class Transmitter:
 
         self.socket.close()
         time.sleep(0.2)
-        log.info('Transmitter timing: %s', timing)
+        log.info('Transmitter avg sending delay: %.3f, timing: %s', np.mean(self.sending_delays), timing)
+
+    def init(self):
+        self.task_queue.put(TaskType.INIT)
+    
+    def close(self):
+        self.task_queue.put(TaskType.TERMINATE)
+
+    def join(self):
+        join_or_kill(self.process)

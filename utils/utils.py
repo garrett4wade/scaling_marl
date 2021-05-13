@@ -17,6 +17,9 @@ from utils.get_available_gpus import get_gpus_without_triggering_pytorch_cuda_in
 class TaskType:
     INIT, TERMINATE, RESET, ROLLOUT_STEP, POLICY_STEP, TRAIN, INIT_MODEL, PBT, UPDATE_ENV_STEPS, EMPTY = range(10)
 
+class SocketState:
+    SEND, RECV = range(2)
+
 
 # logger reference: https://github.com/alex-petrenko/sample-factory/blob/master/sample_factory/utils/utils.py
 ch = logging.StreamHandler()

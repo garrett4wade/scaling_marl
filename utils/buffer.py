@@ -138,7 +138,7 @@ class ReplayBuffer:
 
     def get(self, block=True, timeout=None):
         with self._read_ready:
-            if np.sum(self._is_readable) == 0 and not block:
+            if np.sum(self._is_readable) == 0 and not block and not timeout:
                 raise Empty
             self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= 1, timeout=timeout)
 

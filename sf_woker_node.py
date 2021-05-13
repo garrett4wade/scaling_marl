@@ -249,8 +249,13 @@ class SFWorkerNode:
             self.actor_workers.extend(workers)
 
     def init_transmitters(self):
+        transmitter_queues = []
+        for i in range(self.cfg.num_transmitters):
+            transmitter_queues.append(TorchJoinableQueue())
+
         for idx in range(self.cfg.num_transmitters):
-            t = Transmitter(self.cfg, idx, self.buffer)
+            t = Transmitter(self.cfg, idx, transmitter_queues[i], self.buffer)
+            t.init()
             self.transmitters.append(t)
 
     def finish_initialization(self):
@@ -371,6 +376,15 @@ class SFWorkerNode:
         for i, w in enumerate(all_workers):
             w.join()
         log.debug('Workers joined!')
+
+        time.sleep(0.1)
+        log.debug('Closing Transmitters...')
+        for t in self.transmitters:
+            t.close()
+            time.sleep(0.02)
+        for t in self.transmitters:
+            t.join()
+        log.debug('Transmitters joined!')
 
         # VizDoom processes often refuse to die for an unidentified reason, so we're force killing them with a hack
         kill_processes(child_processes)
