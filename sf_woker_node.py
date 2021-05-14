@@ -24,7 +24,7 @@ from torch.multiprocessing import JoinableQueue as TorchJoinableQueue
 from system.actor_worker import ActorWorker
 from system.policy_worker import PolicyWorker
 from system.transmitter import Transmitter
-from utils.buffer import SharedReplayBuffer
+from utils.buffer import SharedWorkerBuffer
 from utils.timing import Timing
 from utils.utils import log, set_global_cuda_envvars, list_child_processes, kill_processes
 
@@ -65,8 +65,7 @@ class SFWorkerNode:
         self.env_fn = env_fn
 
         # shared memory allocation
-        self.buffer = SharedReplayBuffer(self.cfg, self.num_agents, self.obs_space, self.share_obs_space,
-                                         self.action_space)
+        self.buffer = SharedWorkerBuffer(self.cfg, self.obs_space, self.share_obs_space, self.action_space)
 
         self.actor_workers = []
         self.policy_workers = []
@@ -303,7 +302,8 @@ class SFWorkerNode:
             pass
 
     def print_stats(self, sample_throughputs):
-        log.debug('Throughput: {:.2f} (10 sec), {:.2f} (1 min), {:.2f} (5 mins). Samples: {}.'.format(*sample_throughputs, self.samples_collected))
+        log.debug('Throughput: {:.2f} (10 sec), {:.2f} (1 min), {:.2f} (5 mins). Samples: {}.'.format(
+            *sample_throughputs, self.samples_collected))
 
         # TODO: episodic summary, e.g. reward & winning rate
         # if 'reward' in self.policy_avg_stats:

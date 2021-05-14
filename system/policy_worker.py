@@ -231,7 +231,7 @@ class PolicyWorker:
                 waiting_started = time.time()
                 with timing.time_avg('wait_for_envstep'), timing.add_time('waiting'):
                     while len(self.request_clients
-                            ) < min_num_requests and time.time() - waiting_started < wait_for_min_requests:
+                              ) < min_num_requests and time.time() - waiting_started < wait_for_min_requests:
                         try:
                             policy_requests = self.policy_queue.get_many(timeout=0.005)
                             self.request_clients.extend(policy_requests)

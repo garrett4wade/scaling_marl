@@ -102,7 +102,7 @@ class Transmitter:
                             self._pack_msg(slot)
 
                         with timing.add_time('after_sending'):
-                            self.buffer.after_sending(slot)
+                            self.buffer.close_out(slot)
 
                 with timing.add_time('waiting_and_prefetching'):
                     try:
@@ -130,7 +130,7 @@ class Transmitter:
 
     def init(self):
         self.task_queue.put(TaskType.INIT)
-    
+
     def close(self):
         self.task_queue.put(TaskType.TERMINATE)
 

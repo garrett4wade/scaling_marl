@@ -7,49 +7,112 @@ from algorithms.storage_registries import get_ppo_storage_specs, to_numpy_type
 
 
 class ReplayBuffer:
-    def __init__(self, args, num_agents, obs_space, share_obs_space, act_space):
-        # NOTE: value target computation is deferred to centralized trainer in consistent with off-policy correction
-        # e.g. V-trace and Retrace
-
+    def __init__(self, args, obs_space, share_obs_space, act_space):
         # system configuration
-        self.num_actors = num_actors = args.num_actors
-        self.num_splits = num_splits = args.num_splits
+        self.num_actors = args.num_actors
+        self.num_splits = args.num_splits
         assert args.env_per_actor % args.num_splits == 0
-        self.env_per_split = env_per_split = args.env_per_actor // args.num_splits
-        self.qsize = qsize = args.qsize
-
-        self.num_slots = num_slots = qsize * num_splits * num_actors
+        self.env_per_split = args.env_per_actor // args.num_splits
+        self.qsize = args.qsize
 
         # storage shape configuration
-        self.num_agents = num_agents
-        self.episode_length = ep_l = args.episode_length
+        self.num_agents = args.num_agents
+        self.episode_length = args.episode_length
 
         # TODO: support n-step bootstrap
         # self.bootstrap_step = bootstrap_step = args.bootstrap_step
-
-        # initialize storage
-        def shape_prefix(bootstrap):
-            t = ep_l + 1 if bootstrap else ep_l
-            return (num_slots, t, env_per_split, num_agents)
 
         # TODO: replace get_ppo_storage_specs with get_${algorithm}_storage_specs
         self.storage_specs, self.policy_input_keys, self.policy_output_keys = get_ppo_storage_specs(
             args, obs_space, share_obs_space, act_space)
         self.storage_keys = [storage_spec.name for storage_spec in self.storage_specs]
+
+    def _init_indicators(self):
+        # buffer indicators
+        self._is_readable = torch.zeros((self.num_slots, ), dtype=torch.uint8).share_memory_().numpy()
+        self._is_busy = torch.zeros((self.num_slots, ), dtype=torch.uint8).share_memory_().numpy()
+        self._is_writable = torch.ones((self.num_slots, ), dtype=torch.uint8).share_memory_().numpy()
+        assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
+
+        self._time_stamp = torch.zeros((self.num_slots, ), dtype=torch.float32).share_memory_().numpy()
+
+        self._read_ready = mp.Condition()
+
+        self.total_timesteps = torch.zeros((), dtype=torch.int64).share_memory_()
+
+    def _register_storage(self, shape_prefix_fn):
         self.storage_registries = {}
 
         for storage_spec in self.storage_specs:
             name, shape, dtype, bootstrap, init_value = storage_spec
             assert init_value == 0 or init_value == 1
             init_method = torch.zeros if init_value == 0 else torch.ones
-            setattr(self, '_' + name, init_method((*shape_prefix(bootstrap), *shape), dtype=dtype).share_memory_())
+            setattr(self, '_' + name, init_method((*shape_prefix_fn(bootstrap), *shape), dtype=dtype).share_memory_())
             setattr(self, name, getattr(self, '_' + name).numpy())
-            self.storage_registries[name] = ((*shape_prefix(bootstrap), *shape), to_numpy_type(dtype))
+            self.storage_registries[name] = ((*shape_prefix_fn(bootstrap), *shape), to_numpy_type(dtype))
 
         # self._storage is torch.Tensor handle while storage is numpy.array handle
         # the 2 handles point to the same block of memory
         self._storage = {k: getattr(self, '_' + k) for k in self.storage_keys}
         self.storage = {k: getattr(self, k) for k in self.storage_keys}
+
+    def get_utilization(self):
+        with self._read_ready:
+            available_slots = np.sum(self._is_readable)
+        return available_slots / self.num_slots
+
+    def get(self, block=True, timeout=None):
+        with self._read_ready:
+            if np.sum(self._is_readable) == 0 and not block and not timeout:
+                raise Empty
+            self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= 1, timeout=timeout)
+
+            available_slots = np.nonzero(self._is_readable)[0]
+            slot = available_slots[np.argsort(self._time_stamp[available_slots])[0]]
+
+            # readable -> busy (being-read)
+            self._is_readable[slot] = 0
+            self._is_busy[slot] = 1
+
+            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
+        return slot
+
+    def get_many(self, timeout=None):
+        with self._read_ready:
+            self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= 1, timeout=timeout)
+
+            available_slots = np.nonzero(self._is_readable)[0]
+
+            # readable -> busy (being-read)
+            self._is_readable[available_slots] = 0
+            self._is_busy[available_slots] = 1
+
+            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
+        return available_slots
+
+    def close_out(self, slot_id):
+        with self._read_ready:
+            # reset indicator, busy (being-read) -> writable
+            self._is_busy[slot_id] = 0
+            self._is_writable[slot_id] = 1
+            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
+
+
+class WorkerBuffer(ReplayBuffer):
+    def __init__(self, args, obs_space, share_obs_space, act_space):
+        super().__init__(args, obs_space, share_obs_space, act_space)
+        # NOTE: value target computation is deferred to centralized trainer in consistent with off-policy correction
+        # e.g. V-trace and Retrace
+
+        self.num_slots = self.qsize * self.num_splits * self.num_actors
+
+        # initialize storage
+        def shape_prefix(bootstrap):
+            t = self.episode_length + 1 if bootstrap else self.episode_length
+            return (self.num_slots, t, self.env_per_split, self.num_agents)
+
+        self._register_storage(shape_prefix)
+        self._init_indicators()
 
         # hash table mapping client identity to slot id
         self._mp_mgr = mp.Manager()
@@ -57,27 +120,7 @@ class ReplayBuffer:
         self._prev_client_hash = self._mp_mgr.dict()
 
         # episode step record
-        self._ep_step = torch.zeros((num_slots, ), dtype=torch.int32).share_memory_().numpy()
-
-        # buffer indicators
-        self._is_readable = torch.zeros((num_slots, ), dtype=torch.uint8).share_memory_().numpy()
-        self._is_busy = torch.zeros((num_slots, ), dtype=torch.uint8).share_memory_().numpy()
-        self._is_writable = torch.ones((num_slots, ), dtype=torch.uint8).share_memory_().numpy()
-        assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
-
-        self._time_stamp = torch.zeros((num_slots, ), dtype=torch.float32).share_memory_().numpy()
-
-        self._read_ready = mp.Condition()
-
-        self.total_timesteps = torch.zeros((), dtype=torch.int64).share_memory_()
-
-        # to read/write env-specific summary info, e.g. winning rate, scores
-        self.summary_lock = mp.Lock()
-
-    def get_utilization(self):
-        with self._read_ready:
-            available_slots = np.sum(self._is_readable)
-        return available_slots / self.num_slots
+        self._ep_step = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
 
     def _allocate(self, client):
         with self._read_ready:
@@ -100,7 +143,7 @@ class ReplayBuffer:
 
         self._client_hash[client] = slot_id
 
-    def _opening(self, old_slots, new_slots):
+    def _slot_opening(self, old_slots, new_slots):
         # when a slot (old_slot) is full, we should open up a new slot for data storage
         with self._read_ready:
             assert np.all(self._is_busy[old_slots]) and np.all(self._is_busy[new_slots])
@@ -112,7 +155,7 @@ class ReplayBuffer:
             if 'rnn_states' in k:
                 self.storage[k][new_slots, 0] = self.storage[k][old_slots, -1]
 
-    def _closure(self, old_slots, new_slots):
+    def _slot_closure(self, old_slots, new_slots):
         # when filling the first timestep of a new slot, we should copy data into the previous slot as a bootstrap
         # specifially, copied data includes all data except for rnn states needs to be bootstrapped (see storage specs)
         # and rewards, because rewards is 1-step behind other aligned data,
@@ -135,42 +178,6 @@ class ReplayBuffer:
             # if reader is waiting for data, notify it
             if no_availble_before and np.sum(self._is_readable) >= 1:
                 self._read_ready.notify(1)
-
-    def get(self, block=True, timeout=None):
-        with self._read_ready:
-            if np.sum(self._is_readable) == 0 and not block and not timeout:
-                raise Empty
-            self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= 1, timeout=timeout)
-
-            available_slots = np.nonzero(self._is_readable)[0]
-            slot = available_slots[np.argsort(self._time_stamp[available_slots])[0]]
-
-            # readable -> busy (being-read)
-            self._is_readable[slot] = 0
-            self._is_busy[slot] = 1
-
-            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
-        return slot
-    
-    def get_many(self, timeout=None):
-        with self._read_ready:
-            self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= 1, timeout=timeout)
-
-            available_slots = np.nonzero(self._is_readable)[0]
-
-            # readable -> busy (being-read)
-            self._is_readable[available_slots] = 0
-            self._is_busy[available_slots] = 1
-
-            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
-        return available_slots
-
-    def after_sending(self, slot_id):
-        with self._read_ready:
-            # reset indicator, busy (being-read) -> writable
-            self._is_busy[slot_id] = 0
-            self._is_writable[slot_id] = 1
-            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
 
 
 class PolicyMixin:
@@ -264,7 +271,7 @@ class SharedPolicyMixin(PolicyMixin):
                 closure_old_slots.append(self._prev_client_hash[client])
                 closure_new_slots.append(slot)
         if len(closure_new_slots) > 0:
-            self._closure(closure_old_slots, closure_new_slots)
+            self._slot_closure(closure_old_slots, closure_new_slots)
 
         # advance 1 timestep
         self._ep_step[slots] += 1
@@ -280,10 +287,10 @@ class SharedPolicyMixin(PolicyMixin):
 
             opening_new_slots = [self._client_hash[client] for client in opening_clients]
 
-            self._opening(opening_old_slots, opening_new_slots)
+            self._slot_opening(opening_old_slots, opening_new_slots)
 
 
-class SharedReplayBuffer(ReplayBuffer, SharedPolicyMixin):
+class SharedWorkerBuffer(WorkerBuffer, SharedPolicyMixin):
     pass
 
 
@@ -384,7 +391,7 @@ class SharedReplayBuffer(ReplayBuffer, SharedPolicyMixin):
 #         if ep_step == 0 and agent_id == self.num_agents - 1 and self._prev_q_idx[server_id, split_id] >= 0:
 #             old_slot_id = self._locate_prev(server_id, split_id)
 #             # fill bootstrap data in previous slot
-#             self._closure(old_slot_id, slot_id)
+#             self._slot_closure(old_slot_id, slot_id)
 
 #         # model inference returns
 #         self.actions[slot_id, ep_step, :, agent_id] = actions
@@ -403,10 +410,9 @@ class SharedReplayBuffer(ReplayBuffer, SharedPolicyMixin):
 
 #                 new_slot_id = self._move_next(server_id, split_id)
 
-#                 self._opening(slot_id, new_slot_id)
+#                 self._slot_opening(slot_id, new_slot_id)
 #         else:
 #             self._agent_ids[server_id, split_id] += 1
-
 
 # class SequentialReplayBuffer(ReplayBuffer, SequentialPolicyMixin):
 #     def __init__(self, *args, **kwargs):
