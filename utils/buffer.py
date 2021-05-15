@@ -11,8 +11,8 @@ class ReplayBuffer:
         # system configuration
         self.num_actors = args.num_actors
         self.num_splits = args.num_splits
-        assert args.env_per_actor % args.num_splits == 0
-        self.env_per_split = args.env_per_actor // args.num_splits
+        assert args.envs_per_actor % args.num_splits == 0
+        self.envs_per_split = args.envs_per_actor // args.num_splits
         self.qsize = args.qsize
 
         # storage shape configuration
@@ -22,12 +22,31 @@ class ReplayBuffer:
         # TODO: support n-step bootstrap
         # self.bootstrap_step = bootstrap_step = args.bootstrap_step
 
+        # initialize storage
         # TODO: replace get_ppo_storage_specs with get_${algorithm}_storage_specs
         self.storage_specs, self.policy_input_keys, self.policy_output_keys = get_ppo_storage_specs(
             args, obs_space, share_obs_space, act_space)
         self.storage_keys = [storage_spec.name for storage_spec in self.storage_specs]
 
-    def _init_indicators(self):
+        self.storage_registries = {}
+
+        def shape_prefix(bootstrap):
+            t = self.episode_length + 1 if bootstrap else self.episode_length
+            return (self.num_slots, t, self.envs_per_slot, self.num_agents)
+
+        for storage_spec in self.storage_specs:
+            name, shape, dtype, bootstrap, init_value = storage_spec
+            assert init_value == 0 or init_value == 1
+            init_method = torch.zeros if init_value == 0 else torch.ones
+            setattr(self, '_' + name, init_method((*shape_prefix(bootstrap), *shape), dtype=dtype).share_memory_())
+            setattr(self, name, getattr(self, '_' + name).numpy())
+            self.storage_registries[name] = ((*shape_prefix(bootstrap), *shape), to_numpy_type(dtype))
+
+        # self._storage is torch.Tensor handle while storage is numpy.array handle
+        # the 2 handles point to the same block of memory
+        self._storage = {k: getattr(self, '_' + k) for k in self.storage_keys}
+        self.storage = {k: getattr(self, k) for k in self.storage_keys}
+
         # buffer indicators
         self._is_readable = torch.zeros((self.num_slots, ), dtype=torch.uint8).share_memory_().numpy()
         self._is_busy = torch.zeros((self.num_slots, ), dtype=torch.uint8).share_memory_().numpy()
@@ -35,40 +54,56 @@ class ReplayBuffer:
         assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
 
         self._time_stamp = torch.zeros((self.num_slots, ), dtype=torch.float32).share_memory_().numpy()
+        self._time_stamp[:] = np.inf
 
-        self._read_ready = mp.Condition()
+        self._read_ready = mp.Condition(mp.RLock())
 
         self.total_timesteps = torch.zeros((), dtype=torch.int64).share_memory_()
 
-    def _register_storage(self, shape_prefix_fn):
-        self.storage_registries = {}
+    def _allocate(self):
+        with self._read_ready:
+            writable_slots = np.nonzero(self._is_writable)[0]
+            if len(writable_slots) > 0:
+                slot_id = writable_slots[0]
+                # writable -> busy
+                self._is_writable[slot_id] = 0
+            else:
+                readable_slots = np.nonzero(self._is_readable)[0]
+                assert len(readable_slots) > 0, 'please increase qsize!'
+                slot_id = readable_slots[0]
+                # readable -> busy
+                self._is_readable[slot_id] = 0
+            self._is_busy[slot_id] = 1
+            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
+        return slot_id
 
-        for storage_spec in self.storage_specs:
-            name, shape, dtype, bootstrap, init_value = storage_spec
-            assert init_value == 0 or init_value == 1
-            init_method = torch.zeros if init_value == 0 else torch.ones
-            setattr(self, '_' + name, init_method((*shape_prefix_fn(bootstrap), *shape), dtype=dtype).share_memory_())
-            setattr(self, name, getattr(self, '_' + name).numpy())
-            self.storage_registries[name] = ((*shape_prefix_fn(bootstrap), *shape), to_numpy_type(dtype))
-
-        # self._storage is torch.Tensor handle while storage is numpy.array handle
-        # the 2 handles point to the same block of memory
-        self._storage = {k: getattr(self, '_' + k) for k in self.storage_keys}
-        self.storage = {k: getattr(self, k) for k in self.storage_keys}
+    def _mark_as_readable(self, slots):
+        with self._read_ready:
+            # update indicator of current slot
+            no_availble_before = np.sum(self._is_readable) < self.target_num_slots
+            # readable -> busy (being written)
+            self._is_readable[slots] = 1
+            self._is_busy[slots] = 0
+            self._time_stamp[slots] = time.time()
+            # if reader is waiting for data, notify it
+            if no_availble_before and np.sum(self._is_readable) >= self.target_num_slots:
+                self._read_ready.notify(self.num_consumers_to_notify)
 
     def get_utilization(self):
         with self._read_ready:
             available_slots = np.sum(self._is_readable)
         return available_slots / self.num_slots
 
-    def get(self, block=True, timeout=None):
+    def get(self, block=True, timeout=None, reduce_fn=lambda x: x[0]):
         with self._read_ready:
             if np.sum(self._is_readable) == 0 and not block and not timeout:
                 raise Empty
-            self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= 1, timeout=timeout)
+            self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= self.target_num_slots, timeout=timeout)
 
             available_slots = np.nonzero(self._is_readable)[0]
-            slot = available_slots[np.argsort(self._time_stamp[available_slots])[0]]
+            # use reduce fn to select required slots from sorted timestamps
+            # select the oldest one as default, as workers send data to the learner in a FIFO pattern
+            slot = available_slots[reduce_fn(np.argsort(self._time_stamp[available_slots]))]
 
             # readable -> busy (being-read)
             self._is_readable[slot] = 0
@@ -79,7 +114,7 @@ class ReplayBuffer:
 
     def get_many(self, timeout=None):
         with self._read_ready:
-            self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= 1, timeout=timeout)
+            self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= self.target_num_slots, timeout=timeout)
 
             available_slots = np.nonzero(self._is_readable)[0]
 
@@ -95,24 +130,20 @@ class ReplayBuffer:
             # reset indicator, busy (being-read) -> writable
             self._is_busy[slot_id] = 0
             self._is_writable[slot_id] = 1
+            self._time_stamp[slot_id] = np.inf
             assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
 
 
 class WorkerBuffer(ReplayBuffer):
     def __init__(self, args, obs_space, share_obs_space, act_space):
-        super().__init__(args, obs_space, share_obs_space, act_space)
         # NOTE: value target computation is deferred to centralized trainer in consistent with off-policy correction
         # e.g. V-trace and Retrace
-
+        self.target_num_slots = 1
+        self.num_consumers_to_notify = 1
         self.num_slots = self.qsize * self.num_splits * self.num_actors
+        self.envs_per_slot = self.envs_per_split
 
-        # initialize storage
-        def shape_prefix(bootstrap):
-            t = self.episode_length + 1 if bootstrap else self.episode_length
-            return (self.num_slots, t, self.env_per_split, self.num_agents)
-
-        self._register_storage(shape_prefix)
-        self._init_indicators()
+        super().__init__(args, obs_space, share_obs_space, act_space)
 
         # hash table mapping client identity to slot id
         self._mp_mgr = mp.Manager()
@@ -123,20 +154,7 @@ class WorkerBuffer(ReplayBuffer):
         self._ep_step = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
 
     def _allocate(self, client):
-        with self._read_ready:
-            writable_slots = np.nonzero(self._is_writable)[0]
-            if len(writable_slots) > 0:
-                slot_id = writable_slots[0]
-                # writable -> busy
-                self._is_writable[slot_id] = 0
-            else:
-                readable_slots = np.nonzero(self._is_readable)[0]
-                assert len(readable_slots) > 0, 'please increase qsize!'
-                slot_id = readable_slots[0]
-                # readable -> busy
-                self._is_readable[slot_id] = 0
-            self._is_busy[slot_id] = 1
-            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
+        slot_id = super()._allocate()
 
         if client in self._client_hash.keys():
             self._prev_client_hash[client] = self._client_hash[client]
@@ -145,8 +163,10 @@ class WorkerBuffer(ReplayBuffer):
 
     def _slot_opening(self, old_slots, new_slots):
         # when a slot (old_slot) is full, we should open up a new slot for data storage
-        with self._read_ready:
-            assert np.all(self._is_busy[old_slots]) and np.all(self._is_busy[new_slots])
+
+        # NOTE: following 2 lines for debug only
+        # with self._read_ready:
+        #     assert np.all(self._is_busy[old_slots]) and np.all(self._is_busy[new_slots])
 
         # copy rnn states of previous slots into new ones, which serve as the policy input at next inference time
         # note that other policy inputs (e.g. obs, share_obs) will be filled into new slots before the next inference
@@ -156,10 +176,10 @@ class WorkerBuffer(ReplayBuffer):
                 self.storage[k][new_slots, 0] = self.storage[k][old_slots, -1]
 
     def _slot_closure(self, old_slots, new_slots):
-        # when filling the first timestep of a new slot, we should copy data into the previous slot as a bootstrap
-        # specifially, copied data includes all data except for rnn states needs to be bootstrapped (see storage specs)
+        # when filling the first timestep of a new slot, copy data into the previous slot as bootstrap values
+        # specifially, copied data includes all data needs to be bootstrapped except for rnn states (see storage specs)
         # and rewards, because rewards is 1-step behind other aligned data,
-        # i.e., env.step() returns observations of current step, and rewards of previous step
+        # i.e., env.step() returns observations of the current step, but rewards of the previous step
         for storage_spec in self.storage_specs:
             name, _, _, bootstrap, _ = storage_spec
             if 'rnn_states' not in name and bootstrap:
@@ -167,17 +187,75 @@ class WorkerBuffer(ReplayBuffer):
 
         self.rewards[old_slots, -1] = self.rewards[new_slots, 0]
 
+        # NOTE: following 2 lines for debug only
+        # with self._read_ready:
+        #     assert np.all(self._is_busy[old_slots]) and np.all(self._is_busy[new_slots])
+        super()._mark_as_readable(old_slots)
+
+
+class LearnerBuffer(ReplayBuffer):
+    def __init__(self, args, obs_space, share_obs_space, act_space):
+        self.target_num_slots = self.num_consumers_to_notify = args.num_trainers
+        self.num_slots = self.qsize
+        self.envs_per_slot = args.slots_per_update * self.envs_per_split
+        self.slots_per_update = args.slots_per_update
+
+        self.sample_reuse = args.sample_reuse
+
+        super().__init__(args, obs_space, share_obs_space, act_space)
+
+        self._used_times = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
+
+        self._ptr_lock = mp.RLock()
+        self._global_ptr = (torch.zeros(
+            (), dtype=torch.int32).share_memory_().numpy(), torch.zeros((), dtype=torch.int32).share_memory_().numpy())
+
+    def _allocate(self):
+        slot_id = super()._allocate()
+
+        self._global_ptr[0][:] = slot_id
+        self._global_ptr[1][:] = 0
+
+    def put(self, seg_dict):
+        # move pointer forward without waiting for the completion of copying
+        with self._ptr_lock:
+            slot_id = self._global_ptr[0].item()
+            position_id = self._global_ptr[1].item()
+            if position_id == self.slots_per_update - 1:
+                self._allocate()
+            else:
+                self._global_ptr[1] += 1
+
+        # copy data into main storage
+        batch_slice = slice(position_id * self.envs_per_split, position_id * (self.envs_per_split + 1))
+
+        for k, v in seg_dict.items():
+            self.storage[k][slot_id, :, batch_slice] = v
+
+        # mark the slot as readable if needed
+        if position_id == self.slots_per_update - 1:
+            with self._read_ready:
+                self._used_times[slot_id] = 0
+                super()._mark_as_readable(slot_id)
+
+    def get(self, recur=True, block=True, timeout=None):
         with self._read_ready:
-            assert np.all(self._is_busy[old_slots]) and np.all(self._is_busy[new_slots])
-            # update indicator of current slot
-            no_availble_before = np.sum(self._is_readable) < 1
-            # readable -> busy (being written)
-            self._is_readable[old_slots] = 1
-            self._is_busy[old_slots] = 0
-            self._time_stamp[old_slots] = time.time()
-            # if reader is waiting for data, notify it
-            if no_availble_before and np.sum(self._is_readable) >= 1:
-                self._read_ready.notify(1)
+            # randomly choose one slot from the newest available slots
+            slot_id = super().get(block, timeout, lambda x: np.random.choice(x[-self.target_num_slots:]))
+            # TODO: default reuse pattern is recycle, while it could be exhausting or others
+            self._time_stamp[slot_id] = np.min(self._time_stamp) - 1
+        return self.recurrent_generator(slot_id) if recur else self.feed_forward_generator(slot_id)
+
+    def close_out(self, slot_id):
+        with self._read_ready:
+            self._used_times[slot_id] += 1
+            if self._used_times[slot_id] >= self.sample_reuse:
+                self._used_times[slot_id] = 0
+                super().close_out(slot_id)
+            else:
+                self._is_readable[slot_id] = 1
+                self._is_busy[slot_id] = 0
+                assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
 
 
 class PolicyMixin:
@@ -249,7 +327,7 @@ class SharedPolicyMixin(PolicyMixin):
                                            for info in infos])
             self.fct_masks[slot_id, ep_step] = 1 - force_terminations
 
-        self.total_timesteps += self.env_per_split
+        self.total_timesteps += self.envs_per_split
 
     def insert_after_inference(self, clients, **policy_outputs):
         slots = [self._client_hash[client] for client in clients]
@@ -319,22 +397,22 @@ class SharedWorkerBuffer(WorkerBuffer, SharedPolicyMixin):
 #                                 rewards,
 #                                 dones,
 #                                 available_actions=None):
-#         assert share_obs.shape == (self.env_per_split, *self.share_obs.shape[4:]), (share_obs.shape,
-#                                                                                     (self.env_per_split,
+#         assert share_obs.shape == (self.envs_per_split, *self.share_obs.shape[4:]), (share_obs.shape,
+#                                                                                     (self.envs_per_split,
 #                                                                                      *self.share_obs.shape[4:]))
-#         assert obs.shape == (self.env_per_split, *self.obs.shape[4:]), (obs.shape, (self.env_per_split,
+#         assert obs.shape == (self.envs_per_split, *self.obs.shape[4:]), (obs.shape, (self.envs_per_split,
 #                                                                                     *self.obs.shape[4:]))
 
 #         slot_id = self._locate(server_id, split_id)
 #         ep_step = self._ep_step[server_id, split_id]
 #         agent_id = self._agent_ids[server_id, split_id]
-#         env_slice = slice(actor_id * self.env_per_split, (actor_id + 1) * self.env_per_split)
+#         env_slice = slice(actor_id * self.envs_per_split, (actor_id + 1) * self.envs_per_split)
 
 #         # env step returns
 #         self.share_obs[slot_id, ep_step, env_slice, agent_id] = share_obs
 #         self.obs[slot_id, ep_step, env_slice, agent_id] = obs
 
-#         assert rewards.shape == (self.env_per_split, self.num_agents, 1), (rewards.shape, (self.env_per_split,
+#         assert rewards.shape == (self.envs_per_split, self.num_agents, 1), (rewards.shape, (self.envs_per_split,
 #                                                                                            self.num_agents, 1))
 #         # accumulate reward first, and then record final accumulated reward when env terminates,
 #         # because if current step is 'done', reported reward is from previous transition, which
@@ -358,13 +436,13 @@ class SharedWorkerBuffer(WorkerBuffer, SharedPolicyMixin):
 #         self._reward_since_last_action[server_id, split_id, env_slice][dones.squeeze(-1)] = 0
 
 #         if available_actions is not None:
-#             assert available_actions.shape == (self.env_per_split,
+#             assert available_actions.shape == (self.envs_per_split,
 #                                                *self.available_actions.shape[4:]), (available_actions.shape,
-#                                                                                     (self.env_per_split,
+#                                                                                     (self.envs_per_split,
 #                                                                                      *self.available_actions.shape[4:]))
 #             self.available_actions[slot_id, ep_step, env_slice, agent_id] = available_actions
 
-#         assert dones.shape == (self.env_per_split, 1), (dones.shape, (self.env_per_split, 1))
+#         assert dones.shape == (self.envs_per_split, 1), (dones.shape, (self.envs_per_split, 1))
 #         assert dones.dtype == np.bool, dones.dtype
 #         # once env is done, fill the next #agents timestep with 0 to mask bootstrap values
 #         # env_done_trigger records remaining timesteps to be filled with 0
@@ -378,7 +456,7 @@ class SharedWorkerBuffer(WorkerBuffer, SharedPolicyMixin):
 #         # active_mask is always 1 because env automatically resets when any agent induces termination
 
 #         if agent_id == self.num_agents - 1:
-#             self.total_timesteps += self.env_per_split
+#             self.total_timesteps += self.envs_per_split
 
 #     def insert_after_inference(self, server_id, split_id, value_preds, actions, action_log_probs, rnn_states,
 #                                rnn_states_critic):

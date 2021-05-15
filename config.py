@@ -191,7 +191,7 @@ def get_config():
 
     # system parameters
     parser.add_argument("--num_actors", type=int, default=4)
-    parser.add_argument("--env_per_actor", type=int, default=2)
+    parser.add_argument("--envs_per_actor", type=int, default=2)
     parser.add_argument("--num_splits", type=int, default=2)
     parser.add_argument("--qsize", type=int, default=8)
     parser.add_argument("--stats_avg", type=int, default=100)

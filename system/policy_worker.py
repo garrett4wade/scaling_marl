@@ -35,10 +35,10 @@ class PolicyWorker:
         self.action_space = action_space
 
         self.num_agents = cfg.num_agents
-        self.env_per_actor = cfg.env_per_actor
+        self.envs_per_actor = cfg.envs_per_actor
         self.num_splits = cfg.num_splits
-        assert self.env_per_actor % self.num_splits == 0
-        self.env_per_split = self.env_per_actor // self.num_splits
+        assert self.envs_per_actor % self.num_splits == 0
+        self.envs_per_split = self.envs_per_actor // self.num_splits
 
         self.device = None
         self.actor_critic = None
@@ -88,8 +88,8 @@ class PolicyWorker:
                 policy_inputs = self.buffer.get_policy_inputs(self.request_clients)
 
             with timing.add_time('inference_preprosessing'):
-                rollout_bs = num_requests * self.env_per_split
-                shared = policy_inputs['obs'].shape[:3] == (num_requests, self.env_per_split, self.num_agents)
+                rollout_bs = num_requests * self.envs_per_split
+                shared = policy_inputs['obs'].shape[:3] == (num_requests, self.envs_per_split, self.num_agents)
                 if shared:
                     # all agents simultaneously advance an environment step, e.g. SMAC and MPE
                     for k, v in policy_inputs.items():
@@ -106,12 +106,12 @@ class PolicyWorker:
                 if shared:
                     # all agents simultaneously advance an environment step, e.g. SMAC and MPE
                     for k, v in policy_outputs.items():
-                        policy_outputs[k] = _t2n(v).reshape(num_requests, self.env_per_split, self.num_agents,
+                        policy_outputs[k] = _t2n(v).reshape(num_requests, self.envs_per_split, self.num_agents,
                                                             *v.shape[1:])
                 else:
                     # agent advances an environment step in turn, e.g. card games
                     for k, v in policy_outputs.items():
-                        policy_outputs[k] = _t2n(v).reshape(num_requests, self.env_per_split, *v.shape[1:])
+                        policy_outputs[k] = _t2n(v).reshape(num_requests, self.envs_per_split, *v.shape[1:])
 
             with timing.add_time('inference_insert_after_inference'):
                 self.buffer.insert_after_inference(self.request_clients, **policy_outputs)

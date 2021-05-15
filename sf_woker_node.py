@@ -143,7 +143,7 @@ class SFWorkerNode:
             workers[i] = w
             last_env_initialized[i] = time.time()
 
-        total_num_envs = self.cfg.num_actors * self.cfg.env_per_actor
+        total_num_envs = self.cfg.num_actors * self.cfg.envs_per_actor
         envs_initialized = [0] * self.cfg.num_actors
         workers_finished = set()
 

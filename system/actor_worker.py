@@ -72,10 +72,10 @@ class ActorWorker:
 
         self.terminate = False
 
-        self.env_per_actor = cfg.env_per_actor
+        self.envs_per_actor = cfg.envs_per_actor
         self.num_splits = cfg.num_splits
-        assert self.env_per_actor % self.num_splits == 0
-        self.env_per_split = self.env_per_actor // self.num_splits
+        assert self.envs_per_actor % self.num_splits == 0
+        self.envs_per_split = self.envs_per_actor // self.num_splits
 
         self.env_runners = None
 
@@ -110,8 +110,8 @@ class ActorWorker:
         for i in range(self.num_splits):
             self.env_runners.append(
                 ShareDummyVecEnv([
-                    lambda: self.env_fn(self.worker_idx * self.env_per_actor + i * self.env_per_split + j, self.cfg)
-                    for j in range(self.env_per_split)
+                    lambda: self.env_fn(self.worker_idx * self.envs_per_actor + i * self.envs_per_split + j, self.cfg)
+                    for j in range(self.envs_per_split)
                 ]))
             safe_put(self.report_queue, dict(initialized_env=(self.worker_idx, i)), queue_name='report')
 
@@ -128,8 +128,8 @@ class ActorWorker:
         """
         for split_idx, env_runner in enumerate(self.env_runners):
             policy_inputs = env_runner.reset()
-            policy_inputs['rewards'] = np.zeros((self.env_per_split, self.num_agents, 1), dtype=np.float32)
-            policy_inputs['dones'] = np.zeros((self.env_per_split, self.num_agents, 1), dtype=np.bool)
+            policy_inputs['rewards'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
+            policy_inputs['dones'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.bool)
             policy_inputs['infos'] = None
             client_id = self.client_ids[split_idx]
             self.buffer.insert_before_inference(client_id, **policy_inputs)
