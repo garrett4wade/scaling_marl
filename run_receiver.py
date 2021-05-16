@@ -32,16 +32,6 @@ def parse_args(args, parser):
     return all_args
 
 
-def build_actor_env(rank, all_args):
-    if all_args.env_name == "StarCraft2":
-        env = StarCraft2Env(all_args)
-    else:
-        print("Can not support the " + all_args.env_name + "environment.")
-        raise NotImplementedError
-    env.seed(all_args.seed + rank * 10000)
-    return env
-
-
 def make_example_env(all_args):
     def get_env_fn(rank):
         def init_env():
@@ -105,12 +95,17 @@ def main():
     all_args.observation_space = example_env.observation_space[0]
     all_args.action_space = example_env.action_space[0]
 
+    example_env.close()
+    del example_env
+
     all_args.num_agents = get_map_params(all_args.map_name)["n_agents"]
 
-    buffer = LearnerBuffer(all_args, all_args.observation_space, all_args.observation_space, all_args.action_space)
+    buffer = LearnerBuffer(all_args, all_args.observation_space, all_args.share_observation_space,
+                           all_args.action_space)
 
     socket = zmq.Context().socket(zmq.ROUTER)
-    socket.bind('tcp://*:12345')
+    seg_port = all_args.seg_addr.split(':')[-1]
+    socket.bind('tcp://*:' + seg_port)
 
     ts = []
     frame_tik = time.time()
