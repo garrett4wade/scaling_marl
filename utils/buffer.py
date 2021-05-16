@@ -218,8 +218,9 @@ class LearnerBuffer(ReplayBuffer):
         self.lmbda = np.float32(args.gae_lambda)
 
         self._use_advantage_normalization = args.use_advantage_normalization
+        self._use_recurrent_policy = args.use_recurrent_policy
 
-        if self.args.use_recurrent_policy:
+        if args.use_recurrent_policy:
             self.data_chunk_length = args.data_chunk_length
             assert self.episode_length % self.data_chunk_length == 0
             self.num_chunks = self.episode_length // self.data_chunk_length
@@ -271,7 +272,7 @@ class LearnerBuffer(ReplayBuffer):
                 super()._mark_as_readable(slot_id)
                 self.total_timesteps += np.prod(seg_dict['rewards'].shape[:2])
 
-    def get(self, recur=True, block=True, timeout=None):
+    def get(self, block=True, timeout=None):
         with self._read_ready:
             # randomly choose one slot from the oldest available slots
             slot_id = super().get(block, timeout, lambda x: np.random.choice(x[:self.target_num_slots]))
@@ -279,7 +280,7 @@ class LearnerBuffer(ReplayBuffer):
             # defer the timestamp such that the slot will be selected again
             # only after all readable slots are selected at least once
             self._time_stamp[slot_id] = np.max(self._time_stamp) + 1
-        return self.recurrent_generator(slot_id) if recur else self.feed_forward_generator(slot_id)
+        return self.recurrent_generator(slot_id) if self._use_recurrent_policy else self.feed_forward_generator(slot_id)
 
     def close_out(self, slot_id):
         with self._read_ready:
