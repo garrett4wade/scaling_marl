@@ -60,7 +60,7 @@ class PolicyWorker:
         self.initialized_event.clear()
 
         self.buffer = buffer
-        self.storage_registries = self.buffer.storage_registries
+        self.model_weights_registries = OrderedDict()
         # TODO: stop experience collection signal
 
         self.latest_policy_version = -1
@@ -137,7 +137,7 @@ class PolicyWorker:
         for i in range(len(msg) // 2):
             key, value = msg[2 * i].decode('ascii'), msg[2 * i + 1]
 
-            dtype, shape = self.storage_registries[key]
+            dtype, shape = self.model_weights_registries[key]
             tensor = torch.from_numpy(np.frombuffer(memoryview(value), dtype=dtype).reshape(*shape))
 
             state_dict[key] = tensor
@@ -195,6 +195,9 @@ class PolicyWorker:
             self.model_weights_socket = zmq.Context().socket(zmq.SUB)
             self.model_weights_socket.connect(self.cfg.model_weights_addr)
             self.model_weights_socket.setsockopt(zmq.SUBSCRIBE, b'')
+
+            for k, v in self.rollout_policy.state_dict().items():
+                self.model_weights_registries[k] = (v.shape, v.dtype)
 
             # TODO: the next line should be uncommented if a learner participates in the system
             # self._update_weights(timing, block=True)

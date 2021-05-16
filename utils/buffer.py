@@ -31,7 +31,7 @@ class ReplayBuffer:
             args, obs_space, share_obs_space, act_space)
         self.storage_keys = [storage_spec.name for storage_spec in self.storage_specs]
 
-        self.storage_registries = {}
+        self.shapes_and_dtypes = {}
 
         def shape_prefix(bootstrap):
             t = self.episode_length + 1 if bootstrap else self.episode_length
@@ -43,7 +43,8 @@ class ReplayBuffer:
             init_method = torch.zeros if init_value == 0 else torch.ones
             setattr(self, '_' + name, init_method((*shape_prefix(bootstrap), *shape), dtype=dtype).share_memory_())
             setattr(self, name, getattr(self, '_' + name).numpy())
-            self.storage_registries[name] = ((*shape_prefix(bootstrap), *shape), to_numpy_type(dtype))
+            # saved shape need to remove slot dim
+            self.shapes_and_dtypes[name] = ((*shape_prefix(bootstrap), *shape)[1:], to_numpy_type(dtype))
 
         # self._storage is torch.Tensor handle while storage is numpy.array handle
         # the 2 handles point to the same block of memory

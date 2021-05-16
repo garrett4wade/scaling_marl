@@ -128,7 +128,7 @@ def main():
             seg_dict = {}
             for i in range(len(msg) // 2):
                 k, v = msg[2 * i].decode('ascii'), msg[2 * i + 1]
-                shape, dtype = buffer.storage_registries[k]
+                shape, dtype = buffer.shapes_and_dtypes[k]
                 array = np.frombuffer(memoryview(v), dtype=dtype).reshape(*shape)
                 seg_dict[k] = array
 
