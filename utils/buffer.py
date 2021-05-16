@@ -269,6 +269,7 @@ class LearnerBuffer(ReplayBuffer):
             with self._read_ready:
                 self._used_times[slot_id] = 0
                 super()._mark_as_readable(slot_id)
+                self.total_timesteps += np.prod(seg_dict['rewards'].shape[:2])
 
     def get(self, recur=True, block=True, timeout=None):
         with self._read_ready:
