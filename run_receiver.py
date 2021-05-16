@@ -127,9 +127,10 @@ def main():
             assert len(msg) % 2 == 0
             seg_dict = {}
             for i in range(len(msg) // 2):
-                k, v = msg[2 * i], msg[2 * i + 1]
-                array = np.frombuffer(memoryview(v), dtype=np.float32)
-                seg_dict[k.decode('ascii')] = array
+                k, v = msg[2 * i].decode('ascii'), msg[2 * i + 1]
+                shape, dtype = buffer.storage_registries[k]
+                array = np.frombuffer(memoryview(v), dtype=dtype).reshape(*shape)
+                seg_dict[k] = array
 
             buffer.put(seg_dict)
 
