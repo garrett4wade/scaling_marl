@@ -211,8 +211,7 @@ class LearnerBuffer(ReplayBuffer):
         self._used_times = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
 
         self._ptr_lock = mp.RLock()
-        self._global_ptr = (torch.zeros(
-            (), dtype=torch.int32).share_memory_().numpy(), torch.zeros((), dtype=torch.int32).share_memory_().numpy())
+        self._global_ptr = torch.zeros((2, ), dtype=torch.int32).share_memory_().numpy()
 
         self.gamma = np.float32(args.gamma)
         self.lmbda = np.float32(args.gae_lambda)
@@ -246,8 +245,8 @@ class LearnerBuffer(ReplayBuffer):
     def _allocate(self):
         slot_id = super()._allocate()
 
-        self._global_ptr[0][:] = slot_id
-        self._global_ptr[1][:] = 0
+        self._global_ptr[0] = slot_id
+        self._global_ptr[1] = 0
 
     def put(self, seg_dict):
         # move pointer forward without waiting for the completion of copying
