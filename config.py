@@ -65,8 +65,6 @@ def get_config():
             or else, will use xavier uniform inilialization.
         --gain
             by default 0.01, use the gain # of last action layer
-        --use_naive_recurrent_policy
-            by default False, use the whole trajectory to calculate hidden states.
         --use_recurrent_policy
             by default, use Recurrent Policy. If set, do not use.
         --recurrent_N <int>
@@ -289,6 +287,10 @@ def get_config():
                         action='store_false',
                         default=True,
                         help="by default, clip loss value. If set, do not clip loss value.")
+    parser.add_argument("--use_advantage_normalization",
+                        action='store_false',
+                        default=True,
+                        help="by default, use advantage normalization.")
     parser.add_argument("--clip_param", type=float, default=0.2, help='ppo clip parameter (default: 0.2)')
     parser.add_argument("--num_mini_batch", type=int, default=1, help='number of batches for ppo (default: 1)')
     parser.add_argument("--entropy_coef", type=float, default=0.01, help='entropy term coefficient (default: 0.01)')

@@ -4,6 +4,9 @@ import numpy as np
 import multiprocessing as mp
 from queue import Empty
 from algorithms.storage_registries import get_ppo_storage_specs, to_numpy_type
+from algorithms.utils.modules import compute_gae, masked_normalization
+from utils.utils import log
+from algorithms.utils.transforms import flatten, to_chunk, select
 
 
 class ReplayBuffer:
@@ -54,7 +57,6 @@ class ReplayBuffer:
         assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
 
         self._time_stamp = torch.zeros((self.num_slots, ), dtype=torch.float32).share_memory_().numpy()
-        self._time_stamp[:] = np.inf
 
         self._read_ready = mp.Condition(mp.RLock())
 
@@ -70,9 +72,11 @@ class ReplayBuffer:
             else:
                 readable_slots = np.nonzero(self._is_readable)[0]
                 assert len(readable_slots) > 0, 'please increase qsize!'
-                slot_id = readable_slots[0]
+                # replace the oldest readable slot, in a FIFO pattern
+                slot_id = readable_slots[np.argsort(self._time_stamp[readable_slots])[0]]
                 # readable -> busy
                 self._is_readable[slot_id] = 0
+                self._time_stamp[slot_id] = 0
             self._is_busy[slot_id] = 1
             assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
         return slot_id
@@ -130,7 +134,7 @@ class ReplayBuffer:
             # reset indicator, busy (being-read) -> writable
             self._is_busy[slot_id] = 0
             self._is_writable[slot_id] = 1
-            self._time_stamp[slot_id] = np.inf
+            self._time_stamp[slot_id] = 0
             assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
 
 
@@ -210,6 +214,34 @@ class LearnerBuffer(ReplayBuffer):
         self._global_ptr = (torch.zeros(
             (), dtype=torch.int32).share_memory_().numpy(), torch.zeros((), dtype=torch.int32).share_memory_().numpy())
 
+        self.gamma = np.float32(args.gamma)
+        self.lmbda = np.float32(args.gae_lambda)
+
+        self._use_advantage_normalization = args.use_advantage_normalization
+
+        if self.args.use_recurrent_policy:
+            self.data_chunk_length = args.data_chunk_length
+            assert self.episode_length % self.data_chunk_length == 0
+            self.num_chunks = self.episode_length // self.data_chunk_length
+
+            self.batch_size = self.envs_per_slot * self.num_chunks * self.num_agents
+
+            log.info('Use recurrent policy. Batch size: %d envs * %d chunks with length %d * %d agents = %d',
+                     self.envs_per_slot, self.num_chunks, self.data_chunk_length, self.num_agents, self.batch_size)
+
+        else:
+            self.batch_size = self.envs_per_slot * self.episode_length * self.num_agents
+            log.info('Use feed forward policy. Batch size: %d envs * %d timesteps * %d agents = %d', self.envs_per_slot,
+                     self.episode_length, self.num_agents, self.batch_size)
+
+        self.num_mini_batch = args.num_mini_batch
+        assert self.batch_size >= self.num_mini_batch and self.batch_size % self.num_mini_batch == 0
+        self.mini_batch_size = self.batch_size // self.num_mini_batch
+
+        if self.num_mini_batch > 1:
+            log.info('Split a whole batch into %d minibatches. Each has size %d', self.num_mini_batch,
+                     self.mini_batch_size)
+
     def _allocate(self):
         slot_id = super()._allocate()
 
@@ -240,10 +272,12 @@ class LearnerBuffer(ReplayBuffer):
 
     def get(self, recur=True, block=True, timeout=None):
         with self._read_ready:
-            # randomly choose one slot from the newest available slots
-            slot_id = super().get(block, timeout, lambda x: np.random.choice(x[-self.target_num_slots:]))
-            # TODO: default reuse pattern is recycle, while it could be exhausting or others
-            self._time_stamp[slot_id] = np.min(self._time_stamp) - 1
+            # randomly choose one slot from the oldest available slots
+            slot_id = super().get(block, timeout, lambda x: np.random.choice(x[:self.target_num_slots]))
+            # TODO: default reuse pattern is recycle, while it could be set to 'exhausting' or others
+            # defer the timestamp such that the slot will be selected again
+            # only after all readable slots are selected at least once
+            self._time_stamp[slot_id] = np.max(self._time_stamp) + 1
         return self.recurrent_generator(slot_id) if recur else self.feed_forward_generator(slot_id)
 
     def close_out(self, slot_id):
@@ -256,6 +290,88 @@ class LearnerBuffer(ReplayBuffer):
                 self._is_readable[slot_id] = 1
                 self._is_busy[slot_id] = 0
                 assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
+
+    def feed_forward_generator(self, slot):
+        output_tensors = {}
+
+        # TODO: add popart
+        # compute value targets and advantages every time learner fetches data, because as the same slot
+        # is reused, we need to recompute values of corresponding observations
+        gae_return = compute_gae(self.rewards[slot], self.values[slot], self.masks[slot], self.fct_masks[slot],
+                                 self.gamma, self.lmbda)
+        v_target, advantage = gae_return.v_target, gae_return.advantage
+        if self._use_advantage_normalization:
+            advantage = masked_normalization(gae_return.advantage, self.active_masks[slot, :-1])
+
+        for k in self.storage_keys:
+            if 'rnn_states' not in k and k != 'fct_masks' and k != 'rewards':
+                # flatten first 3 dims
+                # [T, B, A, D] -> [T * B * A, D]
+                output_tensors[k] = flatten(self.storage[k][slot, :self.episode_length], 3)
+
+        output_tensors['v_target'] = v_target
+        output_tensors['advantages'] = advantage
+
+        # NOTE: following 2 lines are for debuggin only, which WILL SIGNIFICANTLY AFFECT PERFORMANCE
+        # for k, v in output_tensors.items():
+        #     assert np.all(1 - np.isnan(v)) and np.all(1 - np.isinf(v)), k
+
+        if self.num_mini_batch == 1:
+            yield output_tensors
+        else:
+            rand = torch.randperm(self.batch_size).numpy()
+            indices = [
+                rand[i * self.mini_batch_size:(i + 1) * self.mini_batch_size] for i in range(self.num_mini_batch)
+            ]
+            for indice in indices:
+                yield {k: v[indice] for k, v in output_tensors.items()}
+
+    def recurrent_generator(self, slot):
+        # TODO: add popart
+        output_tensors = {}
+
+        # TODO: add popart
+        # compute value targets and advantages every time learner fetches data, because as the same slot
+        # is reused, we need to recompute values of corresponding observations
+        gae_return = compute_gae(self.rewards[slot], self.values[slot], self.masks[slot], self.fct_masks[slot],
+                                 self.gamma, self.lmbda)
+        v_target, advantage = gae_return.v_target, gae_return.advantage
+        if self._use_advantage_normalization:
+            advantage = masked_normalization(gae_return.advantage, self.active_masks[slot, :-1])
+
+        def _cast(x):
+            # [T, B, A, D] -> [T, B * A, D] -> [L, B * A * (T/L), D]
+            x = x.reshape(x.shape[0], -1, *x.shape[3:])
+            return to_chunk(x, self.num_chunks)
+
+        def _cast_h(h):
+            # [T, B, A, rN, D] -> [T/L, B, A, rN, D] -> [T/L * B * A, rN, D] -> [rN, T/L * B * A, D]
+            h = select(h, self.num_chunks)
+            return h.reshape(-1, *h.shape[3:]).swapaxes(0, 1)
+
+        for k in self.storage_keys:
+            if k != 'fct_masks' and k != 'rewards':
+                if 'rnn_states' not in k:
+                    output_tensors[k] = _cast(self.storage[k][slot, :self.episode_length])
+                else:
+                    output_tensors[k] = _cast_h(self.storage[k][slot, :self.episode_length])
+
+        output_tensors['v_target'] = v_target
+        output_tensors['advantages'] = advantage
+
+        # NOTE: following 2 lines are for debuggin only, which WILL SIGNIFICANTLY AFFECT PERFORMANCE
+        # for k, v in output_tensors.items():
+        #     assert np.all(1 - np.isnan(v)) and np.all(1 - np.isinf(v)), k
+
+        if self.num_mini_batch == 1:
+            yield output_tensors
+        else:
+            rand = torch.randperm(self.batch_size).numpy()
+            indices = [
+                rand[i * self.mini_batch_size:(i + 1) * self.mini_batch_size] for i in range(self.num_mini_batch)
+            ]
+            for indice in indices:
+                yield {k: v[indice] for k, v in output_tensors.items()}
 
 
 class PolicyMixin:
