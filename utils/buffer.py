@@ -144,8 +144,8 @@ class WorkerBuffer(ReplayBuffer):
         # e.g. V-trace and Retrace
         self.target_num_slots = 1
         self.num_consumers_to_notify = 1
-        self.num_slots = self.qsize * self.num_splits * self.num_actors
-        self.envs_per_slot = self.envs_per_split
+        self.num_slots = args.qsize * args.num_splits * args.num_actors
+        self.envs_per_slot = args.envs_per_split
 
         super().__init__(args, obs_space, share_obs_space, act_space)
 
@@ -200,8 +200,8 @@ class WorkerBuffer(ReplayBuffer):
 class LearnerBuffer(ReplayBuffer):
     def __init__(self, args, obs_space, share_obs_space, act_space):
         self.target_num_slots = self.num_consumers_to_notify = args.num_trainers
-        self.num_slots = self.qsize
-        self.envs_per_slot = args.slots_per_update * self.envs_per_split
+        self.num_slots = args.qsize
+        self.envs_per_slot = args.slots_per_update * args.envs_per_split
         self.slots_per_update = args.slots_per_update
 
         self.sample_reuse = args.sample_reuse
