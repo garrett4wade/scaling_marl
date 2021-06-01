@@ -102,6 +102,8 @@ def main():
         0] if all_args.use_centralized_V else example_env.observation_space[0]
     all_args.observation_space = example_env.observation_space[0]
     all_args.action_space = example_env.action_space[0]
+    example_env.close()
+    del example_env
 
     all_args.num_agents = get_map_params(all_args.map_name)["n_agents"]
 

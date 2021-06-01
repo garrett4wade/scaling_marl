@@ -202,7 +202,10 @@ class LearnerBuffer(ReplayBuffer):
     def __init__(self, args, obs_space, share_obs_space, act_space):
         self.target_num_slots = self.num_consumers_to_notify = args.num_trainers
         self.num_slots = args.qsize
+        # concatenate several slots from workers into a single batch,
+        # which will be then sent to GPU for optimziation
         self.envs_per_slot = args.slots_per_update * args.envs_per_actor // args.num_splits
+
         self.slots_per_update = args.slots_per_update
 
         self.sample_reuse = args.sample_reuse
@@ -227,13 +230,13 @@ class LearnerBuffer(ReplayBuffer):
 
             self.batch_size = self.envs_per_slot * self.num_chunks * self.num_agents
 
-            log.info('Use recurrent policy. Batch size: %d envs * %d chunks with length %d * %d agents = %d',
+            log.info('Use recurrent policy. Batch size: {%d envs} * {%d chunks with length %d} * {%d agents} = %d',
                      self.envs_per_slot, self.num_chunks, self.data_chunk_length, self.num_agents, self.batch_size)
 
         else:
             self.batch_size = self.envs_per_slot * self.episode_length * self.num_agents
-            log.info('Use feed forward policy. Batch size: %d envs * %d timesteps * %d agents = %d', self.envs_per_slot,
-                     self.episode_length, self.num_agents, self.batch_size)
+            log.info('Use feed forward policy. Batch size: {%d envs} * {%d timesteps} * {%d agents} = %d',
+                     self.envs_per_slot, self.episode_length, self.num_agents, self.batch_size)
 
         self.num_mini_batch = args.num_mini_batch
         assert self.batch_size >= self.num_mini_batch and self.batch_size % self.num_mini_batch == 0
@@ -265,12 +268,13 @@ class LearnerBuffer(ReplayBuffer):
         for k, v in seg_dict.items():
             self.storage[k][slot_id, :, batch_slice] = v
 
+        self.total_timesteps += np.prod(seg_dict['rewards'].shape[:2])
+
         # mark the slot as readable if needed
         if position_id == self.slots_per_update - 1:
             with self._read_ready:
                 self._used_times[slot_id] = 0
                 super()._mark_as_readable(slot_id)
-                self.total_timesteps += np.prod(seg_dict['rewards'].shape[:2])
 
     def get(self, block=True, timeout=None):
         with self._read_ready:
