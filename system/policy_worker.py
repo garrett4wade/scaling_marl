@@ -232,59 +232,63 @@ class PolicyWorker:
                 #         self.resume_experience_collection_cv.wait(timeout=0.05)
 
                 waiting_started = time.time()
-                with timing.time_avg('wait_for_envstep'), timing.add_time('waiting'):
+                with timing.time_avg('waiting_avg'), timing.add_time('waiting'):
                     while len(self.request_clients
                               ) < min_num_requests and time.time() - waiting_started < wait_for_min_requests:
                         try:
-                            policy_requests = self.policy_queue.get_many(timeout=0.005)
-                            self.request_clients.extend(policy_requests)
+                            with timing.add_time('get_many'):
+                                policy_requests = self.policy_queue.get_many(timeout=0.005)
+                                self.request_clients.extend(policy_requests)
                         except Empty:
                             pass
 
-                self._update_weights(timing)
+                with timing.add_time('update_weights'):
+                    if len(self.request_clients) > 0:
+                        self._update_weights(timing)
 
-                with timing.time_avg('one_inference_step'), timing.add_time('inference'):
+                with timing.time_avg('inference_avg'), timing.add_time('inference'):
                     if self.initialized and len(self.request_clients) > 0:
                         request_count.append(len(self.request_clients))
                         self._handle_policy_steps(timing)
 
-                try:
-                    task_type, data = self.task_queue.get_nowait()
+                with timing.add_time('extra_jobs'):
+                    try:
+                        task_type, data = self.task_queue.get_nowait()
 
-                    # task from the task_queue
-                    if task_type == TaskType.INIT:
-                        self._init()
-                    elif task_type == TaskType.TERMINATE:
-                        self.terminate = True
-                        break
-                    elif task_type == TaskType.INIT_MODEL:
-                        self._init_model(data)
+                        # task from the task_queue
+                        if task_type == TaskType.INIT:
+                            self._init()
+                        elif task_type == TaskType.TERMINATE:
+                            self.terminate = True
+                            break
+                        elif task_type == TaskType.INIT_MODEL:
+                            self._init_model(data)
 
-                    self.task_queue.task_done()
-                except Empty:
-                    pass
+                        self.task_queue.task_done()
+                    except Empty:
+                        pass
 
-                if time.time() - last_report > 3.0 and 'one_inference_step' in timing:
-                    timing_stats = dict(wait_policy=timing.wait_for_envstep, step_policy=timing.one_inference_step)
-                    samples_since_last_report = self.total_num_samples - last_report_samples
+                    if time.time() - last_report > 3.0 and 'one_inference_step' in timing:
+                        timing_stats = dict(wait_policy=timing.wait_for_envstep, step_policy=timing.one_inference_step)
+                        samples_since_last_report = self.total_num_samples - last_report_samples
 
-                    stats = memory_stats('policy_worker', self.device)
-                    if len(request_count) > 0:
-                        stats['avg_request_count'] = np.mean(request_count)
+                        stats = memory_stats('policy_worker', self.device)
+                        if len(request_count) > 0:
+                            stats['avg_request_count'] = np.mean(request_count)
 
-                    self.report_queue.put(dict(
-                        timing=timing_stats,
-                        samples=samples_since_last_report,
-                        stats=stats,
-                    ))
-                    last_report = time.time()
-                    last_report_samples = self.total_num_samples
+                        self.report_queue.put(dict(
+                            timing=timing_stats,
+                            samples=samples_since_last_report,
+                            stats=stats,
+                        ))
+                        last_report = time.time()
+                        last_report_samples = self.total_num_samples
 
-                if time.time() - last_cache_cleanup > 300.0 or (not self.cfg.benchmark
-                                                                and self.total_num_samples < 1000):
-                    if self.cfg.cuda:
-                        torch.cuda.empty_cache()
-                    last_cache_cleanup = time.time()
+                    if time.time() - last_cache_cleanup > 300.0 or (not self.cfg.benchmark
+                                                                    and self.total_num_samples < 1000):
+                        if self.cfg.cuda:
+                            torch.cuda.empty_cache()
+                        last_cache_cleanup = time.time()
 
             except KeyboardInterrupt:
                 log.warning('Keyboard interrupt detected on worker %d', self.worker_idx)

@@ -224,12 +224,13 @@ class ActorWorker:
                             with timing.add_time('first_reset'):
                                 self._handle_reset()
 
-                    if time.time() - last_report > 5.0 and 'one_env_step' in timing:
-                        timing_stats = dict(wait_actor=timing.wait_for_inference, step_actor=timing.one_env_step)
-                        memory_mb = memory_consumption_mb()
-                        stats = dict(memory_actor=memory_mb)
-                        safe_put(self.report_queue, dict(timing=timing_stats, stats=stats), queue_name='report')
-                        last_report = time.time()
+                    with timing.add_time('extra_jobs'):
+                        if time.time() - last_report > 5.0 and 'one_env_step' in timing:
+                            timing_stats = dict(wait_actor=timing.wait_for_inference, step_actor=timing.one_env_step)
+                            memory_mb = memory_consumption_mb()
+                            stats = dict(memory_actor=memory_mb)
+                            safe_put(self.report_queue, dict(timing=timing_stats, stats=stats), queue_name='report')
+                            last_report = time.time()
 
                 except RuntimeError as exc:
                     log.warning('Error while processing data w: %d, exception: %s', self.worker_idx, exc)

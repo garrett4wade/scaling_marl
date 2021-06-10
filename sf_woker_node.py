@@ -71,9 +71,10 @@ class SFWorkerNode:
         self.policy_workers = []
         self.transmitters = []
 
+        # faster_fifo queue is initialized using BYTES!
         self.report_queue = MpQueue(40 * 1000 * 1000)
         # TODO: policy queue -> policy queues to support PBT
-        self.policy_queue = MpQueue()
+        self.policy_queues = [MpQueue() for _ in range(self.cfg.num_policy_workers)]
 
         self.policy_avg_stats = dict()
 
@@ -107,6 +108,9 @@ class SFWorkerNode:
         pass
 
     def create_actor_worker(self, idx, actor_queue):
+        num_actors_per_queue = self.cfg.num_actors // self.cfg.num_policy_workers
+        policy_queue_idx = idx // num_actors_per_queue
+        print('#####################', policy_queue_idx)
         return ActorWorker(
             self.cfg,
             self.env_fn,
@@ -114,7 +118,7 @@ class SFWorkerNode:
             idx,
             self.buffer,
             task_queue=actor_queue,
-            policy_queue=self.policy_queue,
+            policy_queue=self.policy_queues[policy_queue_idx],
             report_queue=self.report_queue,
         )
 
@@ -223,7 +227,7 @@ class SFWorkerNode:
                 self.share_obs_space,
                 self.action_space,
                 self.buffer,
-                self.policy_queue,
+                self.policy_queues[i],
                 actor_queues,
                 self.report_queue,
                 policy_worker_queues[i],
