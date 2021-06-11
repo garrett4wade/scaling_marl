@@ -20,10 +20,9 @@ class ReplayBuffer:
 
         self.actor2policy_worker = {}
         assert self.num_actors % args.num_policy_workers == 0
-        num_actors_per_policy_worker = self.num_actors // args.num_policy_workers
+        self.num_actors_per_policy_worker = self.num_actors // args.num_policy_workers
         for actor_id in range(self.num_actors):
-            self.actor2policy_worker[actor_id] = actor_id // num_actors_per_policy_worker
-        print(self.actor2policy_worker)
+            self.actor2policy_worker[actor_id] = actor_id // self.num_actors_per_policy_worker
 
         # storage shape configuration
         self.num_agents = args.num_agents
@@ -153,7 +152,7 @@ class WorkerBuffer(ReplayBuffer):
         self.target_num_slots = 1
         self.num_consumers_to_notify = 1
         self.num_slots = args.qsize
-        self.envs_per_slot = args.num_actors * args.envs_per_actor // args.num_splits
+        self.envs_per_slot = args.num_actors * args.envs_per_actor // args.num_splits // args.num_policy_workers
 
         super().__init__(args, obs_space, share_obs_space, act_space)
 
@@ -415,7 +414,8 @@ class SharedPolicyMixin(PolicyMixin):
         policy_worker_id = self.actor2policy_worker[actor_id]
         slot_id = self._slot_hash[(policy_worker_id, split_id)]
         ep_step = self._ep_step[slot_id]
-        env_slice = slice(actor_id * self.envs_per_split, (actor_id+1) * self.envs_per_split)
+        local_actor_id = actor_id % self.num_actors_per_policy_worker
+        env_slice = slice(local_actor_id * self.envs_per_split, (local_actor_id+1) * self.envs_per_split)
 
         if ep_step == 0:
             prev_slot_id = self._prev_slot_hash[(policy_worker_id, split_id)]
@@ -439,7 +439,8 @@ class SharedPolicyMixin(PolicyMixin):
             self._allocate(policy_worker_id, split_id)
         slot_id = self._slot_hash[(policy_worker_id, split_id)]
         ep_step = self._ep_step[slot_id]
-        env_slice = slice(actor_id * self.envs_per_split, (actor_id+1) * self.envs_per_split)
+        local_actor_id = actor_id % self.num_actors_per_policy_worker
+        env_slice = slice(local_actor_id * self.envs_per_split, (local_actor_id+1) * self.envs_per_split)
 
         # env step returns
         self.share_obs[slot_id, ep_step, env_slice] = share_obs
