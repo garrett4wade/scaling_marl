@@ -131,15 +131,14 @@ class ActorWorker:
             policy_inputs['rewards'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
             policy_inputs['dones'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.bool)
             policy_inputs['infos'] = None
-            client_id = self.client_ids[split_idx]
-            self.buffer.insert_before_inference(client_id, **policy_inputs)
-            self.policy_queue.put(client_id)
+            self.buffer.insert_before_inference(self.worker_idx, split_idx, **policy_inputs)
+            self.policy_queue.put(self.client_ids[split_idx])
 
         log.info('Finished reset for worker %d', self.worker_idx)
         # TODO: figure out what report queue is doing
         safe_put(self.report_queue, dict(finished_reset=self.worker_idx), queue_name='report')
 
-    def _advance_rollouts(self, client_id, timing):
+    def _advance_rollouts(self, split_idx, timing):
         """
         Process incoming request from policy worker. Use the data (policy outputs, actions) to advance the simulation
         by one step on the corresponding VectorEnvRunner.
@@ -150,23 +149,21 @@ class ActorWorker:
         :param data: request from the policy worker, containing actions and other policy outputs
         :param timing: profiling stuff
         """
-        split_idx = client_id % self.num_splits
-
         env = self.env_runners[split_idx]
 
         with timing.add_time('envstep_get_action'):
-            actions = self.buffer.get_actions(client_id)
+            actions = self.buffer.get_actions(self.worker_idx, split_idx)
 
         with timing.add_time('envstep_simulation'):
             envstep_outputs = env.step(actions)
 
         with timing.add_time('envstep_insert_before_inference'):
-            self.buffer.insert_before_inference(client_id, **envstep_outputs)
+            self.buffer.insert_before_inference(self.worker_idx, split_idx, **envstep_outputs)
 
         # TODO: deal with episodic summary data
 
         with timing.add_time('envstep_enqueue_policy_requests'):
-            self.policy_queue.put(client_id)
+            self.policy_queue.put(self.client_ids[split_idx])
 
     def _run(self):
         """

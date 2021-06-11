@@ -40,6 +40,10 @@ class PolicyWorker:
         assert self.envs_per_actor % self.num_splits == 0
         self.envs_per_split = self.envs_per_actor // self.num_splits
 
+        self.num_actors_per_policy_worker = self.cfg.num_actors // self.cfg.num_policy_workers
+        self.actor_cnt = np.array([0 for _ in range(self.num_splits)])
+        self.ready_split_id = -1
+
         self.device = None
         self.actor_critic = None
         self.policy_lock = policy_lock
@@ -66,8 +70,6 @@ class PolicyWorker:
         self.latest_policy_version = -1
         self.num_policy_updates = 0
 
-        self.request_clients = []
-
         self.total_num_samples = 0
 
         self.process = TorchProcess(target=self._run, daemon=True)
@@ -82,22 +84,20 @@ class PolicyWorker:
 
     def _handle_policy_steps(self, timing):
         with torch.no_grad():
-            num_requests = len(self.request_clients)
-            # NOTE: self.request_clients will not change throughout this function
             with timing.add_time('inference_prepare_policy_inputs'):
-                policy_inputs = self.buffer.get_policy_inputs(self.request_clients)
+                policy_inputs = self.buffer.get_policy_inputs(self.worker_idx, self.ready_split_id)
 
             with timing.add_time('inference_preprosessing'):
-                rollout_bs = num_requests * self.envs_per_split
-                shared = policy_inputs['obs'].shape[:3] == (num_requests, self.envs_per_split, self.num_agents)
+                rollout_bs = self.num_actors_per_policy_worker * self.envs_per_split
+                shared = policy_inputs['obs'].shape[:2] == (rollout_bs, self.num_agents)
                 if shared:
                     # all agents simultaneously advance an environment step, e.g. SMAC and MPE
                     for k, v in policy_inputs.items():
-                        policy_inputs[k] = v.reshape(rollout_bs * self.num_agents, *v.shape[3:])
+                        policy_inputs[k] = v.reshape(rollout_bs * self.num_agents, *v.shape[2:])
                 else:
                     # agent advances an environment step in turn, e.g. card games
                     for k, v in policy_inputs.items():
-                        policy_inputs[k] = v.reshape(rollout_bs, *v.shape[2:])
+                        policy_inputs[k] = v
 
             with timing.add_time('inference_to_device_and_inference'):
                 policy_outputs = self.rollout_policy.get_actions(**policy_inputs)
@@ -106,21 +106,19 @@ class PolicyWorker:
                 if shared:
                     # all agents simultaneously advance an environment step, e.g. SMAC and MPE
                     for k, v in policy_outputs.items():
-                        policy_outputs[k] = _t2n(v).reshape(num_requests, self.envs_per_split, self.num_agents,
-                                                            *v.shape[1:])
+                        policy_outputs[k] = _t2n(v).reshape(rollout_bs, self.num_agents, *v.shape[1:])
                 else:
                     # agent advances an environment step in turn, e.g. card games
                     for k, v in policy_outputs.items():
-                        policy_outputs[k] = _t2n(v).reshape(num_requests, self.envs_per_split, *v.shape[1:])
+                        policy_outputs[k] = _t2n(v)
 
             with timing.add_time('inference_insert_after_inference'):
-                self.buffer.insert_after_inference(self.request_clients, **policy_outputs)
-                for ready_client in self.request_clients:
-                    actor_id, _ = ready_client // self.num_splits, ready_client % self.num_splits
-                    # TODO: specify task type
-                    self.actor_queues[actor_id].put((TaskType.ROLLOUT_STEP, ready_client))
+                self.buffer.insert_after_inference(self.worker_idx, self.ready_split_id, **policy_outputs)
+                for actor_queue in self.actor_queues:
+                    actor_queue.put((TaskType.ROLLOUT_STEP, self.ready_split_id))
 
-        self.request_clients = []
+        self.actor_cnt[self.ready_split_id] = 0
+        self.ready_split_id = -1
         self.total_num_samples += rollout_bs
 
     def _update_weights(self, timing, block=False):
@@ -205,24 +203,6 @@ class PolicyWorker:
 
         last_report = last_cache_cleanup = time.time()
         last_report_samples = 0
-        request_count = deque(maxlen=50)
-
-        # TODO: system throughput does not increase as num_policy_worker increases
-        # very conservative limit on the minimum number of requests to wait for
-        # this will almost guarantee that the system will continue collecting experience
-        # at max rate even when 2/3 of workers are stuck for some reason (e.g. doing a long env reset)
-        # Although if your workflow involves very lengthy operations that often freeze workers, it can be beneficial
-        # to set min_num_requests to 1 (at a cost of potential inefficiency, i.e. policy worker will use very small
-        # batches)
-        min_num_requests = self.cfg.min_num_requests
-        if min_num_requests is None or min_num_requests == -1:
-            min_num_requests = self.cfg.num_actors // self.cfg.num_policy_workers
-            min_num_requests //= 3
-            min_num_requests = max(1, min_num_requests)
-        log.info('Min num requests: %d', min_num_requests)
-
-        # Again, very conservative timer. Only wait a little bit, then continue operation.
-        wait_for_min_requests = 0.025
 
         while not self.terminate:
             try:
@@ -233,22 +213,23 @@ class PolicyWorker:
 
                 waiting_started = time.time()
                 with timing.time_avg('waiting_avg'), timing.add_time('waiting'):
-                    while len(self.request_clients
-                              ) < min_num_requests and time.time() - waiting_started < wait_for_min_requests:
+                    while np.all(self.actor_cnt < self.num_actors_per_policy_worker):
                         try:
-                            with timing.add_time('get_many'):
-                                policy_requests = self.policy_queue.get_many(timeout=0.005)
-                                self.request_clients.extend(policy_requests)
+                            policy_requests = self.policy_queue.get_many(timeout=0.005)
+                            for client_id in policy_requests:
+                                split_id = client_id % self.num_splits
+                                self.actor_cnt[split_id] += 1
+                                if self.actor_cnt[split_id] >= self.num_actors_per_policy_worker:
+                                    self.ready_split_id = split_id
                         except Empty:
                             pass
 
                 with timing.add_time('update_weights'):
-                    if len(self.request_clients) > 0:
+                    if self.ready_split_id >= 0:
                         self._update_weights(timing)
 
                 with timing.time_avg('inference_avg'), timing.add_time('inference'):
-                    if self.initialized and len(self.request_clients) > 0:
-                        request_count.append(len(self.request_clients))
+                    if self.initialized and self.ready_split_id >= 0:
                         self._handle_policy_steps(timing)
 
                 with timing.add_time('extra_jobs'):
@@ -273,8 +254,6 @@ class PolicyWorker:
                         samples_since_last_report = self.total_num_samples - last_report_samples
 
                         stats = memory_stats('policy_worker', self.device)
-                        if len(request_count) > 0:
-                            stats['avg_request_count'] = np.mean(request_count)
 
                         self.report_queue.put(dict(
                             timing=timing_stats,
@@ -299,7 +278,7 @@ class PolicyWorker:
 
         self.model_weights_socket.close()
         time.sleep(0.2)
-        log.info('Policy worker avg. requests %.2f, timing: %s', np.mean(request_count), timing)
+        log.info('Policy worker timing: %s', timing)
 
     def init(self):
         self.task_queue.put((TaskType.INIT, None))

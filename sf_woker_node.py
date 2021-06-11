@@ -219,6 +219,7 @@ class SFWorkerNode:
 
         log.info('Initializing policy workers...')
 
+        num_actors_per_policy_worker = self.cfg.num_actors // self.cfg.num_policy_workers
         for i in range(self.cfg.num_policy_workers):
             policy_worker = PolicyWorker(
                 i,
@@ -228,7 +229,7 @@ class SFWorkerNode:
                 self.action_space,
                 self.buffer,
                 self.policy_queues[i],
-                actor_queues,
+                actor_queues[i*num_actors_per_policy_worker:(i+1)*num_actors_per_policy_worker],
                 self.report_queue,
                 policy_worker_queues[i],
                 policy_lock,
