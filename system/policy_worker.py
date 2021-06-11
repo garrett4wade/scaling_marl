@@ -213,7 +213,7 @@ class PolicyWorker:
 
                 waiting_started = time.time()
                 with timing.time_avg('waiting_avg'), timing.add_time('waiting'):
-                    while np.all(self.actor_cnt < self.num_actors_per_policy_worker):
+                    while np.all(self.actor_cnt < self.num_actors_per_policy_worker) and not self.terminate and time.time() - waiting_started < 0.025:
                         try:
                             policy_requests = self.policy_queue.get_many(timeout=0.005)
                             for client_id in policy_requests:
