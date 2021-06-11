@@ -268,8 +268,8 @@ class PolicyWorker:
                     except Empty:
                         pass
 
-                    if time.time() - last_report > 3.0 and 'one_inference_step' in timing:
-                        timing_stats = dict(wait_policy=timing.wait_for_envstep, step_policy=timing.one_inference_step)
+                    if time.time() - last_report > 3.0 and 'inference_avg' in timing:
+                        timing_stats = dict(wait_policy=timing.waiting_avg, step_policy=timing.inference_avg)
                         samples_since_last_report = self.total_num_samples - last_report_samples
 
                         stats = memory_stats('policy_worker', self.device)
