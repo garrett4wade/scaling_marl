@@ -24,7 +24,7 @@ def _t2n(x):
 
 class PolicyWorker:
     def __init__(self, worker_idx, cfg, obs_space, share_obs_space, action_space, buffer, policy_queue, actor_queues,
-                 report_queue, task_queue, policy_lock, resume_experience_collection_cv):
+                 report_queue, task_queue, policy_lock, resume_experience_collection_cv, act_shms, act_semaphores):
         log.info('Initializing policy worker %d', worker_idx)
 
         self.worker_idx = worker_idx
@@ -54,6 +54,9 @@ class PolicyWorker:
         self.policy_queue = policy_queue
         self.actor_queues = actor_queues
         self.report_queue = report_queue
+
+        self.act_shms = act_shms
+        self.act_semaphores = act_semaphores
 
         # queue other components use to talk to this particular worker
         self.task_queue = task_queue
@@ -112,10 +115,14 @@ class PolicyWorker:
                     for k, v in policy_outputs.items():
                         policy_outputs[k] = _t2n(v)
 
+            with timing.add_time('inference_copy_actions'):
+                for i, (shm_pair, semaphore_pair) in enumerate(zip(self.act_shms, self.act_semaphores)):
+                    env_slice = slice(i * self.envs_per_split, (i + 1) * self.envs_per_split)
+                    shm_pair[self.ready_split_id][:] = policy_outputs['actions'][env_slice]
+                    semaphore_pair[self.ready_split_id].release()
+            
             with timing.add_time('inference_insert_after_inference'):
                 self.buffer.insert_after_inference(self.worker_idx, self.ready_split_id, **policy_outputs)
-                for actor_queue in self.actor_queues:
-                    actor_queue.put((TaskType.ROLLOUT_STEP, self.ready_split_id))
 
         self.actor_cnt[self.ready_split_id] = 0
         self.ready_split_id = -1

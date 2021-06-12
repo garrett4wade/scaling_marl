@@ -76,6 +76,11 @@ class SFWorkerNode:
         # TODO: policy queue -> policy queues to support PBT
         self.policy_queues = [MpQueue() for _ in range(self.cfg.num_policy_workers)]
 
+        # TODO: here we only consider actions for policy-sharing
+        act_shape = (self.cfg.envs_per_actor // self.cfg.num_splits, self.num_agents, 1)
+        self.act_shms = [[torch.zeros(act_shape, dtype=torch.int32).share_memory_().numpy() for _ in range(self.cfg.num_splits)] for _ in range(self.cfg.num_actors)]
+        self.act_semaphores = [[multiprocessing.Semaphore(0) for _ in range(self.cfg.num_splits)] for _ in range(self.cfg.num_actors)]
+
         self.policy_avg_stats = dict()
 
         self.last_timing = dict()
@@ -120,6 +125,8 @@ class SFWorkerNode:
             task_queue=actor_queue,
             policy_queue=self.policy_queues[policy_queue_idx],
             report_queue=self.report_queue,
+            act_shm_pair=self.act_shms[idx],
+            act_semaphore_pair=self.act_semaphores[idx],
         )
 
     # noinspection PyProtectedMember
@@ -221,6 +228,7 @@ class SFWorkerNode:
 
         num_actors_per_policy_worker = self.cfg.num_actors // self.cfg.num_policy_workers
         for i in range(self.cfg.num_policy_workers):
+            actor_slice = slice(i * num_actors_per_policy_worker, (i + 1) * num_actors_per_policy_worker)
             policy_worker = PolicyWorker(
                 i,
                 self.cfg,
@@ -229,11 +237,13 @@ class SFWorkerNode:
                 self.action_space,
                 self.buffer,
                 self.policy_queues[i],
-                actor_queues[i*num_actors_per_policy_worker:(i+1)*num_actors_per_policy_worker],
+                actor_queues[actor_slice],
                 self.report_queue,
                 policy_worker_queues[i],
                 policy_lock,
                 resume_experience_collection_cv,
+                self.act_shms[actor_slice],
+                self.act_semaphores[actor_slice],
             )
             self.policy_workers.append(policy_worker)
             policy_worker.start_process()

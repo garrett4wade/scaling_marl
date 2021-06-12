@@ -42,6 +42,8 @@ class ActorWorker:
         task_queue,
         policy_queue,
         report_queue,
+        act_shm_pair,
+        act_semaphore_pair,
     ):
         """
         Ctor.
@@ -83,6 +85,9 @@ class ActorWorker:
         self.policy_queue = policy_queue
         self.report_queue = report_queue
         self.task_queue = task_queue
+
+        self.act_shm_pair = act_shm_pair
+        self.act_semaphore_pair = act_semaphore_pair
 
         self.process = TorchProcess(target=self._run, daemon=True)
 
@@ -151,11 +156,8 @@ class ActorWorker:
         """
         env = self.env_runners[split_idx]
 
-        with timing.add_time('envstep_get_action'):
-            actions = self.buffer.get_actions(self.worker_idx, split_idx)
-
         with timing.add_time('envstep_simulation'):
-            envstep_outputs = env.step(actions)
+            envstep_outputs = env.step(self.act_shm_pair[split_idx])
 
         with timing.add_time('envstep_insert_before_inference'):
             self.buffer.insert_before_inference(self.worker_idx, split_idx, **envstep_outputs)
@@ -193,9 +195,16 @@ class ActorWorker:
         with torch.no_grad():
             while not self.terminate:
                 try:
-                    try:
+                    for split_idx in range(self.num_splits):
                         with timing.add_time('waiting'), timing.time_avg('wait_for_inference'):
-                            tasks = self.task_queue.get_many(timeout=0.1)
+                            ready = self.act_semaphore_pair[split_idx].acquire(timeout=0.002)
+                        
+                        if ready:
+                            with timing.add_time('env_step'), timing.time_avg('one_env_step'):
+                                self._advance_rollouts(split_idx, timing)
+
+                    try:
+                        tasks = self.task_queue.get_many(block=False)
                     except Empty:
                         tasks = []
 
@@ -211,13 +220,7 @@ class ActorWorker:
                             break
 
                         # handling actual workload
-                        if task_type == TaskType.ROLLOUT_STEP:
-                            if 'env_step' not in timing:
-                                timing.waiting = 0  # measure waiting only after real work has started
-
-                            with timing.add_time('env_step'), timing.time_avg('one_env_step'):
-                                self._advance_rollouts(data, timing)
-                        elif task_type == TaskType.RESET:
+                        if task_type == TaskType.RESET:
                             with timing.add_time('first_reset'):
                                 self._handle_reset()
 
