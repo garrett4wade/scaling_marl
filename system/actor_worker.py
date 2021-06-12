@@ -42,8 +42,10 @@ class ActorWorker:
         task_queue,
         policy_queue,
         report_queue,
-        act_shm_pair,
-        act_semaphore_pair,
+        act_shm,
+        act_semaphore,
+        envstep_output_shm,
+        envstep_output_semaphore,
     ):
         """
         Ctor.
@@ -79,6 +81,10 @@ class ActorWorker:
         assert self.envs_per_actor % self.num_splits == 0
         self.envs_per_split = self.envs_per_actor // self.num_splits
 
+        num_actors_per_policy_worker = self.cfg.num_actors // self.cfg.num_policy_workers
+        self.local_idx = self.worker_idx % num_actors_per_policy_worker
+        self.env_slice = slice(self.local_idx * self.envs_per_split, (self.local_idx + 1) * self.envs_per_split)
+
         self.env_runners = None
 
         # TODO: policy queue -> policy queues, to support PBT
@@ -86,8 +92,11 @@ class ActorWorker:
         self.report_queue = report_queue
         self.task_queue = task_queue
 
-        self.act_shm_pair = act_shm_pair
-        self.act_semaphore_pair = act_semaphore_pair
+        self.act_shm = act_shm
+        self.act_semaphore = act_semaphore
+
+        self.envstep_output_shm = envstep_output_shm
+        self.envstep_output_semaphore = envstep_output_semaphore
 
         self.process = TorchProcess(target=self._run, daemon=True)
 
@@ -134,10 +143,11 @@ class ActorWorker:
         for split_idx, env_runner in enumerate(self.env_runners):
             policy_inputs = env_runner.reset()
             policy_inputs['rewards'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
-            policy_inputs['dones'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.bool)
-            policy_inputs['infos'] = None
-            self.buffer.insert_before_inference(self.worker_idx, split_idx, **policy_inputs)
-            self.policy_queue.put(self.client_ids[split_idx])
+            policy_inputs['dones'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
+            policy_inputs['fct_masks'] = np.ones((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
+            for k, v in self.envstep_output_shm[split_idx].items():
+                v[self.env_slice] = policy_inputs[k]
+            self.envstep_output_semaphore[split_idx].release()
 
         log.info('Finished reset for worker %d', self.worker_idx)
         # TODO: figure out what report queue is doing
@@ -157,15 +167,18 @@ class ActorWorker:
         env = self.env_runners[split_idx]
 
         with timing.add_time('envstep_simulation'):
-            envstep_outputs = env.step(self.act_shm_pair[split_idx])
+            envstep_outputs = env.step(self.act_shm[split_idx])
 
-        with timing.add_time('envstep_insert_before_inference'):
-            self.buffer.insert_before_inference(self.worker_idx, split_idx, **envstep_outputs)
+        with timing.add_time('envstep_copy_outputs'):
+            infos = envstep_outputs['infos']
+            force_terminations = np.array([[[agent_info.get('force_termination', 0)] for agent_info in info]
+                                           for info in infos])
+            envstep_outputs['fct_masks'] = 1 - force_terminations
+            for k, v in self.envstep_output_shm[split_idx].items():
+                v[self.env_slice] = envstep_outputs[k]
+            self.envstep_output_semaphore[split_idx].release()
 
         # TODO: deal with episodic summary data
-
-        with timing.add_time('envstep_enqueue_policy_requests'):
-            self.policy_queue.put(self.client_ids[split_idx])
 
     def _run(self):
         """
@@ -191,40 +204,42 @@ class ActorWorker:
 
         timing = Timing()
 
+        cur_split = 0
+
         last_report = time.time()
         with torch.no_grad():
             while not self.terminate:
                 try:
-                    for split_idx in range(self.num_splits):
-                        with timing.add_time('waiting'), timing.time_avg('wait_for_inference'):
-                            ready = self.act_semaphore_pair[split_idx].acquire(timeout=0.002)
-                        
+                    with timing.add_time('waiting'), timing.time_avg('wait_for_inference'):
+                        ready = self.act_semaphore[cur_split].acquire(timeout=0.002)
+                    
+                    with timing.add_time('env_step'), timing.time_avg('one_env_step'):
                         if ready:
-                            with timing.add_time('env_step'), timing.time_avg('one_env_step'):
-                                self._advance_rollouts(split_idx, timing)
-
-                    try:
-                        tasks = self.task_queue.get_many(block=False)
-                    except Empty:
-                        tasks = []
-
-                    for task in tasks:
-                        task_type, data = task
-
-                        if task_type == TaskType.INIT:
-                            self._init()
-                            continue
-
-                        if task_type == TaskType.TERMINATE:
-                            self._terminate()
-                            break
-
-                        # handling actual workload
-                        if task_type == TaskType.RESET:
-                            with timing.add_time('first_reset'):
-                                self._handle_reset()
+                            self._advance_rollouts(cur_split, timing)
+                            cur_split = (cur_split + 1) % self.num_splits
 
                     with timing.add_time('extra_jobs'):
+                        try:
+                            tasks = self.task_queue.get_many(block=False)
+                        except Empty:
+                            tasks = []
+
+                        for task in tasks:
+                            task_type, data = task
+
+                            if task_type == TaskType.INIT:
+                                self._init()
+                                continue
+
+                            if task_type == TaskType.TERMINATE:
+                                self._terminate()
+                                break
+
+                            # handling actual workload
+                            if task_type == TaskType.RESET:
+                                with timing.add_time('first_reset'):
+                                    self._handle_reset()
+
                         if time.time() - last_report > 5.0 and 'one_env_step' in timing:
                             timing_stats = dict(wait_actor=timing.wait_for_inference, step_actor=timing.one_env_step)
                             memory_mb = memory_consumption_mb()

@@ -81,6 +81,24 @@ class SFWorkerNode:
         self.act_shms = [[torch.zeros(act_shape, dtype=torch.int32).share_memory_().numpy() for _ in range(self.cfg.num_splits)] for _ in range(self.cfg.num_actors)]
         self.act_semaphores = [[multiprocessing.Semaphore(0) for _ in range(self.cfg.num_splits)] for _ in range(self.cfg.num_actors)]
 
+        # TODO: initialize env step outputs using config
+        # following is just the case of StarCraft2 (policy-sharing environments)
+        keys = ['obs', 'share_obs', 'rewards', 'available_actions', 'fct_masks']
+        self.envstep_output_shms = []
+        for _ in range(self.cfg.num_policy_workers):
+            shms = []
+            for _ in range(self.cfg.num_splits):
+                shm_dict = {}
+                for k in keys:
+                    if not hasattr(self.buffer, k):
+                        continue
+                    shape = getattr(self.buffer, k).shape[2:]
+                    shm_dict[k] = torch.zeros(shape, dtype=torch.float32).share_memory_().numpy()
+                shm_dict['dones'] = torch.zeros(self.buffer.masks.shape[2:], dtype=torch.float32).share_memory_().numpy()
+                shms.append(shm_dict)
+            self.envstep_output_shms.append(shms)
+        self.envstep_output_semaphores = [[multiprocessing.Semaphore(0) for _ in range(self.cfg.num_splits)] for _ in range(self.cfg.num_actors)]
+
         self.policy_avg_stats = dict()
 
         self.last_timing = dict()
@@ -114,8 +132,8 @@ class SFWorkerNode:
 
     def create_actor_worker(self, idx, actor_queue):
         num_actors_per_queue = self.cfg.num_actors // self.cfg.num_policy_workers
-        policy_queue_idx = idx // num_actors_per_queue
-        print('#####################', policy_queue_idx)
+        policy_worker_idx = idx // num_actors_per_queue
+        print('#####################', policy_worker_idx)
         return ActorWorker(
             self.cfg,
             self.env_fn,
@@ -123,10 +141,12 @@ class SFWorkerNode:
             idx,
             self.buffer,
             task_queue=actor_queue,
-            policy_queue=self.policy_queues[policy_queue_idx],
+            policy_queue=self.policy_queues[policy_worker_idx],
             report_queue=self.report_queue,
-            act_shm_pair=self.act_shms[idx],
-            act_semaphore_pair=self.act_semaphores[idx],
+            act_shm=self.act_shms[idx],
+            act_semaphore=self.act_semaphores[idx],
+            envstep_output_shm=self.envstep_output_shms[policy_worker_idx],
+            envstep_output_semaphore=self.envstep_output_semaphores[idx],
         )
 
     # noinspection PyProtectedMember
@@ -244,6 +264,8 @@ class SFWorkerNode:
                 resume_experience_collection_cv,
                 self.act_shms[actor_slice],
                 self.act_semaphores[actor_slice],
+                self.envstep_output_shms[i],
+                self.envstep_output_semaphores[actor_slice],
             )
             self.policy_workers.append(policy_worker)
             policy_worker.start_process()

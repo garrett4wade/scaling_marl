@@ -24,7 +24,7 @@ def _t2n(x):
 
 class PolicyWorker:
     def __init__(self, worker_idx, cfg, obs_space, share_obs_space, action_space, buffer, policy_queue, actor_queues,
-                 report_queue, task_queue, policy_lock, resume_experience_collection_cv, act_shms, act_semaphores):
+                 report_queue, task_queue, policy_lock, resume_experience_collection_cv, act_shms, act_semaphores, envstep_output_shm, envstep_output_semaphores):
         log.info('Initializing policy worker %d', worker_idx)
 
         self.worker_idx = worker_idx
@@ -41,8 +41,8 @@ class PolicyWorker:
         self.envs_per_split = self.envs_per_actor // self.num_splits
 
         self.num_actors_per_policy_worker = self.cfg.num_actors // self.cfg.num_policy_workers
-        self.actor_cnt = np.array([0 for _ in range(self.num_splits)])
-        self.ready_split_id = -1
+        self.actor_cnt = np.zeros(self.num_splits, dtype=np.int32)
+        self.is_actor_ready = np.zeros((self.num_splits, self.num_actors_per_policy_worker), dtype=np.int32)
 
         self.device = None
         self.actor_critic = None
@@ -57,6 +57,9 @@ class PolicyWorker:
 
         self.act_shms = act_shms
         self.act_semaphores = act_semaphores
+
+        self.envstep_output_shm = envstep_output_shm
+        self.envstep_output_semaphores = envstep_output_semaphores
 
         # queue other components use to talk to this particular worker
         self.task_queue = task_queue
@@ -85,13 +88,17 @@ class PolicyWorker:
         self.initialized = True
         self.initialized_event.set()
 
-    def _handle_policy_steps(self, timing):
+    def _handle_policy_steps(self, split_idx, timing):
         with torch.no_grad():
+            rollout_bs = self.num_actors_per_policy_worker * self.envs_per_split
+
             with timing.add_time('inference_prepare_policy_inputs'):
-                policy_inputs = self.buffer.get_policy_inputs(self.worker_idx, self.ready_split_id)
+                policy_inputs = {k: v for k, v in self.envstep_output_shm[split_idx].items() if k in self.buffer.policy_input_keys}
+                policy_inputs['masks'] = 1 - np.all(self.envstep_output_shm[split_idx]['dones'], axis=1, keepdims=True)
+                policy_inputs['masks'] = np.broadcast_to(policy_inputs['masks'], (rollout_bs, self.num_agents, 1))
+                policy_inputs = {**policy_inputs, **self.buffer.get_rnn_states(self.worker_idx, split_idx)}
 
             with timing.add_time('inference_preprosessing'):
-                rollout_bs = self.num_actors_per_policy_worker * self.envs_per_split
                 shared = policy_inputs['obs'].shape[:2] == (rollout_bs, self.num_agents)
                 if shared:
                     # all agents simultaneously advance an environment step, e.g. SMAC and MPE
@@ -118,14 +125,14 @@ class PolicyWorker:
             with timing.add_time('inference_copy_actions'):
                 for i, (shm_pair, semaphore_pair) in enumerate(zip(self.act_shms, self.act_semaphores)):
                     env_slice = slice(i * self.envs_per_split, (i + 1) * self.envs_per_split)
-                    shm_pair[self.ready_split_id][:] = policy_outputs['actions'][env_slice]
-                    semaphore_pair[self.ready_split_id].release()
+                    shm_pair[split_idx][:] = policy_outputs['actions'][env_slice]
+                    semaphore_pair[split_idx].release()
             
             with timing.add_time('inference_insert_after_inference'):
-                self.buffer.insert_after_inference(self.worker_idx, self.ready_split_id, **policy_outputs)
+                self.buffer.insert(self.worker_idx, split_idx, **self.envstep_output_shm[split_idx], **policy_outputs)
 
-        self.actor_cnt[self.ready_split_id] = 0
-        self.ready_split_id = -1
+        self.actor_cnt[split_idx] = 0
+        self.is_actor_ready[split_idx] = 0
         self.total_num_samples += rollout_bs
 
     def _update_weights(self, timing, block=False):
@@ -210,6 +217,7 @@ class PolicyWorker:
 
         last_report = last_cache_cleanup = time.time()
         last_report_samples = 0
+        cur_split = 0
 
         while not self.terminate:
             try:
@@ -219,25 +227,22 @@ class PolicyWorker:
                 #         self.resume_experience_collection_cv.wait(timeout=0.05)
 
                 waiting_started = time.time()
-                with timing.time_avg('waiting_avg'), timing.add_time('waiting'):
-                    while np.all(self.actor_cnt < self.num_actors_per_policy_worker) and not self.terminate and time.time() - waiting_started < 0.025:
-                        try:
-                            policy_requests = self.policy_queue.get_many(timeout=0.005)
-                            for client_id in policy_requests:
-                                split_id = client_id % self.num_splits
-                                self.actor_cnt[split_id] += 1
-                                if self.actor_cnt[split_id] >= self.num_actors_per_policy_worker:
-                                    self.ready_split_id = split_id
-                        except Empty:
-                            pass
 
-                with timing.add_time('update_weights'):
-                    if self.ready_split_id >= 0:
+                with timing.time_avg('waiting_avg'), timing.add_time('waiting'):
+                    for i, semaphore in enumerate(self.envstep_output_semaphores):
+                        if not self.is_actor_ready[cur_split, i]:
+                            ready = semaphore[cur_split].acquire(timeout=0.002)
+                            self.is_actor_ready[cur_split, i] = ready
+                            self.actor_cnt[cur_split] += ready
+
+                if self.actor_cnt[cur_split] >= self.num_actors_per_policy_worker:
+                    with timing.add_time('update_weights'):
                         self._update_weights(timing)
 
-                with timing.time_avg('inference_avg'), timing.add_time('inference'):
-                    if self.initialized and self.ready_split_id >= 0:
-                        self._handle_policy_steps(timing)
+                    with timing.time_avg('inference_avg'), timing.add_time('inference'):
+                        self._handle_policy_steps(cur_split, timing)
+                
+                    cur_split = (cur_split + 1) % self.num_splits
 
                 with timing.add_time('extra_jobs'):
                     try:
