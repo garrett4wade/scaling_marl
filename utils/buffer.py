@@ -388,40 +388,12 @@ class LearnerBuffer(ReplayBuffer):
 
 
 class PolicyMixin:
-    def get_policy_inputs(self, *args, **kwargs):
-        ''' fetch data from buffer as rollout policy input. '''
-        raise NotImplementedError
-
-    def insert_before_inference(self, *args, **kwargs):
-        ''' insert data returned by env.step.
-
-        after all actors issue a inference request and invoke this method,
-        a rollout data batch is ready in buffer.
-        '''
-        raise NotImplementedError
-
-    def insert_after_inference(self, *args, **kwargs):
-        ''' insert data returned by policy inference.
-
-        invocation of this method indicates the termination of a
-        inference request.
-        '''
+    def insert(self, *args, **kwargs):
+        ''' insert data returned by inference and env.step. '''
         raise NotImplementedError
 
 
 class SharedPolicyMixin(PolicyMixin):
-    def get_rnn_states(self, policy_worker_id, split_id):
-        if (policy_worker_id, split_id) not in self._slot_hash.keys():
-            self._allocate(policy_worker_id, split_id)
-        slot_id = self._slot_hash[(policy_worker_id, split_id)]
-        ep_step = self._ep_step[slot_id]
-
-        policy_inputs = {}
-        for k in self.policy_input_keys:
-            if hasattr(self, k) and 'rnn_states' in k:
-                policy_inputs[k] = self.storage[k][slot_id, ep_step]
-        return policy_inputs
-
     def insert(self, policy_worker_id, split_id, obs, share_obs, rewards, dones, fct_masks=None, available_actions=None, **policy_outputs):
         if (policy_worker_id, split_id) not in self._slot_hash.keys():
             self._allocate(policy_worker_id, split_id)

@@ -96,9 +96,6 @@ class PolicyWorker:
                 dones = self.envstep_output_shm[split_idx]['dones']
                 policy_inputs['masks'] = np.zeros_like(dones)
                 policy_inputs['masks'][:] = 1 - np.all(dones, axis=1, keepdims=True)
-                # rnn_states_from_buffer = self.buffer.get_rnn_states(self.worker_idx, split_idx)
-                # assert np.all(policy_inputs['rnn_states'] == rnn_states_from_buffer['rnn_states'])
-                # assert np.all(policy_inputs['rnn_states_critic'] == rnn_states_from_buffer['rnn_states_critic'])
 
             with timing.add_time('inference_preprosessing'):
                 shared = policy_inputs['obs'].shape[:2] == (self.rollout_bs, self.num_agents)
