@@ -41,6 +41,7 @@ class PolicyWorker:
         self.envs_per_split = self.envs_per_actor // self.num_splits
 
         self.num_actors_per_policy_worker = self.cfg.num_actors // self.cfg.num_policy_workers
+        self.rollout_bs = self.num_actors_per_policy_worker * self.envs_per_split
         self.actor_cnt = np.zeros(self.num_splits, dtype=np.int32)
         self.is_actor_ready = np.zeros((self.num_splits, self.num_actors_per_policy_worker), dtype=np.int32)
 
@@ -90,20 +91,18 @@ class PolicyWorker:
 
     def _handle_policy_steps(self, split_idx, timing):
         with torch.no_grad():
-            rollout_bs = self.num_actors_per_policy_worker * self.envs_per_split
-
             with timing.add_time('inference_prepare_policy_inputs'):
                 policy_inputs = {k: v for k, v in self.envstep_output_shm[split_idx].items() if k in self.buffer.policy_input_keys}
                 policy_inputs['masks'] = 1 - np.all(self.envstep_output_shm[split_idx]['dones'], axis=1, keepdims=True)
-                policy_inputs['masks'] = np.broadcast_to(policy_inputs['masks'], (rollout_bs, self.num_agents, 1))
+                policy_inputs['masks'] = np.broadcast_to(policy_inputs['masks'], (self.rollout_bs, self.num_agents, 1))
                 policy_inputs = {**policy_inputs, **self.buffer.get_rnn_states(self.worker_idx, split_idx)}
 
             with timing.add_time('inference_preprosessing'):
-                shared = policy_inputs['obs'].shape[:2] == (rollout_bs, self.num_agents)
+                shared = policy_inputs['obs'].shape[:2] == (self.rollout_bs, self.num_agents)
                 if shared:
                     # all agents simultaneously advance an environment step, e.g. SMAC and MPE
                     for k, v in policy_inputs.items():
-                        policy_inputs[k] = v.reshape(rollout_bs * self.num_agents, *v.shape[2:])
+                        policy_inputs[k] = v.reshape(self.rollout_bs * self.num_agents, *v.shape[2:])
                 else:
                     # agent advances an environment step in turn, e.g. card games
                     for k, v in policy_inputs.items():
@@ -116,7 +115,7 @@ class PolicyWorker:
                 if shared:
                     # all agents simultaneously advance an environment step, e.g. SMAC and MPE
                     for k, v in policy_outputs.items():
-                        policy_outputs[k] = _t2n(v).reshape(rollout_bs, self.num_agents, *v.shape[1:])
+                        policy_outputs[k] = _t2n(v).reshape(self.rollout_bs, self.num_agents, *v.shape[1:])
                 else:
                     # agent advances an environment step in turn, e.g. card games
                     for k, v in policy_outputs.items():
@@ -133,7 +132,7 @@ class PolicyWorker:
 
         self.actor_cnt[split_idx] = 0
         self.is_actor_ready[split_idx] = 0
-        self.total_num_samples += rollout_bs
+        self.total_num_samples += self.rollout_bs
 
     def _update_weights(self, timing, block=False):
         flags = 0 if block else zmq.NOBLOCK
@@ -143,20 +142,21 @@ class PolicyWorker:
         except zmq.ZMQError:
             return
 
-        # msg is multiple (key, tensor) pairs + policy version
-        assert len(msg) % 2 == 1
-        state_dict = OrderedDict()
-        for i in range(len(msg) // 2):
-            key, value = msg[2 * i].decode('ascii'), msg[2 * i + 1]
+        with timing.add_time('update_weights_processing_msg'):
+            # msg is multiple (key, tensor) pairs + policy version
+            assert len(msg) % 2 == 1
+            state_dict = OrderedDict()
+            for i in range(len(msg) // 2):
+                key, value = msg[2 * i].decode('ascii'), msg[2 * i + 1]
 
-            dtype, shape = self.model_weights_registries[key]
-            tensor = torch.from_numpy(np.frombuffer(memoryview(value), dtype=dtype).reshape(*shape))
+                dtype, shape = self.model_weights_registries[key]
+                tensor = torch.from_numpy(np.frombuffer(memoryview(value), dtype=dtype).reshape(*shape))
 
-            state_dict[key] = tensor
+                state_dict[key] = tensor
 
-        learner_policy_version = int(msg[-1].decode('ascii'))
+            learner_policy_version = int(msg[-1].decode('ascii'))
 
-        with timing.timeit('weight_update'):
+        with timing.time_avg('load_state_dict'), timing.add_time('update_weights_load_state_dict'):
             with self.policy_lock:
                 self.actor_critic.load_state_dict(state_dict)
 
@@ -167,7 +167,7 @@ class PolicyWorker:
                 'Updated weights on worker %d, policy_version %d (%.5f)',
                 self.worker_idx,
                 self.latest_policy_version,
-                timing.weight_update,
+                timing.load_state_dict,
             )
         self.num_policy_updates += 1
 
@@ -196,6 +196,7 @@ class PolicyWorker:
             else:
                 self.device = torch.device('cpu')
 
+            # TODO: assign arbitrary gpu rank to rollout policy
             self.rollout_policy = Policy(0,
                                          self.cfg,
                                          self.obs_space,
@@ -231,7 +232,7 @@ class PolicyWorker:
                 with timing.time_avg('waiting_avg'), timing.add_time('waiting'):
                     for i, semaphore in enumerate(self.envstep_output_semaphores):
                         if not self.is_actor_ready[cur_split, i]:
-                            ready = semaphore[cur_split].acquire(timeout=0.002)
+                            ready = semaphore[cur_split].acquire(timeout=0.1)
                             self.is_actor_ready[cur_split, i] = ready
                             self.actor_cnt[cur_split] += ready
 
@@ -244,7 +245,7 @@ class PolicyWorker:
                 
                     cur_split = (cur_split + 1) % self.num_splits
 
-                with timing.add_time('extra_jobs'):
+                with timing.add_time('get_tasks'):
                     try:
                         task_type, data = self.task_queue.get_nowait()
 
@@ -254,13 +255,12 @@ class PolicyWorker:
                         elif task_type == TaskType.TERMINATE:
                             self.terminate = True
                             break
-                        elif task_type == TaskType.INIT_MODEL:
-                            self._init_model(data)
 
                         self.task_queue.task_done()
                     except Empty:
                         pass
 
+                with timing.add_time('report'):
                     if time.time() - last_report > 3.0 and 'inference_avg' in timing:
                         timing_stats = dict(wait_policy=timing.waiting_avg, step_policy=timing.inference_avg)
                         samples_since_last_report = self.total_num_samples - last_report_samples
@@ -290,7 +290,7 @@ class PolicyWorker:
 
         self.model_weights_socket.close()
         time.sleep(0.2)
-        log.info('Policy worker timing: %s', timing)
+        log.info('Policy worker total num sample: %d, total inference steps: %d, timing: %s', self.total_num_samples, self.total_num_samples // self.rollout_bs, timing)
 
     def init(self):
         self.task_queue.put((TaskType.INIT, None))

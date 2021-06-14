@@ -98,6 +98,7 @@ class ActorWorker:
         self.envstep_output_shm = envstep_output_shm
         self.envstep_output_semaphore = envstep_output_semaphore
 
+        self.processed_envsteps = 0
         self.process = TorchProcess(target=self._run, daemon=True)
 
     def start_process(self):
@@ -180,6 +181,8 @@ class ActorWorker:
 
         # TODO: deal with episodic summary data
 
+        self.processed_envsteps += 1
+
     def _run(self):
         """
         Main loop of the actor worker (rollout worker).
@@ -211,35 +214,38 @@ class ActorWorker:
             while not self.terminate:
                 try:
                     with timing.add_time('waiting'), timing.time_avg('wait_for_inference'):
-                        ready = self.act_semaphore[cur_split].acquire(timeout=0.002)
+                        ready = self.act_semaphore[cur_split].acquire(timeout=0.1)
                     
                     with timing.add_time('env_step'), timing.time_avg('one_env_step'):
                         if ready:
                             self._advance_rollouts(cur_split, timing)
                             cur_split = (cur_split + 1) % self.num_splits
 
-                    with timing.add_time('extra_jobs'):
+                    with timing.add_time('get_tasks'):
                         try:
                             tasks = self.task_queue.get_many(block=False)
                         except Empty:
                             tasks = []
 
-                        for task in tasks:
-                            task_type, data = task
+                    for task in tasks:
+                        task_type, data = task
 
-                            if task_type == TaskType.INIT:
+                        if task_type == TaskType.INIT:
+                            with timing.add_time('init_env'):
                                 self._init()
-                                continue
+                            continue
 
-                            if task_type == TaskType.TERMINATE:
+                        if task_type == TaskType.TERMINATE:
+                            with timing.add_time('close_env'):
                                 self._terminate()
-                                break
+                            break
 
-                            # handling actual workload
-                            if task_type == TaskType.RESET:
-                                with timing.add_time('first_reset'):
-                                    self._handle_reset()
+                        # handling actual workload
+                        if task_type == TaskType.RESET:
+                            with timing.add_time('first_reset'):
+                                self._handle_reset()
 
+                    with timing.add_time('report'):
                         if time.time() - last_report > 5.0 and 'one_env_step' in timing:
                             timing_stats = dict(wait_actor=timing.wait_for_inference, step_actor=timing.one_env_step)
                             memory_mb = memory_consumption_mb()
@@ -261,9 +267,10 @@ class ActorWorker:
         if self.worker_idx <= 1:
             time.sleep(0.1)
             log.info(
-                'Env runner %d, CPU aff. %r, timing %s',
+                'Env runner %d, CPU aff. %r, processed env steps %d, timing %s',
                 self.worker_idx,
                 psutil.Process().cpu_affinity(),
+                self.processed_envsteps,
                 timing,
             )
 
