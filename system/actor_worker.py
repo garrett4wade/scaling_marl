@@ -147,7 +147,8 @@ class ActorWorker:
             policy_inputs['dones'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
             policy_inputs['fct_masks'] = np.ones((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
             for k, v in self.envstep_output_shm[split_idx].items():
-                v[self.env_slice] = policy_inputs[k]
+                if 'rnn_states' not in k:
+                    v[self.env_slice] = policy_inputs[k]
             self.envstep_output_semaphore[split_idx].release()
 
         log.info('Finished reset for worker %d', self.worker_idx)
@@ -176,7 +177,8 @@ class ActorWorker:
                                            for info in infos])
             envstep_outputs['fct_masks'] = 1 - force_terminations
             for k, v in self.envstep_output_shm[split_idx].items():
-                v[self.env_slice] = envstep_outputs[k]
+                if 'rnn_states' not in k:
+                    v[self.env_slice] = envstep_outputs[k]
             self.envstep_output_semaphore[split_idx].release()
 
         # TODO: deal with episodic summary data

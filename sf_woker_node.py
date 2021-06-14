@@ -83,7 +83,7 @@ class SFWorkerNode:
 
         # TODO: initialize env step outputs using config
         # following is just the case of StarCraft2 (policy-sharing environments)
-        keys = ['obs', 'share_obs', 'rewards', 'available_actions', 'fct_masks']
+        keys = ['obs', 'share_obs', 'rewards', 'available_actions', 'fct_masks', 'rnn_states', 'rnn_states_critic']
         self.envstep_output_shms = []
         for _ in range(self.cfg.num_policy_workers):
             shms = []

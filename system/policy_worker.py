@@ -93,9 +93,12 @@ class PolicyWorker:
         with torch.no_grad():
             with timing.add_time('inference_prepare_policy_inputs'):
                 policy_inputs = {k: v for k, v in self.envstep_output_shm[split_idx].items() if k in self.buffer.policy_input_keys}
-                policy_inputs['masks'] = 1 - np.all(self.envstep_output_shm[split_idx]['dones'], axis=1, keepdims=True)
-                policy_inputs['masks'] = np.broadcast_to(policy_inputs['masks'], (self.rollout_bs, self.num_agents, 1))
-                policy_inputs = {**policy_inputs, **self.buffer.get_rnn_states(self.worker_idx, split_idx)}
+                dones = self.envstep_output_shm[split_idx]['dones']
+                policy_inputs['masks'] = np.zeros_like(dones)
+                policy_inputs['masks'][:] = 1 - np.all(dones, axis=1, keepdims=True)
+                # rnn_states_from_buffer = self.buffer.get_rnn_states(self.worker_idx, split_idx)
+                # assert np.all(policy_inputs['rnn_states'] == rnn_states_from_buffer['rnn_states'])
+                # assert np.all(policy_inputs['rnn_states_critic'] == rnn_states_from_buffer['rnn_states_critic'])
 
             with timing.add_time('inference_preprosessing'):
                 shared = policy_inputs['obs'].shape[:2] == (self.rollout_bs, self.num_agents)
@@ -128,7 +131,11 @@ class PolicyWorker:
                     semaphore_pair[split_idx].release()
             
             with timing.add_time('inference_insert_after_inference'):
-                self.buffer.insert(self.worker_idx, split_idx, **self.envstep_output_shm[split_idx], **policy_outputs)
+                for k, v in self.envstep_output_shm[split_idx].items():
+                    if 'rnn_states' in k:
+                        v[:] = policy_outputs[k]
+                insert_data = {**self.envstep_output_shm[split_idx], **policy_outputs}
+                self.buffer.insert(self.worker_idx, split_idx, **insert_data)
 
         self.actor_cnt[split_idx] = 0
         self.is_actor_ready[split_idx] = 0

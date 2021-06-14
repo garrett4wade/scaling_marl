@@ -410,29 +410,6 @@ class PolicyMixin:
 
 
 class SharedPolicyMixin(PolicyMixin):
-    def get_actions(self, actor_id, split_id):
-        policy_worker_id = self.actor2policy_worker[actor_id]
-        slot_id = self._slot_hash[(policy_worker_id, split_id)]
-        ep_step = self._ep_step[slot_id]
-        local_actor_id = actor_id % self.num_actors_per_policy_worker
-        env_slice = slice(local_actor_id * self.envs_per_split, (local_actor_id+1) * self.envs_per_split)
-
-        if ep_step == 0:
-            prev_slot_id = self._prev_slot_hash[(policy_worker_id, split_id)]
-            return self.actions[prev_slot_id, -1, env_slice]
-
-        return self.actions[slot_id, ep_step - 1, env_slice]
-
-    def get_policy_inputs(self, policy_worker_id, split_id):
-        slot_id = self._slot_hash[(policy_worker_id, split_id)]
-        ep_step = self._ep_step[slot_id]
-
-        policy_inputs = {}
-        for k in self.policy_input_keys:
-            if hasattr(self, k):
-                policy_inputs[k] = self.storage[k][slot_id, ep_step]
-        return policy_inputs
-    
     def get_rnn_states(self, policy_worker_id, split_id):
         if (policy_worker_id, split_id) not in self._slot_hash.keys():
             self._allocate(policy_worker_id, split_id)
@@ -445,38 +422,9 @@ class SharedPolicyMixin(PolicyMixin):
                 policy_inputs[k] = self.storage[k][slot_id, ep_step]
         return policy_inputs
 
-    def insert_before_inference(self, actor_id, split_id, obs, share_obs, rewards, dones, infos=None, available_actions=None):
-        policy_worker_id = self.actor2policy_worker[actor_id]
+    def insert(self, policy_worker_id, split_id, obs, share_obs, rewards, dones, fct_masks=None, available_actions=None, **policy_outputs):
         if (policy_worker_id, split_id) not in self._slot_hash.keys():
             self._allocate(policy_worker_id, split_id)
-        slot_id = self._slot_hash[(policy_worker_id, split_id)]
-        ep_step = self._ep_step[slot_id]
-        local_actor_id = actor_id % self.num_actors_per_policy_worker
-        env_slice = slice(local_actor_id * self.envs_per_split, (local_actor_id+1) * self.envs_per_split)
-
-        # env step returns
-        self.share_obs[slot_id, ep_step, env_slice] = share_obs
-        self.obs[slot_id, ep_step, env_slice] = obs
-        if ep_step >= 1:
-            self.rewards[slot_id, ep_step - 1, env_slice] = rewards
-        self.masks[slot_id, ep_step, env_slice] = 1 - np.all(dones, axis=1, keepdims=True)
-
-        if hasattr(self, 'available_actions') and available_actions is not None:
-            self.available_actions[slot_id, ep_step, env_slice] = available_actions
-
-        if hasattr(self, 'active_masks'):
-            dones_cp = dones.copy()
-            dones_cp[np.all(dones, axis=1).squeeze(-1)] = 0
-            self.active_masks[slot_id, ep_step, env_slice] = 1 - dones_cp
-
-        if hasattr(self, 'fct_masks') and infos is not None:
-            force_terminations = np.array([[[agent_info['force_termination']] for agent_info in info]
-                                           for info in infos])
-            self.fct_masks[slot_id, ep_step, env_slice] = 1 - force_terminations
-
-        self.total_timesteps += self.envs_per_split
-
-    def insert(self, policy_worker_id, split_id, obs, share_obs, rewards, dones, fct_masks=None, available_actions=None, **policy_outputs):
         slot_id = self._slot_hash[(policy_worker_id, split_id)]
         ep_step = self._ep_step[slot_id]
 
@@ -523,34 +471,6 @@ class SharedPolicyMixin(PolicyMixin):
             self._slot_opening(slot_id, new_slot_id)
 
         self.total_timesteps += self.obs.shape[2]
-
-    def insert_after_inference(self, policy_worker_id, split_id, **policy_outputs):
-        slot_id = self._slot_hash[(policy_worker_id, split_id)]
-        ep_step = self._ep_step[slot_id]
-
-        # model inference returns
-        rnn_mask = np.expand_dims(self.masks[slot_id, ep_step], -1)
-        for k in policy_outputs.keys():
-            if 'rnn_states' in k:
-                self.storage[k][slot_id, ep_step + 1] = policy_outputs[k] * rnn_mask
-            else:
-                self.storage[k][slot_id, ep_step] = policy_outputs[k]
-
-        # closure on the previous slot
-        if ep_step == 0 and (policy_worker_id, split_id) in self._prev_slot_hash.keys():
-            old_slot_id = self._prev_slot_hash[(policy_worker_id, split_id)]
-            self._slot_closure(old_slot_id, slot_id)
-
-        # advance 1 timestep
-        self._ep_step[slot_id] += 1
-
-        # if a slot is full except for the bootstrap step, allocate a new slot for the corresponding client
-        if ep_step == self.episode_length - 1:
-            self._ep_step[slot_id] = 0
-            self._allocate(policy_worker_id, split_id)
-            new_slot_id = self._slot_hash[(policy_worker_id, split_id)]
-
-            self._slot_opening(slot_id, new_slot_id)
 
 
 class SharedWorkerBuffer(WorkerBuffer, SharedPolicyMixin):
