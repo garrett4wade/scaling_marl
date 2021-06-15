@@ -2,6 +2,7 @@
 import sys
 # import setproctitle
 import numpy as np
+import yaml
 
 import torch
 from config import get_config
@@ -78,6 +79,12 @@ def make_eval_env(trainer_id, all_args):
 def main():
     parser = get_config()
     all_args = parse_args(sys.argv[1:], parser)
+    # overwrite default configuration using yaml file
+    if all_args.config is not None:
+        with open(all_args.config) as f:
+            all_args_dict = yaml.load(f, Loader=yaml.FullLoader)
+        for k, v in all_args_dict.items():
+            setattr(all_args, k, v)
 
     if all_args.algorithm_name == "rmappo":
         all_args.use_recurrent_policy = True

@@ -211,7 +211,8 @@ class LearnerBuffer(ReplayBuffer):
         self.num_slots = args.qsize
         # concatenate several slots from workers into a single batch,
         # which will be then sent to GPU for optimziation
-        self.envs_per_slot = args.slots_per_update * args.envs_per_actor // args.num_splits
+        self.worker_buffer_envs_per_slot = args.num_actors * args.envs_per_actor // args.num_splits // args.num_policy_workers
+        self.envs_per_slot = args.slots_per_update * self.worker_buffer_envs_per_slot
 
         self.slots_per_update = args.slots_per_update
 
@@ -270,12 +271,12 @@ class LearnerBuffer(ReplayBuffer):
                 self._global_ptr[1] += 1
 
         # copy data into main storage
-        batch_slice = slice(position_id * self.envs_per_split, position_id * (self.envs_per_split + 1))
+        batch_slice = slice(position_id * self.worker_buffer_envs_per_slot, (position_id + 1) * self.worker_buffer_envs_per_slot)
 
         for k, v in seg_dict.items():
             self.storage[k][slot_id, :, batch_slice] = v
 
-        self.total_timesteps += np.prod(seg_dict['rewards'].shape[:2])
+        self.total_timesteps += self.worker_buffer_envs_per_slot * self.episode_length
 
         # mark the slot as readable if needed
         if position_id == self.slots_per_update - 1:
@@ -288,8 +289,8 @@ class LearnerBuffer(ReplayBuffer):
             # randomly choose one slot from the oldest available slots
             slot_id = super().get(block, timeout, lambda x: np.random.choice(x[:self.target_num_slots]))
             # TODO: default reuse pattern is recycle, while it could be set to 'exhausting' or others
-            # defer the timestamp such that the slot will be selected again
-            # only after all readable slots are selected at least once
+            # defer the timestamp such that the slot will be selected again only after
+            # all readable slots are selected at least once
             self._time_stamp[slot_id] = np.max(self._time_stamp) + 1
         return self.recurrent_generator(slot_id) if self._use_recurrent_policy else self.feed_forward_generator(slot_id)
 

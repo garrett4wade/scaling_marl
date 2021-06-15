@@ -151,6 +151,7 @@ def get_config():
             by default None. set the path to pretrained model.
     """
     parser = argparse.ArgumentParser(description='onpolicy', formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--config', type=str)
 
     # prepare parameters
     parser.add_argument("--algorithm_name", type=str, default='mappo', choices=["rmappo", "mappo"])

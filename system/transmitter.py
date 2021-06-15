@@ -27,7 +27,9 @@ class Transmitter:
         self.seg_queue = Queue()
 
         self.sending_delays = deque([], maxlen=100)
+        self.sending_intervals = deque([], maxlen=100)
         self.last_recv_time = None
+        self.last_send_time = None
 
         self.terminate = False
 
@@ -49,7 +51,8 @@ class Transmitter:
         for k, data in self.buffer.storage.items():
             msg.extend([k.encode('ascii'), data[slot]])
         self.socket.send_multipart(msg)
-        self.sending_delays.append(time.time() - self.last_recv_time)
+        self.last_send_time = time.time()
+        self.sending_intervals.append(self.last_send_time - self.last_recv_time)
         self.socket_state = SocketState.SEND
         log.info('Successfully sending data to head node on Transmitter %d...', self.transmitter_idx)
 
@@ -86,6 +89,8 @@ class Transmitter:
                         # we don't care what we receive from the head node
                         _ = self.socket.recv(flags=zmq.NOBLOCK)
                         self.last_recv_time = time.time()
+                        if self.last_send_time:
+                            self.sending_delays.append(self.last_recv_time - self.last_send_time)
                         self.socket_state = SocketState.RECV
                         log.info('Receiving data request from head node on Transmitter %d...', self.transmitter_idx)
                     except zmq.ZMQError:
@@ -126,7 +131,7 @@ class Transmitter:
 
         self.socket.close()
         time.sleep(0.2)
-        log.info('Transmitter avg sending delay: %.3f, timing: %s', np.mean(self.sending_delays), timing)
+        log.info('Transmitter avg. sending interval: %.2f, avg. delay: %.3f, timing: %s', np.mean(self.sending_intervals), np.mean(self.sending_delays), timing)
 
     def init(self):
         self.task_queue.put(TaskType.INIT)
