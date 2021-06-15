@@ -149,6 +149,8 @@ class ActorWorker:
             for k, v in self.envstep_output_shm[split_idx].items():
                 if 'rnn_states' not in k:
                     v[self.env_slice] = policy_inputs[k]
+        
+        for split_idx in range(len(self.env_runners)):
             self.envstep_output_semaphore[split_idx].release()
 
         log.info('Finished reset for worker %d', self.worker_idx)
