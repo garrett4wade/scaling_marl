@@ -111,7 +111,7 @@ class PolicyWorker:
 
             with timing.add_time('inference/to_device'):
                 for k, v in policy_inputs.items():
-                    policy_inputs[k] = check(v).to(**self.rollout_policy.tpdv)
+                    policy_inputs[k] = check(v).to(**self.rollout_policy.tpdv, non_blocking=True)
     
             with timing.add_time('inference/inference_step'):
                 policy_outputs = self.rollout_policy.get_actions(**policy_inputs)
