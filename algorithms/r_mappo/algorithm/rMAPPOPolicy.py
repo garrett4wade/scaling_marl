@@ -103,15 +103,6 @@ class R_MAPPOPolicy:
         :return rnn_states: (torch.Tensor) updated actor network RNN states.
         :return rnn_states_critic: (torch.Tensor) updated critic network RNN states.
         """
-        obs = check(obs).to(**self.tpdv)
-        share_obs = check(share_obs).to(**self.tpdv)
-
-        rnn_states = check(rnn_states).to(**self.tpdv)
-        rnn_states_critic = check(rnn_states_critic).to(**self.tpdv)
-        masks = check(masks).to(**self.tpdv)
-        if available_actions is not None:
-            available_actions = check(available_actions).to(**self.tpdv)
-
         (action_dists, action_reduce_fn, log_prob_reduce_fn, _, _, _,
          rnn_states, values, rnn_states_critic) = self.actor_critic(obs, rnn_states, masks, available_actions, share_obs, rnn_states_critic)
         actions, action_log_probs = get_actions_from_dist(action_dists, action_reduce_fn, log_prob_reduce_fn,

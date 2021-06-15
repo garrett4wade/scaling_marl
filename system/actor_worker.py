@@ -168,10 +168,10 @@ class ActorWorker:
         """
         env = self.env_runners[split_idx]
 
-        with timing.add_time('envstep_simulation'):
+        with timing.add_time('env_step/simulation'):
             envstep_outputs = env.step(self.act_shm[split_idx])
 
-        with timing.add_time('envstep_copy_outputs'):
+        with timing.add_time('env_step/copy_outputs'):
             infos = envstep_outputs['infos']
             force_terminations = np.array([[[agent_info.get('force_termination', 0)] for agent_info in info]
                                            for info in infos])

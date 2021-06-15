@@ -4,6 +4,7 @@ import time
 from collections import deque
 from queue import Empty
 
+from algorithms.utils.util import check
 import numpy as np
 import psutil
 import torch
@@ -91,13 +92,13 @@ class PolicyWorker:
 
     def _handle_policy_steps(self, split_idx, timing):
         with torch.no_grad():
-            with timing.add_time('inference_prepare_policy_inputs'):
+            with timing.add_time('inference/prepare_policy_inputs'):
                 policy_inputs = {k: v for k, v in self.envstep_output_shm[split_idx].items() if k in self.buffer.policy_input_keys}
                 dones = self.envstep_output_shm[split_idx]['dones']
                 policy_inputs['masks'] = np.zeros_like(dones)
                 policy_inputs['masks'][:] = 1 - np.all(dones, axis=1, keepdims=True)
 
-            with timing.add_time('inference_preprosessing'):
+            with timing.add_time('inference/preprosessing'):
                 shared = policy_inputs['obs'].shape[:2] == (self.rollout_bs, self.num_agents)
                 if shared:
                     # all agents simultaneously advance an environment step, e.g. SMAC and MPE
@@ -108,10 +109,14 @@ class PolicyWorker:
                     for k, v in policy_inputs.items():
                         policy_inputs[k] = v
 
-            with timing.add_time('inference_to_device_and_inference'):
+            with timing.add_time('inference/to_device'):
+                for k, v in policy_inputs.items():
+                    policy_inputs[k] = check(v).to(**self.rollout_policy.tpdv)
+    
+            with timing.add_time('inference/inference_step'):
                 policy_outputs = self.rollout_policy.get_actions(**policy_inputs)
 
-            with timing.add_time('inference_to_cpu_and_postprosessing'):
+            with timing.add_time('inference/to_cpu_and_postprosessing'):
                 if shared:
                     # all agents simultaneously advance an environment step, e.g. SMAC and MPE
                     for k, v in policy_outputs.items():
@@ -121,13 +126,13 @@ class PolicyWorker:
                     for k, v in policy_outputs.items():
                         policy_outputs[k] = _t2n(v)
 
-            with timing.add_time('inference_copy_actions'):
+            with timing.add_time('inference/copy_actions'):
                 for i, (shm_pair, semaphore_pair) in enumerate(zip(self.act_shms, self.act_semaphores)):
                     env_slice = slice(i * self.envs_per_split, (i + 1) * self.envs_per_split)
                     shm_pair[split_idx][:] = policy_outputs['actions'][env_slice]
                     semaphore_pair[split_idx].release()
             
-            with timing.add_time('inference_insert_after_inference'):
+            with timing.add_time('inference/insert_after_inference'):
                 for k, v in self.envstep_output_shm[split_idx].items():
                     if 'rnn_states' in k:
                         v[:] = policy_outputs[k]
@@ -146,7 +151,7 @@ class PolicyWorker:
         except zmq.ZMQError:
             return
 
-        with timing.add_time('update_weights_processing_msg'):
+        with timing.add_time('update_weights/processing_msg'):
             # msg is multiple (key, tensor) pairs + policy version
             assert len(msg) % 2 == 1
             state_dict = OrderedDict()
@@ -160,7 +165,7 @@ class PolicyWorker:
 
             learner_policy_version = int(msg[-1].decode('ascii'))
 
-        with timing.time_avg('load_state_dict'), timing.add_time('update_weights_load_state_dict'):
+        with timing.time_avg('load_state_dict'), timing.add_time('update_weights/load_state_dict'):
             with self.policy_lock:
                 self.actor_critic.load_state_dict(state_dict)
 
