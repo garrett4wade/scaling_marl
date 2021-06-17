@@ -42,7 +42,7 @@ class Transmitter:
 
     def _init(self):
         self.socket = zmq.Context().socket(zmq.REQ)
-        self.socket.connect(self.cfg.seg_addr)
+        self.socket.connect(self.cfg.seg_addrs[self.cfg.node_idx])
         self.socket.send(b'ready')
         self.socket_state = SocketState.SEND
 
@@ -50,13 +50,16 @@ class Transmitter:
 
     def _pack_msg(self, slot):
         msg = []
-        mem_data = 0
+        mem_data = {}
+        total_mem = 0
         for k, data in self.buffer.storage.items():
             # lz4 is the most cost-efficient compression choice, ~7.5x compression in ~1.5s
             compressed = blosc.compress(data[slot].tobytes(), typesize=4, cname='lz4')
-            mem_data += getsizeof(compressed)
+            mem = 
+            mem_data[k] = mem = getsizeof(compressed) / 1024**2
+            total_mem += mem
             msg.extend([k.encode('ascii'), compressed])
-        log.info('seg size: %2f MB', mem_data / 1024**2)
+        log.info('seg size:  {} (MB), total {:.2f} MB'.format(mem_data, total_mem))
         self.socket.send_multipart(msg)
         self.last_send_time = time.time()
         self.sending_intervals.append(self.last_send_time - self.last_recv_time)

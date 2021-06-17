@@ -15,6 +15,9 @@ from envs.starcraft2.StarCraft2_Env import StarCraft2Env
 from envs.env_wrappers import ShareDummyVecEnv, ShareSubprocVecEnv
 from envs.starcraft2.smac_maps import get_map_params
 from utils.buffer import LearnerBuffer
+
+import torch.distributed as dist
+from algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
 """Train script for SMAC."""
 
 
@@ -122,17 +125,14 @@ def main():
 
     def receive_data(idx, buffer, all_args):
         socket = zmq.Context().socket(zmq.ROUTER)
-        seg_port = all_args.seg_addr.split(':')[-1]
-        if idx == 0:
-            socket.bind('tcp://*:' + seg_port)
-        else:
-            socket.connect(all_args.seg_addr)
+        seg_port = all_args.seg_addrs[idx].split(':')[-1]
+        socket.bind('tcp://*:' + seg_port)
 
         step = 0
         while True:
             tik = time.time()
             msg = socket.recv_multipart()
-            print('receive some message!', time.time() - tik)
+            print('receiver {} receive some message!'.format(idx), time.time() - tik)
 
             socket.send_multipart([msg[0], msg[1], b'ok'])
 
@@ -155,16 +155,29 @@ def main():
                 buffer.put(seg_dict)
                 buffer_put_time = time.time() - tik
                 step += 1
-                print('decompression time: {:.2f}, buffer put time: {:.2f}'.format(decompression_time, buffer_put_time))
+                print('receiver {} decompression time: {:.2f}, buffer put time: {:.2f}'.format(idx, decompression_time, buffer_put_time))
 
-    receivers = [mp.Process(target=receive_data, args=(idx, buffer, all_args)) for idx in range(1)]
+    receivers = [mp.Process(target=receive_data, args=(idx, buffer, all_args)) for idx in range(len(all_args.seg_addrs))]
     for receiver in receivers:
         receiver.daemon = True
         receiver.start()
 
+    dist.init_process_group('nccl', rank=0, world_size=1, init_method='file:///dev/shm/smac_ddp')
+    policy = Policy(0, all_args, all_args.observation_space, all_args.share_observation_space, all_args.action_space, is_training=True)
+    model_weights_socket = zmq.Context().socket(zmq.PUB)
+    model_port = all_args.model_weights_addr.split(':')[-1]
+    model_weights_socket.bind('tcp://*:' + model_port)
+
     step = 1
     while True:
-        time.sleep(5)
+        time.sleep(2)
+        numpy_state_dict = {k.replace('module.', ''): v.cpu().numpy() for k, v in policy.state_dict().items()}
+        msg = []
+        for k, v in numpy_state_dict.items():
+            msg.extend([k.encode('ascii'), v])
+        msg.append(str(step).encode('ascii'))
+        model_weights_socket.send_multipart(msg)
+
         # wandb.log({'total_timesteps': buffer.total_timesteps.item()}, step=step)
         step += 1
 

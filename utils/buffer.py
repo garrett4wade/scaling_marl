@@ -18,6 +18,8 @@ class ReplayBuffer:
         self.envs_per_split = args.envs_per_actor // args.num_splits
         self.qsize = args.qsize
 
+        self.data_chunk_length = args.data_chunk_length
+
         self.actor2policy_worker = {}
         assert self.num_actors % args.num_policy_workers == 0
         self.num_actors_per_policy_worker = self.num_actors // args.num_policy_workers
@@ -39,18 +41,24 @@ class ReplayBuffer:
 
         self.shapes_and_dtypes = {}
 
-        def shape_prefix(bootstrap):
-            t = self.episode_length + 1 if bootstrap else self.episode_length
+        def shape_prefix(bootstrap, select=False):
+            t = self.episode_length if not select else self.episode_length // self.data_chunk_length
+            t = t + 1 if bootstrap else t
             return (self.num_slots, t, self.envs_per_slot, self.num_agents)
 
         for storage_spec in self.storage_specs:
             name, shape, dtype, bootstrap, init_value = storage_spec
             assert init_value == 0 or init_value == 1
             init_method = torch.zeros if init_value == 0 else torch.ones
-            setattr(self, '_' + name, init_method((*shape_prefix(bootstrap), *shape), dtype=dtype).share_memory_())
+
+            # only store rnn_states at the beginning of a chunk
+            real_shape = (*shape_prefix(bootstrap, ('rnn_states' in name)), *shape)
+
+            setattr(self, '_' + name, init_method(real_shape, dtype=dtype).share_memory_())
             setattr(self, name, getattr(self, '_' + name).numpy())
+
             # saved shape need to remove slot dim
-            self.shapes_and_dtypes[name] = ((*shape_prefix(bootstrap), *shape)[1:], to_numpy_type(dtype))
+            self.shapes_and_dtypes[name] = (real_shape[1:], to_numpy_type(dtype))
 
         # self._storage is torch.Tensor handle while storage is numpy.array handle
         # the 2 handles point to the same block of memory
@@ -175,20 +183,6 @@ class WorkerBuffer(ReplayBuffer):
             self._prev_slot_hash[identity] = self._slot_hash[identity]
 
         self._slot_hash[identity] = slot_id
-
-    def _slot_opening(self, old_slots, new_slots):
-        # when a slot (old_slot) is full, we should open up a new slot for data storage
-
-        # NOTE: following 2 lines for debug only
-        # with self._read_ready:
-        #     assert np.all(self._is_busy[old_slots]) and np.all(self._is_busy[new_slots])
-
-        # copy rnn states of previous slots into new ones, which serve as the policy input at next inference time
-        # note that other policy inputs (e.g. obs, share_obs) will be filled into new slots before the next inference
-        # (in self.insert_before_inference)
-        for k in self.storage_keys:
-            if 'rnn_states' in k:
-                self.storage[k][new_slots, 0] = self.storage[k][old_slots, -1]
 
     def _slot_closure(self, old_slots, new_slots):
         # when filling the first timestep of a new slot, copy data into the previous slot as bootstrap values
@@ -426,7 +420,9 @@ class SharedPolicyMixin(PolicyMixin):
         rnn_mask = np.expand_dims(self.masks[slot_id, ep_step], -1)
         for k in policy_outputs.keys():
             if 'rnn_states' in k:
-                self.storage[k][slot_id, ep_step + 1] = policy_outputs[k] * rnn_mask
+                if (ep_step + 1) % self.data_chunk_length == 0 and (ep_step + 1) < self.episode_length:
+                    chunk_cnt = (ep_step + 1) // self.data_chunk_length
+                    self.storage[k][slot_id, chunk_cnt] = policy_outputs[k] * rnn_mask
             else:
                 self.storage[k][slot_id, ep_step] = policy_outputs[k]
 
@@ -439,12 +435,15 @@ class SharedPolicyMixin(PolicyMixin):
         self._ep_step[slot_id] += 1
 
         # if a slot is full except for the bootstrap step, allocate a new slot for the corresponding client
+        # and then copy rnn states to the new slot
         if ep_step == self.episode_length - 1:
             self._ep_step[slot_id] = 0
             self._allocate(policy_worker_id, split_id)
             new_slot_id = self._slot_hash[(policy_worker_id, split_id)]
 
-            self._slot_opening(slot_id, new_slot_id)
+            for k in self.storage_keys:
+                if 'rnn_states' in k:
+                    self.storage[k][new_slot_id, 0] = policy_outputs[k] * rnn_mask
 
         self.total_timesteps += self.obs.shape[2]
 

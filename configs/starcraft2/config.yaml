@@ -18,11 +18,16 @@ model_dir: null
 
 # system parameters
 model_weights_addr: tcp://10.0.1.32:8889
-seg_addr: tcp://10.0.1.32:12345
+seg_addrs:
+  - tcp://10.0.1.32:12346
+  - tcp://10.0.1.32:12347
+  - tcp://10.0.1.32:12348
+  - tcp://10.0.1.32:12349
+  - tcp://10.0.1.32:12350
 num_actors: 128
 envs_per_actor: 2
 num_policy_workers: 4
-qsize: 16
+qsize: 32
 num_splits: 2
 num_trainers: 1
 num_transmitters: 1
@@ -45,7 +50,7 @@ reset_timeout_seconds: 60
 actor_worker_gpus: 0
 
 # algorithm parameters
-hidden_size: 64
+hidden_size: 512
 layer_N: 1
 rec_n: 1
 sample_reuse: 5

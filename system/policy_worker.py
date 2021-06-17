@@ -14,6 +14,7 @@ from algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
 
 from utils.timing import Timing
 from utils.utils import log, join_or_kill, cuda_envvars_for_policy, memory_stats, TaskType
+from algorithms.storage_registries import to_numpy_type
 import zmq
 from collections import OrderedDict
 
@@ -158,7 +159,7 @@ class PolicyWorker:
             for i in range(len(msg) // 2):
                 key, value = msg[2 * i].decode('ascii'), msg[2 * i + 1]
 
-                dtype, shape = self.model_weights_registries[key]
+                shape, dtype = self.model_weights_registries[key]
                 tensor = torch.from_numpy(np.frombuffer(memoryview(value), dtype=dtype).reshape(*shape))
 
                 state_dict[key] = tensor
@@ -167,16 +168,16 @@ class PolicyWorker:
 
         with timing.time_avg('load_state_dict'), timing.add_time('update_weights/load_state_dict'):
             with self.policy_lock:
-                self.actor_critic.load_state_dict(state_dict)
+                self.rollout_policy.load_state_dict(state_dict)
 
         self.latest_policy_version = learner_policy_version
 
         if self.num_policy_updates % 10 == 0:
             log.info(
-                'Updated weights on worker %d, policy_version %d (%.5f)',
+                'Updated weights on worker %d, policy_version %d (%s)',
                 self.worker_idx,
                 self.latest_policy_version,
-                timing.load_state_dict,
+                str(timing.load_state_dict),
             )
         self.num_policy_updates += 1
 
@@ -219,10 +220,9 @@ class PolicyWorker:
             self.model_weights_socket.setsockopt(zmq.SUBSCRIBE, b'')
 
             for k, v in self.rollout_policy.state_dict().items():
-                self.model_weights_registries[k] = (v.shape, v.dtype)
+                self.model_weights_registries[k] = (v.shape, to_numpy_type(v.dtype))
 
-            # TODO: the next line should be uncommented if a learner participates in the system
-            # self._update_weights(timing, block=True)
+            self._update_weights(timing, block=True)
             log.info('Initialized model on the policy worker %d!', self.worker_idx)
 
         last_report = last_cache_cleanup = time.time()
