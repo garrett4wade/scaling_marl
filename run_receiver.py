@@ -2,11 +2,14 @@
 import sys
 # import setproctitle
 import numpy as np
+import multiprocessing as mp
 
 import yaml
 import torch
 import time
 import zmq
+import blosc
+import wandb
 from config import get_config
 from envs.starcraft2.StarCraft2_Env import StarCraft2Env
 from envs.env_wrappers import ShareDummyVecEnv, ShareSubprocVecEnv
@@ -107,42 +110,64 @@ def main():
 
     all_args.num_agents = get_map_params(all_args.map_name)["n_agents"]
 
+    # run = wandb.init(config=all_args,
+    #                 project=all_args.env_name + '_distributed_nodes',
+    #                 entity=all_args.user_name,
+    #                 name='throughput_test',
+    #                 group=all_args.map_name,
+    #                 reinit=True)
+
     buffer = LearnerBuffer(all_args, all_args.observation_space, all_args.share_observation_space,
                            all_args.action_space)
 
-    socket = zmq.Context().socket(zmq.ROUTER)
-    seg_port = all_args.seg_addr.split(':')[-1]
-    socket.bind('tcp://*:' + seg_port)
+    def receive_data(idx, buffer, all_args):
+        socket = zmq.Context().socket(zmq.ROUTER)
+        seg_port = all_args.seg_addr.split(':')[-1]
+        if idx == 0:
+            socket.bind('tcp://*:' + seg_port)
+        else:
+            socket.connect(all_args.seg_addr)
 
-    ts = []
-    frame_tik = time.time()
-    while True:
-        time.sleep(.05)
-        msg = socket.recv_multipart()
-        print('receive some message!')
-
-        socket.send_multipart([msg[0], msg[1], b'ok'])
-
-        if len(msg) > 3:
-            msg = msg[2:]
+        step = 0
+        while True:
             tik = time.time()
-            assert len(msg) % 2 == 0
-            seg_dict = {}
-            for i in range(len(msg) // 2):
-                k, v = msg[2 * i].decode('ascii'), msg[2 * i + 1]
-                shape, dtype = buffer.shapes_and_dtypes[k]
-                array = np.frombuffer(memoryview(v), dtype=dtype).reshape(*shape)
-                seg_dict[k] = array
+            msg = socket.recv_multipart()
+            print('receive some message!', time.time() - tik)
 
-            buffer.put(seg_dict)
+            socket.send_multipart([msg[0], msg[1], b'ok'])
 
-            ts.append(time.time() - tik)
+            if len(msg) > 3:
+                msg = msg[2:]
+                tik = time.time()
+                assert len(msg) % 2 == 0
+                seg_dict = {}
+                decompression_time = 0
+                for i in range(len(msg) // 2):
+                    k, v = msg[2 * i].decode('ascii'), msg[2 * i + 1]
+                    shape, dtype = buffer.shapes_and_dtypes[k]
+                    tik = time.time()
+                    decompressed = blosc.decompress(v)
+                    decompression_time += time.time() - tik
+                    array = np.frombuffer(decompressed, dtype=np.float32).reshape(*shape)
+                    seg_dict[k] = array
 
-        if len(ts) >= 10:
-            fps = buffer.total_timesteps.item() / (time.time() - frame_tik)
-            print('recv msg', sum(ts) / len(ts), 'FPS {:.2f}'.format(fps))
-            ts = []
-            frame_tik = time.time()
+                tik = time.time()
+                buffer.put(seg_dict)
+                buffer_put_time = time.time() - tik
+                step += 1
+                print('decompression time: {:.2f}, buffer put time: {:.2f}'.format(decompression_time, buffer_put_time))
+
+    receivers = [mp.Process(target=receive_data, args=(idx, buffer, all_args)) for idx in range(1)]
+    for receiver in receivers:
+        receiver.daemon = True
+        receiver.start()
+
+    step = 1
+    while True:
+        time.sleep(5)
+        # wandb.log({'total_timesteps': buffer.total_timesteps.item()}, step=step)
+        step += 1
+
 
 
 if __name__ == "__main__":

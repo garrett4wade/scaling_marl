@@ -13,15 +13,15 @@ use_render: false
 
 num_env_steps: 10000000
 train_for_env_steps: 10000000000
-train_for_seconds: 120
+train_for_seconds: 1200
 model_dir: null
 
 # system parameters
-model_weights_addr: tcp://127.0.0.1:8889
-seg_addr: tcp://127.0.0.1:12345
-num_actors: 8
+model_weights_addr: tcp://10.0.1.32:8889
+seg_addr: tcp://10.0.1.32:12345
+num_actors: 128
 envs_per_actor: 2
-num_policy_workers: 1
+num_policy_workers: 4
 qsize: 16
 num_splits: 2
 num_trainers: 1

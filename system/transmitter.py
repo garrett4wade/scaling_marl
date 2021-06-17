@@ -11,6 +11,8 @@ import zmq
 from faster_fifo import Queue
 from collections import deque
 import numpy as np
+import blosc
+from sys import getsizeof
 
 
 class Transmitter:
@@ -48,13 +50,19 @@ class Transmitter:
 
     def _pack_msg(self, slot):
         msg = []
+        mem_data = 0
         for k, data in self.buffer.storage.items():
-            msg.extend([k.encode('ascii'), data[slot]])
+            # lz4 is the most cost-efficient compression choice, ~7.5x compression in ~1.5s
+            compressed = blosc.compress(data[slot].tobytes(), typesize=4, cname='lz4')
+            mem_data += getsizeof(compressed)
+            msg.extend([k.encode('ascii'), compressed])
+        log.info('seg size: %2f MB', mem_data / 1024**2)
         self.socket.send_multipart(msg)
         self.last_send_time = time.time()
         self.sending_intervals.append(self.last_send_time - self.last_recv_time)
         self.socket_state = SocketState.SEND
         log.info('Successfully sending data to head node on Transmitter %d...', self.transmitter_idx)
+        log.info('Remaining segs in queue: %d', self.seg_queue.qsize())
 
     def _run(self):
         log.info('Initializing Transmitter %d...', self.transmitter_idx)
@@ -65,6 +73,8 @@ class Transmitter:
         torch.multiprocessing.set_sharing_strategy('file_system')
 
         timing = Timing()
+
+        min_num_segs = 4
 
         self.init()
         while not self.terminate:
@@ -110,13 +120,11 @@ class Transmitter:
                             self.buffer.close_out(slot)
 
                 with timing.add_time('waiting_and_prefetching'):
-                    try:
-                        slots = self.buffer.get_many(timeout=0.02)
-                    except RuntimeError:
-                        slots = []
+                    if self.seg_queue.qsize() <= min_num_segs:
+                        slot = self.buffer.get(timeout=0.02)
 
-                    for slot in slots:
-                        self.seg_queue.put(slot)
+                        if slot is not None:
+                            self.seg_queue.put(slot)
 
             except RuntimeError as exc:
                 log.warning('Error while transmitting data tran: %d, exception: %s', self.transmitter_idx, exc)

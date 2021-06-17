@@ -109,7 +109,9 @@ class ReplayBuffer:
         with self._read_ready:
             if np.sum(self._is_readable) == 0 and not block and not timeout:
                 raise Empty
-            self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= self.target_num_slots, timeout=timeout)
+            ready = self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= self.target_num_slots, timeout=timeout)
+            if not ready:
+                return None
 
             available_slots = np.nonzero(self._is_readable)[0]
             # use reduce fn to select required slots from sorted timestamps
@@ -125,6 +127,7 @@ class ReplayBuffer:
 
     def get_many(self, timeout=None):
         with self._read_ready:
+            # if timeout is reached, get_many will return an empty list, which has no effect on transmitter
             self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= self.target_num_slots, timeout=timeout)
 
             available_slots = np.nonzero(self._is_readable)[0]
