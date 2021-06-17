@@ -55,7 +55,6 @@ class Transmitter:
         for k, data in self.buffer.storage.items():
             # lz4 is the most cost-efficient compression choice, ~7.5x compression in ~1.5s
             compressed = blosc.compress(data[slot].tobytes(), typesize=4, cname='lz4')
-            mem = 
             mem_data[k] = mem = getsizeof(compressed) / 1024**2
             total_mem += mem
             msg.extend([k.encode('ascii'), compressed])
