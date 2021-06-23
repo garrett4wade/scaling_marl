@@ -2,19 +2,19 @@
 import sys
 # import setproctitle
 import numpy as np
-import multiprocessing as mp
 
 import yaml
 import torch
 import time
 import zmq
-import blosc
 import wandb
 from config import get_config
 from envs.starcraft2.StarCraft2_Env import StarCraft2Env
 from envs.env_wrappers import ShareDummyVecEnv, ShareSubprocVecEnv
 from envs.starcraft2.smac_maps import get_map_params
 from utils.buffer import LearnerBuffer
+from system.reciever import Receiver
+from torch.multiprocessing import JoinableQueue as TorchJoinableQueue
 
 import torch.distributed as dist
 from algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
@@ -124,47 +124,9 @@ def main():
     buffer = LearnerBuffer(all_args, all_args.observation_space, all_args.share_observation_space,
                            all_args.action_space)
 
-    def receive_data(idx, buffer, all_args):
-        socket = zmq.Context().socket(zmq.ROUTER)
-        seg_port = all_args.seg_addrs[idx].split(':')[-1]
-        socket.bind('tcp://*:' + seg_port)
-
-        step = 0
-        while True:
-            tik = time.time()
-            msg = socket.recv_multipart()
-            print('receiver {} receive some message!'.format(idx), time.time() - tik)
-
-            socket.send_multipart([msg[0], msg[1], b'ok'])
-
-            if len(msg) > 3:
-                msg = msg[2:]
-                tik = time.time()
-                assert len(msg) % 2 == 0
-                seg_dict = {}
-                decompression_time = 0
-                for i in range(len(msg) // 2):
-                    k, v = msg[2 * i].decode('ascii'), msg[2 * i + 1]
-                    shape, dtype = buffer.shapes_and_dtypes[k]
-                    tik = time.time()
-                    decompressed = blosc.decompress(v)
-                    decompression_time += time.time() - tik
-                    array = np.frombuffer(decompressed, dtype=np.float32).reshape(*shape)
-                    seg_dict[k] = array
-
-                tik = time.time()
-                buffer.put(seg_dict)
-                buffer_put_time = time.time() - tik
-                step += 1
-                print('receiver {} decompression time: {:.2f}, buffer put time: {:.2f}'.format(
-                    idx, decompression_time, buffer_put_time))
-
-    receivers = [
-        mp.Process(target=receive_data, args=(idx, buffer, all_args)) for idx in range(len(all_args.seg_addrs))
-    ]
-    for receiver in receivers:
-        receiver.daemon = True
-        receiver.start()
+    recievers = [Receiver(all_args, i, TorchJoinableQueue(), buffer) for i in range(len(all_args.seg_addrs))]
+    for r in recievers:
+        r.init()
 
     dist.init_process_group('nccl', rank=0, world_size=1, init_method='file:///dev/shm/smac_ddp')
     policy = Policy(0,
