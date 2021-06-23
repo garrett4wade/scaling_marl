@@ -1,7 +1,6 @@
 import multiprocessing
 import signal
 import time
-from collections import deque
 from queue import Empty
 
 from algorithms.utils.util import check
@@ -26,7 +25,8 @@ def _t2n(x):
 
 class PolicyWorker:
     def __init__(self, worker_idx, cfg, obs_space, share_obs_space, action_space, buffer, policy_queue, actor_queues,
-                 report_queue, task_queue, policy_lock, resume_experience_collection_cv, act_shms, act_semaphores, envstep_output_shm, envstep_output_semaphores):
+                 report_queue, task_queue, policy_lock, resume_experience_collection_cv, act_shms, act_semaphores,
+                 envstep_output_shm, envstep_output_semaphores):
         log.info('Initializing policy worker %d', worker_idx)
 
         self.worker_idx = worker_idx
@@ -94,7 +94,10 @@ class PolicyWorker:
     def _handle_policy_steps(self, split_idx, timing):
         with torch.no_grad():
             with timing.add_time('inference/prepare_policy_inputs'):
-                policy_inputs = {k: v for k, v in self.envstep_output_shm[split_idx].items() if k in self.buffer.policy_input_keys}
+                policy_inputs = {
+                    k: v
+                    for k, v in self.envstep_output_shm[split_idx].items() if k in self.buffer.policy_input_keys
+                }
                 dones = self.envstep_output_shm[split_idx]['dones']
                 policy_inputs['masks'] = np.zeros_like(dones)
                 policy_inputs['masks'][:] = 1 - np.all(dones, axis=1, keepdims=True)
@@ -113,7 +116,7 @@ class PolicyWorker:
             with timing.add_time('inference/to_device'):
                 for k, v in policy_inputs.items():
                     policy_inputs[k] = check(v).to(**self.rollout_policy.tpdv, non_blocking=True)
-    
+
             with timing.add_time('inference/inference_step'):
                 policy_outputs = self.rollout_policy.get_actions(**policy_inputs)
 
@@ -132,7 +135,7 @@ class PolicyWorker:
                     env_slice = slice(i * self.envs_per_split, (i + 1) * self.envs_per_split)
                     shm_pair[split_idx][:] = policy_outputs['actions'][env_slice]
                     semaphore_pair[split_idx].release()
-            
+
             with timing.add_time('inference/insert_after_inference'):
                 for k, v in self.envstep_output_shm[split_idx].items():
                     if 'rnn_states' in k:
@@ -236,8 +239,6 @@ class PolicyWorker:
                 #     with self.resume_experience_collection_cv:
                 #         self.resume_experience_collection_cv.wait(timeout=0.05)
 
-                waiting_started = time.time()
-
                 with timing.time_avg('waiting_avg'), timing.add_time('waiting'):
                     for i, semaphore in enumerate(self.envstep_output_semaphores):
                         if not self.is_actor_ready[cur_split, i]:
@@ -251,7 +252,7 @@ class PolicyWorker:
 
                     with timing.time_avg('inference_avg'), timing.add_time('inference'):
                         self._handle_policy_steps(cur_split, timing)
-                
+
                     cur_split = (cur_split + 1) % self.num_splits
 
                 with timing.add_time('get_tasks'):
@@ -276,11 +277,12 @@ class PolicyWorker:
 
                         stats = memory_stats('policy_worker', self.device)
 
-                        self.report_queue.put(dict(
-                            timing=timing_stats,
-                            samples=samples_since_last_report,
-                            stats=stats,
-                        ))
+                        self.report_queue.put(
+                            dict(
+                                timing=timing_stats,
+                                samples=samples_since_last_report,
+                                stats=stats,
+                            ))
                         last_report = time.time()
                         last_report_samples = self.total_num_samples
 
@@ -299,7 +301,8 @@ class PolicyWorker:
 
         self.model_weights_socket.close()
         time.sleep(0.2)
-        log.info('Policy worker total num sample: %d, total inference steps: %d, timing: %s', self.total_num_samples, self.total_num_samples // self.rollout_bs, timing)
+        log.info('Policy worker total num sample: %d, total inference steps: %d, timing: %s', self.total_num_samples,
+                 self.total_num_samples // self.rollout_bs, timing)
 
     def init(self):
         self.task_queue.put((TaskType.INIT, None))

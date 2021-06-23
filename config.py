@@ -153,6 +153,7 @@ def get_config():
     parser = argparse.ArgumentParser(description='onpolicy', formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--node_idx', type=int)
     parser.add_argument('--config', type=str)
+    parser.add_argument('--no_summary', action='store_true')
 
     # prepare parameters
     parser.add_argument("--algorithm_name", type=str, default='mappo', choices=["rmappo", "mappo"])

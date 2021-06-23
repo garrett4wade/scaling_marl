@@ -141,7 +141,8 @@ class Transmitter:
 
         self.socket.close()
         time.sleep(0.2)
-        log.info('Transmitter avg. sending interval: %.2f, avg. delay: %.3f, timing: %s', np.mean(self.sending_intervals), np.mean(self.sending_delays), timing)
+        log.info('Transmitter avg. sending interval: %.2f, avg. delay: %.3f, timing: %s',
+                 np.mean(self.sending_intervals), np.mean(self.sending_delays), timing)
 
     def init(self):
         self.task_queue.put(TaskType.INIT)

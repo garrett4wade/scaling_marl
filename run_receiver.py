@@ -113,12 +113,13 @@ def main():
 
     all_args.num_agents = get_map_params(all_args.map_name)["n_agents"]
 
-    # run = wandb.init(config=all_args,
-    #                 project=all_args.env_name + '_distributed_nodes',
-    #                 entity=all_args.user_name,
-    #                 name=all_args.experiment_name,
-    #                 group=all_args.map_name,
-    #                 reinit=True)
+    if not all_args.no_summary:
+        run = wandb.init(config=all_args,
+                         project=all_args.env_name + '_distributed_nodes',
+                         entity=all_args.user_name,
+                         name=all_args.experiment_name,
+                         group=all_args.map_name,
+                         reinit=True)
 
     buffer = LearnerBuffer(all_args, all_args.observation_space, all_args.share_observation_space,
                            all_args.action_space)
@@ -155,15 +156,23 @@ def main():
                 buffer.put(seg_dict)
                 buffer_put_time = time.time() - tik
                 step += 1
-                print('receiver {} decompression time: {:.2f}, buffer put time: {:.2f}'.format(idx, decompression_time, buffer_put_time))
+                print('receiver {} decompression time: {:.2f}, buffer put time: {:.2f}'.format(
+                    idx, decompression_time, buffer_put_time))
 
-    receivers = [mp.Process(target=receive_data, args=(idx, buffer, all_args)) for idx in range(len(all_args.seg_addrs))]
+    receivers = [
+        mp.Process(target=receive_data, args=(idx, buffer, all_args)) for idx in range(len(all_args.seg_addrs))
+    ]
     for receiver in receivers:
         receiver.daemon = True
         receiver.start()
 
     dist.init_process_group('nccl', rank=0, world_size=1, init_method='file:///dev/shm/smac_ddp')
-    policy = Policy(0, all_args, all_args.observation_space, all_args.share_observation_space, all_args.action_space, is_training=True)
+    policy = Policy(0,
+                    all_args,
+                    all_args.observation_space,
+                    all_args.share_observation_space,
+                    all_args.action_space,
+                    is_training=True)
     model_weights_socket = zmq.Context().socket(zmq.PUB)
     model_port = all_args.model_weights_addr.split(':')[-1]
     model_weights_socket.bind('tcp://*:' + model_port)
@@ -178,9 +187,11 @@ def main():
         msg.append(str(step).encode('ascii'))
         model_weights_socket.send_multipart(msg)
 
-        # wandb.log({'total_timesteps': buffer.total_timesteps.item()}, step=step)
+        if not all_args.no_summary:
+            wandb.log({'total_timesteps': buffer.total_timesteps.item()}, step=step)
         step += 1
 
+    run.finish()
 
 
 if __name__ == "__main__":

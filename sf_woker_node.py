@@ -78,8 +78,11 @@ class SFWorkerNode:
 
         # TODO: here we only consider actions for policy-sharing
         act_shape = (self.cfg.envs_per_actor // self.cfg.num_splits, self.num_agents, 1)
-        self.act_shms = [[torch.zeros(act_shape, dtype=torch.int32).share_memory_().numpy() for _ in range(self.cfg.num_splits)] for _ in range(self.cfg.num_actors)]
-        self.act_semaphores = [[multiprocessing.Semaphore(0) for _ in range(self.cfg.num_splits)] for _ in range(self.cfg.num_actors)]
+        self.act_shms = [[
+            torch.zeros(act_shape, dtype=torch.int32).share_memory_().numpy() for _ in range(self.cfg.num_splits)
+        ] for _ in range(self.cfg.num_actors)]
+        self.act_semaphores = [[multiprocessing.Semaphore(0) for _ in range(self.cfg.num_splits)]
+                               for _ in range(self.cfg.num_actors)]
 
         # TODO: initialize env step outputs using config
         # following is just the case of StarCraft2 (policy-sharing environments)
@@ -94,10 +97,12 @@ class SFWorkerNode:
                         continue
                     shape = getattr(self.buffer, k).shape[2:]
                     shm_dict[k] = torch.zeros(shape, dtype=torch.float32).share_memory_().numpy()
-                shm_dict['dones'] = torch.zeros(self.buffer.masks.shape[2:], dtype=torch.float32).share_memory_().numpy()
+                shm_dict['dones'] = torch.zeros(self.buffer.masks.shape[2:],
+                                                dtype=torch.float32).share_memory_().numpy()
                 shms.append(shm_dict)
             self.envstep_output_shms.append(shms)
-        self.envstep_output_semaphores = [[multiprocessing.Semaphore(0) for _ in range(self.cfg.num_splits)] for _ in range(self.cfg.num_actors)]
+        self.envstep_output_semaphores = [[multiprocessing.Semaphore(0) for _ in range(self.cfg.num_splits)]
+                                          for _ in range(self.cfg.num_actors)]
 
         self.policy_avg_stats = dict()
 
