@@ -13,7 +13,7 @@ from envs.starcraft2.StarCraft2_Env import StarCraft2Env
 from envs.env_wrappers import ShareDummyVecEnv, ShareSubprocVecEnv
 from envs.starcraft2.smac_maps import get_map_params
 from utils.buffer import LearnerBuffer
-from system.reciever import Receiver
+from system.receiver import Receiver
 from torch.multiprocessing import JoinableQueue as TorchJoinableQueue
 
 import torch.distributed as dist

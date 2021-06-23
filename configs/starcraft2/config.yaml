@@ -30,9 +30,9 @@ seg_addrs:
   - tcp://10.0.2.2:12354
   - tcp://10.0.2.2:12355
   - tcp://10.0.2.2:12356
-num_actors: 128
+num_actors: 8
 envs_per_actor: 4
-num_policy_workers: 4
+num_policy_workers: 1
 qsize: 32
 num_splits: 2
 num_trainers: 1

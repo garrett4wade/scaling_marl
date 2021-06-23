@@ -36,10 +36,11 @@ class Receiver:
 
     def _init(self):
         self.socket = zmq.Context().socket(zmq.ROUTER)
-        seg_port = self.cfg.seg_addrs[self.reciever_idx].split(':')[-1]
+        seg_port = self.cfg.seg_addrs[self.receiver_idx].split(':')[-1]
         self.socket.bind('tcp://*:' + seg_port)
 
         self.initialized = True
+        log.info('Reiceiver %d is ready!', self.receiver_idx)
 
     def _unpack_msg(self, timing, msg):
         msg = msg[2:]
