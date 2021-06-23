@@ -116,7 +116,7 @@ def main():
     # run = wandb.init(config=all_args,
     #                 project=all_args.env_name + '_distributed_nodes',
     #                 entity=all_args.user_name,
-    #                 name='throughput_test',
+    #                 name=all_args.experiment_name,
     #                 group=all_args.map_name,
     #                 reinit=True)
 

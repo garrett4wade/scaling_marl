@@ -1,8 +1,8 @@
 algorithm_name: rmappo
 env_name: StarCraft2
-map_name: 27m_vs_30m
+map_name: 3m
 user_name: garrett4wade
-experiment_name: debug
+experiment_name: 256cores
 benchmark: false
 cuda: true
 cuda_deterministic: true
@@ -13,19 +13,24 @@ use_render: false
 
 num_env_steps: 10000000
 train_for_env_steps: 10000000000
-train_for_seconds: 1200
+train_for_seconds: 600
 model_dir: null
 
 # system parameters
-model_weights_addr: tcp://10.0.1.32:8889
+model_weights_addr: tcp://10.0.2.2:8889
 seg_addrs:
-  - tcp://10.0.1.32:12346
-  - tcp://10.0.1.32:12347
-  - tcp://10.0.1.32:12348
-  - tcp://10.0.1.32:12349
-  - tcp://10.0.1.32:12350
+  - tcp://10.0.2.2:12346
+  - tcp://10.0.2.2:12347
+  - tcp://10.0.2.2:12348
+  - tcp://10.0.2.2:12349
+  - tcp://10.0.2.2:12350
+  - tcp://10.0.2.2:12352
+  - tcp://10.0.2.2:12353
+  - tcp://10.0.2.2:12354
+  - tcp://10.0.2.2:12355
+  - tcp://10.0.2.2:12356
 num_actors: 128
-envs_per_actor: 2
+envs_per_actor: 4
 num_policy_workers: 4
 qsize: 32
 num_splits: 2
@@ -50,7 +55,7 @@ reset_timeout_seconds: 60
 actor_worker_gpus: 0
 
 # algorithm parameters
-hidden_size: 512
+hidden_size: 64
 layer_N: 1
 rec_n: 1
 sample_reuse: 5
