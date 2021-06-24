@@ -50,7 +50,6 @@ default_niceness: 0
 eval_episodes: 32
 eval_interval: 25
 log_interval: 20
-n_eval_rollout_threads: 4
 n_training_threads: 16
 reset_timeout_seconds: 60
 actor_worker_gpus: 0
