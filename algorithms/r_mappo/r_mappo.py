@@ -1,9 +1,7 @@
-import numpy as np
 import torch
 import torch.nn as nn
 from utils.util import get_gard_norm, huber_loss, mse_loss
 from algorithms.utils.util import check
-import torch.distributed as dist
 
 
 class R_MAPPO:
@@ -11,9 +9,7 @@ class R_MAPPO:
         self.device = policy.device
         self.tpdv = dict(dtype=torch.float32, device=self.device)
         self.policy = policy
-        self.num_mini_batch = args.num_mini_batch
-        self.num_trainers = dist.get_world_size()
-        self.slots_per_update = args.slots_per_update
+        self.num_trainers = args.num_trainers
 
         self.clip_param = args.clip_param
         self.ppo_epoch = args.ppo_epoch
@@ -98,41 +94,5 @@ class R_MAPPO:
 
         return value_loss, policy_loss, dist_entropy, grad_norm
 
-    def step(self, buffer, update_actor=True):
-        train_info = {}
-
-        summary_keys = ['value_loss', 'policy_loss', 'dist_entropy', 'grad_norm']
-        for k in summary_keys:
-            train_info[k] = 0
-
-        dist.barrier()
-        # only train popart parameter in the first epoch
-        slots, data_generator = buffer.get(recur=self._use_recurrent_policy)
-
-        # ensure all process get different slot ids
-        tensor_list = [torch.zeros(self.slots_per_update).to(self.device) for _ in range(self.num_trainers)]
-        dist.all_gather(tensor_list, torch.Tensor(slots.tolist()).to(self.device))
-        slot_ids = torch.cat(tensor_list).tolist()
-        assert len(np.unique(slot_ids)) == len(slot_ids)
-
-        for sample in data_generator:
-
-            infos = self.ppo_update(sample, update_actor)
-            for info in infos:
-                dist.all_reduce(info)
-            value_loss, policy_loss, dist_entropy, grad_norm = infos
-
-            for k in summary_keys:
-                train_info[k] += locals()[k].item()
-
-        train_info["average_step_rewards"] = np.mean(buffer.rewards[slots])
-        train_info['dead_ratio'] = 1 - buffer.active_masks[slots].sum() / np.prod(buffer.active_masks[slots].shape)
-
-        buffer.after_training_step(slots)
-
-        reduce_factor = self.num_mini_batch * self.num_trainers
-
-        for k in summary_keys:
-            train_info[k] /= reduce_factor
-
-        return train_info
+    def step(self, sample, update_actor):
+        return self.ppo_update(sample, update_actor)

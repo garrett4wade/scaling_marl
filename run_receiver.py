@@ -5,8 +5,6 @@ import numpy as np
 
 import yaml
 import torch
-import time
-import zmq
 import wandb
 from config import get_config
 from envs.starcraft2.StarCraft2_Env import StarCraft2Env
@@ -15,9 +13,7 @@ from envs.starcraft2.smac_maps import get_map_params
 from utils.buffer import LearnerBuffer
 from system.receiver import Receiver
 from torch.multiprocessing import JoinableQueue as TorchJoinableQueue
-
-import torch.distributed as dist
-from algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
+from system.trainer import Trainer
 """Train script for SMAC."""
 
 
@@ -128,30 +124,12 @@ def main():
     for r in recievers:
         r.init()
 
-    dist.init_process_group('nccl', rank=0, world_size=1, init_method='file:///dev/shm/smac_ddp')
-    policy = Policy(0,
-                    all_args,
-                    all_args.observation_space,
-                    all_args.share_observation_space,
-                    all_args.action_space,
-                    is_training=True)
-    model_weights_socket = zmq.Context().socket(zmq.PUB)
-    model_port = all_args.model_weights_addr.split(':')[-1]
-    model_weights_socket.bind('tcp://*:' + model_port)
+    trainers = [Trainer(rank, buffer, all_args, run_dir='log') for rank in range(all_args.num_trainers)]
+    for trainer in trainers:
+        trainer.process.start()
 
-    step = 1
-    while True:
-        time.sleep(2)
-        numpy_state_dict = {k.replace('module.', ''): v.cpu().numpy() for k, v in policy.state_dict().items()}
-        msg = []
-        for k, v in numpy_state_dict.items():
-            msg.extend([k.encode('ascii'), v])
-        msg.append(str(step).encode('ascii'))
-        model_weights_socket.send_multipart(msg)
-
-        if not all_args.no_summary:
-            wandb.log({'total_timesteps': buffer.total_timesteps.item()}, step=step)
-        step += 1
+    for trainer in trainers:
+        trainer.process.join()
 
     run.finish()
 

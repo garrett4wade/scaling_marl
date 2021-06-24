@@ -224,6 +224,10 @@ def get_config():
                         default=int(1e10),
                         type=int,
                         help='Stop training after this many seconds')
+    parser.add_argument('--train_in_background', action='store_true')
+    parser.add_argument('--ddp_init_method', type=str, default='file:///dev/shm/ddp_marl')
+    parser.add_argument('--learner_num_threads', type=int, default=8)
+    parser.add_argument('--broadcast_interval', default=1, type=int)
 
     # env parameters
     parser.add_argument("--env_name", type=str, default='StarCraft2', help="specify the name of environment")

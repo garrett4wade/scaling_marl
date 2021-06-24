@@ -114,7 +114,7 @@ class Receiver:
                         pass
 
             except RuntimeError as exc:
-                log.warning('Error while transmitting data tran: %d, exception: %s', self.receiver_idx, exc)
+                log.warning('Error while receiving data Receiver: %d, exception: %s', self.receiver_idx, exc)
                 log.warning('Terminate process...')
                 self.terminate = True
             except KeyboardInterrupt:

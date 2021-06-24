@@ -108,16 +108,18 @@ class ReplayBuffer:
             if no_availble_before and np.sum(self._is_readable) >= self.target_num_slots:
                 self._read_ready.notify(self.num_consumers_to_notify)
 
-    def get_utilization(self):
+    @property
+    def utilization(self):
         with self._read_ready:
-            available_slots = np.sum(self._is_readable)
+            available_slots = np.sum(self._is_readable).item()
         return available_slots / self.num_slots
 
     def get(self, block=True, timeout=None, reduce_fn=lambda x: x[0]):
         with self._read_ready:
             if np.sum(self._is_readable) == 0 and not block and not timeout:
                 raise Empty
-            ready = self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= self.target_num_slots, timeout=timeout)
+            ready = self._read_ready.wait_for(lambda: np.sum(self._is_readable) >= self.target_num_slots,
+                                              timeout=timeout)
             if not ready:
                 return None
 
@@ -208,7 +210,8 @@ class LearnerBuffer(ReplayBuffer):
         self.num_slots = args.qsize
         # concatenate several slots from workers into a single batch,
         # which will be then sent to GPU for optimziation
-        self.worker_buffer_envs_per_slot = args.num_actors * args.envs_per_actor // args.num_splits // args.num_policy_workers
+        self.worker_buffer_envs_per_slot = (args.num_actors * args.envs_per_actor // args.num_splits //
+                                            args.num_policy_workers)
         self.envs_per_slot = args.slots_per_update * self.worker_buffer_envs_per_slot
 
         self.slots_per_update = args.slots_per_update
@@ -268,7 +271,8 @@ class LearnerBuffer(ReplayBuffer):
                 self._global_ptr[1] += 1
 
         # copy data into main storage
-        batch_slice = slice(position_id * self.worker_buffer_envs_per_slot, (position_id + 1) * self.worker_buffer_envs_per_slot)
+        batch_slice = slice(position_id * self.worker_buffer_envs_per_slot,
+                            (position_id + 1) * self.worker_buffer_envs_per_slot)
 
         for k, v in seg_dict.items():
             self.storage[k][slot_id, :, batch_slice] = v
@@ -289,7 +293,8 @@ class LearnerBuffer(ReplayBuffer):
             # defer the timestamp such that the slot will be selected again only after
             # all readable slots are selected at least once
             self._time_stamp[slot_id] = np.max(self._time_stamp) + 1
-        return self.recurrent_generator(slot_id) if self._use_recurrent_policy else self.feed_forward_generator(slot_id)
+        return slot_id, self.recurrent_generator(
+            slot_id) if self._use_recurrent_policy else self.feed_forward_generator(slot_id)
 
     def close_out(self, slot_id):
         with self._read_ready:
@@ -392,7 +397,16 @@ class PolicyMixin:
 
 
 class SharedPolicyMixin(PolicyMixin):
-    def insert(self, policy_worker_id, split_id, obs, share_obs, rewards, dones, fct_masks=None, available_actions=None, **policy_outputs):
+    def insert(self,
+               policy_worker_id,
+               split_id,
+               obs,
+               share_obs,
+               rewards,
+               dones,
+               fct_masks=None,
+               available_actions=None,
+               **policy_outputs):
         if (policy_worker_id, split_id) not in self._slot_hash.keys():
             self._allocate(policy_worker_id, split_id)
         slot_id = self._slot_hash[(policy_worker_id, split_id)]
