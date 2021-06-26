@@ -18,6 +18,7 @@ class Trainer:
     """ Base class for training. """
     def __init__(self, rank, buffer, cfg, **kwargs):
         self.rank = rank
+        self.device = torch.device(rank)
         self.cfg = cfg
         self.num_trainers = self.cfg.num_trainers
 
@@ -108,6 +109,11 @@ class Trainer:
         self.process = mp.Process(target=self._run)
 
     def _init(self):
+        if self.rank == 0:
+            self.model_weights_socket = zmq.Context().socket(zmq.PUB)
+            model_port = self.cfg.model_weights_addr.split(':')[-1]
+            self.model_weights_socket.bind('tcp://*:' + model_port)
+
         dist.init_process_group('nccl',
                                 rank=self.rank,
                                 world_size=self.cfg.num_trainers,
@@ -128,11 +134,6 @@ class Trainer:
             self.restore()
 
         self.algorithm = self.algorithm_fn(self.cfg, self.policy)
-
-        if self.rank == 0:
-            self.model_weights_socket = zmq.Context().socket(zmq.PUB)
-            model_port = self.cfg.model_weights_addr.split(':')[-1]
-            self.model_weights_socket.bind('tcp://*:' + model_port)
 
         self.pack_off_weights()
         self.initialized = True
@@ -162,10 +163,6 @@ class Trainer:
             self.training_thread.start()
         else:
             self._init()
-            log.error(
-                'train_in_background set to False on learner %d! This is slow, use only for testing!',
-                self.policy_id,
-            )
 
         self.training_tik = self.logging_tik = time.time()
 

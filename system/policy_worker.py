@@ -175,7 +175,7 @@ class PolicyWorker:
 
         self.latest_policy_version = learner_policy_version
 
-        if self.num_policy_updates % 10 == 0:
+        if self.num_policy_updates % 1 == 0:
             log.info(
                 'Updated weights on worker %d, policy_version %d (%s)',
                 self.worker_idx,

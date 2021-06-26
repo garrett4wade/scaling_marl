@@ -94,5 +94,5 @@ class R_MAPPO:
 
         return value_loss, policy_loss, dist_entropy, grad_norm
 
-    def step(self, sample, update_actor):
+    def step(self, sample, update_actor=True):
         return self.ppo_update(sample, update_actor)
