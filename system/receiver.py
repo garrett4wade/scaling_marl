@@ -78,7 +78,6 @@ class Receiver:
 
         timing = Timing()
 
-        self.init()
         while not self.terminate:
             try:
                 # receive INIT and TERMINATE signal from the main process

@@ -40,6 +40,7 @@ class Trainer:
         self.envs_per_split = self.envs_per_actor // self.num_splits
         assert self.envs_per_actor % self.num_splits == 0
         self.episode_length = self.cfg.episode_length
+        self.slots_per_update = self.cfg.slots_per_update
         # interval
         self.use_eval = self.cfg.use_eval
         self.save_interval = self.cfg.save_interval
@@ -160,7 +161,7 @@ class Trainer:
         if self.train_in_background:
             self.training_thread.start()
         else:
-            self.init()
+            self._init()
             log.error(
                 'train_in_background set to False on learner %d! This is slow, use only for testing!',
                 self.policy_id,

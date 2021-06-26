@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from utils.util import get_gard_norm, huber_loss, mse_loss
+from utils.utils import get_gard_norm, huber_loss, mse_loss
 from algorithms.utils.util import check
 
 
@@ -12,7 +12,7 @@ class R_MAPPO:
         self.num_trainers = args.num_trainers
 
         self.clip_param = args.clip_param
-        self.ppo_epoch = args.ppo_epoch
+        self.ppo_epoch = args.sample_reuse
         self.entropy_coef = args.entropy_coef
         self.value_coef = args.value_coef
         self.max_grad_norm = args.max_grad_norm

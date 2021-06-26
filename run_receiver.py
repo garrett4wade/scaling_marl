@@ -2,7 +2,7 @@
 import sys
 # import setproctitle
 import numpy as np
-
+import pathlib
 import yaml
 import torch
 import wandb
@@ -124,14 +124,15 @@ def main():
     for r in recievers:
         r.init()
 
-    trainers = [Trainer(rank, buffer, all_args, run_dir='log') for rank in range(all_args.num_trainers)]
+    trainers = [Trainer(rank, buffer, all_args, run_dir=pathlib.Path('log')) for rank in range(all_args.num_trainers)]
     for trainer in trainers:
         trainer.process.start()
 
     for trainer in trainers:
         trainer.process.join()
 
-    run.finish()
+    if not all_args.no_summary:
+        run.finish()
 
 
 if __name__ == "__main__":
