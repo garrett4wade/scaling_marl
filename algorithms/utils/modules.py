@@ -30,8 +30,8 @@ def compute_gae(rewards, values, masks, fct_masks, gamma=np.float32(0.99), gae_l
 def masked_normalization(x, active_masks=None, eps=np.float32(1e-5)):
     if active_masks is not None:
         x_ = x.copy()
-        x[x_ == 0] = np.nan
-    return (x - np.nanmean(x)) / (np.nanstd(x) + eps)
+        x_[active_masks == 0] = np.nan
+    return (x - np.nanmean(x_)) / (np.nanstd(x_) + eps)
 
 
 if __name__ == "__main__":

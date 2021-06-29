@@ -325,8 +325,8 @@ class LearnerBuffer(ReplayBuffer):
                 # [T, B, A, D] -> [T * B * A, D]
                 output_tensors[k] = flatten(self.storage[k][slot, :self.episode_length], 3)
 
-        output_tensors['v_target'] = v_target
-        output_tensors['advantages'] = advantage
+        output_tensors['v_target'] = _cast(v_target)
+        output_tensors['advantages'] = _cast(advantage)
 
         # NOTE: following 2 lines are for debuggin only, which WILL SIGNIFICANTLY AFFECT PERFORMANCE
         # for k, v in output_tensors.items():
@@ -372,8 +372,8 @@ class LearnerBuffer(ReplayBuffer):
                 else:
                     output_tensors[k] = _cast_h(self.storage[k][slot, :self.episode_length])
 
-        output_tensors['v_target'] = v_target
-        output_tensors['advantages'] = advantage
+        output_tensors['v_target'] = _cast(v_target)
+        output_tensors['advantages'] = _cast(advantage)
 
         # NOTE: following 2 lines are for debuggin only, which WILL SIGNIFICANTLY AFFECT PERFORMANCE
         # for k, v in output_tensors.items():

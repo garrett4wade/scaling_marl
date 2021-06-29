@@ -311,7 +311,7 @@ class Trainer:
         # log information
         if self.rank == 0 and self.policy_version % self.log_interval == 0:
             self.last_received_num_steps = self.received_num_steps
-            self.received_num_steps = self.buffer.total_env_steps.item()
+            self.received_num_steps = self.buffer.total_timesteps.item()
 
             recent_consumed_num_steps = self.log_interval * self.transitions_per_batch * self.num_trainers
             recent_received_num_steps = self.received_num_steps - self.last_received_num_steps
@@ -326,7 +326,7 @@ class Trainer:
                      "recent rollout FPS {}, global average rollout FPS {}, "
                      "recent learning FPS {}, global average learning FPS {}.\n".format(
                          self.cfg.map_name, self.algorithm_name, self.experiment_name, self.policy_version,
-                         self.train_for_episodes, self.consumed_num_steps, self.num_env_steps, recent_rollout_fps,
+                         self.train_for_episodes, self.consumed_num_steps, self.train_for_env_steps, recent_rollout_fps,
                          global_avg_rollout_fps, recent_learning_fps, global_avg_learning_fps))
 
             # assert self.env_name == "StarCraft2"
@@ -342,7 +342,7 @@ class Trainer:
             # as defined in https://cdn.openai.com/dota-2.pdf
 
             recent_sample_reuse = recent_consumed_num_steps / recent_received_num_steps
-            global_sample_reuse = self.consuemd_num_steps / self.received_num_steps
+            global_sample_reuse = self.consumed_num_steps / self.received_num_steps
 
             log.info('recent sample reuse: {:.2f}, global average sample reuse: {:.2f}.'.format(
                 recent_sample_reuse, global_sample_reuse))
@@ -390,10 +390,12 @@ class Trainer:
         """Restore policy's networks from a saved model."""
         self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model.pt'))
 
-    def report(self, infos, consumed_num_steps):
+    def report(self, infos):
         if not self.no_summary:
             for k, v in infos.items():
                 if self.use_wandb:
-                    wandb.log({k: v}, step=consumed_num_steps)
+                    wandb.log({k: v}, step=self.consumed_num_steps)
                 else:
-                    self.writter.add_scalars(k, {k: v}, consumed_num_steps)
+                    self.writter.add_scalars(k, {k: v}, self.consumed_num_steps)
+        else:
+            log.info(infos)
