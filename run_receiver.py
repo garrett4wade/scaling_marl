@@ -14,6 +14,7 @@ from utils.buffer import LearnerBuffer
 from system.receiver import Receiver
 from torch.multiprocessing import JoinableQueue as TorchJoinableQueue
 from system.trainer import Trainer
+from utils.utils import log
 """Train script for SMAC."""
 
 
@@ -130,9 +131,15 @@ def main():
 
     for trainer in trainers:
         trainer.process.join()
+    log.info('Trainers joined!')
+
+    for r in recievers:
+        r.close()
+    log.info('Receivers joined!')
 
     if not all_args.no_summary:
         run.finish()
+    log.info('Done!')
 
 
 if __name__ == "__main__":

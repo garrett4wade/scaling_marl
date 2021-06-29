@@ -3,7 +3,6 @@ import os
 import torch
 import zmq
 import psutil
-import signal
 import numpy as np
 from utils.utils import log
 from utils.timing import Timing
@@ -135,23 +134,22 @@ class Trainer:
 
         self.algorithm = self.algorithm_fn(self.cfg, self.policy)
 
-        self.pack_off_weights()
+        if self.rank == 0:
+            self.pack_off_weights()
         self.initialized = True
         log.debug('Sucessfully initializing Learner %d!', self.rank)
 
-    def _terimiate(self):
-        dist.destroy_process_group()
+    def _terminate(self):
+        if self.rank == 0:
+            self.model_weights_socket.close()
 
-        self.terminate = True
+        dist.destroy_process_group()
 
     def _accumulated_too_much_experience(self):
         # TODO: add stop experience collection signal
         return False
 
     def _run(self):
-        # workers should ignore Ctrl+C because the termination is handled in the event loop by a special msg
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-
         psutil.Process().nice(self.cfg.default_niceness)
 
         torch.multiprocessing.set_sharing_strategy('file_system')
@@ -201,8 +199,12 @@ class Trainer:
                     self.report(train_infos)
                     self.after_training_step()
 
-                if self.policy_version % self.cfg.broadcast_interval == 0:
+                if self.policy_version % self.cfg.broadcast_interval == 0 and self.rank == 0:
                     self.pack_off_weights()
+
+                # TODO: add eval
+                # if episode % self.eval_interval == 0 and self.use_eval:
+                #     self.eval(consuemd_num_steps)
 
                 # self._experience_collection_rate_stats()
 
@@ -222,26 +224,22 @@ class Trainer:
             self.training_thread.join()
 
         self._terminate()
-        time.sleep(0.3)
+        time.sleep(0.1)
         log.info('GPU learner timing: %s', timing)
-
-    def run(self):
-        raise NotImplementedError
 
     def eval(self):
         # TODO: conduct evaluation using inference server rather than trainer
         raise NotImplementedError
 
     def pack_off_weights(self):
-        if self.rank == 0:
-            # remove prefix 'module.' of DDP models
-            numpy_state_dict = {k.replace('module.', ''): v.cpu().numpy() for k, v in self.policy.state_dict().items()}
-            msg = []
-            for k, v in numpy_state_dict.items():
-                msg.extend([k.encode('ascii'), v])
-            msg.append(str(self.policy_version).encode('ascii'))
-            self.model_weights_socket.send_multipart(msg)
-            log.debug('Broadcasting model weights...')
+        # remove prefix 'module.' of DDP models
+        numpy_state_dict = {k.replace('module.', ''): v.cpu().numpy() for k, v in self.policy.state_dict().items()}
+        msg = []
+        for k, v in numpy_state_dict.items():
+            msg.extend([k.encode('ascii'), v])
+        msg.append(str(self.policy_version).encode('ascii'))
+        self.model_weights_socket.send_multipart(msg)
+        log.debug('Broadcasting model weights...')
 
     def training_step(self, timing):
         log.info('buffer utilization before training step: {}/{}'.format(
@@ -367,12 +365,10 @@ class Trainer:
             self.logging_tik = time.time()
 
         dist.barrier()
-        # eval
-        # if episode % self.eval_interval == 0 and self.use_eval:
-        #     self.eval(consuemd_num_steps)
 
     def _should_end_training(self):
-        end = self.consumed_num_steps > self.train_for_env_steps
+        end = self.terminate
+        end |= self.consumed_num_steps > self.train_for_env_steps
         end |= self.policy_version > self.train_for_episodes
         end |= (time.time() - self.training_tik) > self.train_for_seconds
 
