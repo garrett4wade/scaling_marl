@@ -31,6 +31,7 @@ class PolicyWorker:
 
         self.worker_idx = worker_idx
         self.cfg = cfg
+        self.tpdv = dict(device=torch.device(0), dtype=torch.float32)
 
         self.obs_space = obs_space
         self.share_obs_space = share_obs_space
@@ -116,7 +117,7 @@ class PolicyWorker:
 
             with timing.add_time('inference/to_device'):
                 for k, v in policy_inputs.items():
-                    policy_inputs[k] = check(v).to(**self.rollout_policy.tpdv, non_blocking=True)
+                    policy_inputs[k] = check(v).to(**self.tpdv, non_blocking=True)
 
             with timing.add_time('inference/inference_step'):
                 policy_outputs = self.rollout_policy.get_actions(**policy_inputs)

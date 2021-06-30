@@ -20,6 +20,8 @@ class Trainer:
         self.device = torch.device(rank)
         self.cfg = cfg
         self.num_trainers = self.cfg.num_trainers
+        # TODO: support CPU
+        self.tpdv = dict(device=torch.device(rank), dtype=torch.float32)
 
         self.nodes_ready_event = nodes_ready_event
 
@@ -262,7 +264,7 @@ class Trainer:
         train_info = {}
 
         # TODO: use different summary keys for different algorithms
-        summary_keys = ['value_loss', 'policy_loss', 'dist_entropy', 'grad_norm']
+        summary_keys = ['value_loss', 'policy_loss', 'dist_entropy', 'actor_grad_norm', 'critic_grad_norm']
         for k in summary_keys:
             train_info[k] = 0
 
@@ -281,6 +283,10 @@ class Trainer:
             assert len(np.unique(slot_ids)) == len(slot_ids)
 
         for sample in data_generator:
+            with timing.add_time('training_step/to_device'):
+                for k, v in sample.items():
+                    sample[k] = torch.from_numpy(v).to(**self.tpdv)
+
             with timing.add_time('training_step/algorithm_step'):
                 infos = self.algorithm.step(sample)
 
@@ -289,7 +295,7 @@ class Trainer:
                     dist.all_reduce(info)
 
             with timing.add_time('training_step/logging/loss'):
-                value_loss, policy_loss, dist_entropy, grad_norm = infos
+                value_loss, policy_loss, dist_entropy, actor_grad_norm, critic_grad_norm = infos
 
                 for k in summary_keys:
                     train_info[k] += locals()[k].item()
