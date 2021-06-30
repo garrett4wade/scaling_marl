@@ -50,22 +50,6 @@ class R_MAPPO:
 
         values, action_log_probs, dist_entropy = self.policy.evaluate_actions(**sample)
 
-        ''' critic update '''
-        value_loss = self.cal_value_loss(values, sample['values'], sample['v_target'], sample['active_masks'])
-        # following advice from https://youtu.be/9mS1fIYj1So set grad to None instead of optimizer.zero_grad()
-        for p in self.policy.critic.parameters():
-            p.grad = None
-
-        (value_loss * self.value_coef).backward()
-
-        if self._use_max_grad_norm:
-            critic_grad_norm = nn.utils.clip_grad_norm_(self.policy.critic.parameters(), self.max_grad_norm)
-        else:
-            critic_grad_norm = get_gard_norm(self.policy.critic.parameters())
-
-        self.policy.critic_optimizer.step()
-
-        ''' actor update '''
         imp_weights = torch.exp(action_log_probs - sample['action_log_probs'])
 
         surr1 = imp_weights * sample['advantages']
@@ -76,20 +60,23 @@ class R_MAPPO:
                            sample['active_masks']).sum() / sample['active_masks'].sum()
         else:
             policy_loss = -torch.sum(torch.min(surr1, surr2), dim=-1, keepdim=True).mean()
+
+        value_loss = self.cal_value_loss(values, sample['values'], sample['v_target'], sample['active_masks'])
+
         # following advice from https://youtu.be/9mS1fIYj1So set grad to None instead of optimizer.zero_grad()
-        for p in self.policy.actor.parameters():
+        for p in self.policy.parameters():
             p.grad = None
 
-        (policy_loss - dist_entropy * self.entropy_coef).backward()
+        (policy_loss - dist_entropy * self.entropy_coef + value_loss * self.value_coef).backward()
 
         if self._use_max_grad_norm:
-            actor_grad_norm = nn.utils.clip_grad_norm_(self.policy.actor.parameters(), self.max_grad_norm)
+            grad_norm = nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
         else:
-            actor_grad_norm = get_gard_norm(self.policy.actor.parameters())
+            grad_norm = get_gard_norm(self.policy.parameters())
 
-        self.policy.actor_optimizer.step()
+        self.policy.optimizer.step()
 
-        return value_loss, policy_loss, dist_entropy, actor_grad_norm, critic_grad_norm
+        return value_loss, policy_loss, dist_entropy, grad_norm
 
     def step(self, sample, update_actor=True):
         return self.ppo_update(sample, update_actor)

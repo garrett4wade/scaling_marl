@@ -264,7 +264,7 @@ class Trainer:
         train_info = {}
 
         # TODO: use different summary keys for different algorithms
-        summary_keys = ['value_loss', 'policy_loss', 'dist_entropy', 'actor_grad_norm', 'critic_grad_norm']
+        summary_keys = ['value_loss', 'policy_loss', 'dist_entropy', 'grad_norm']
         for k in summary_keys:
             train_info[k] = 0
 
@@ -295,7 +295,7 @@ class Trainer:
                     dist.all_reduce(info)
 
             with timing.add_time('training_step/logging/loss'):
-                value_loss, policy_loss, dist_entropy, actor_grad_norm, critic_grad_norm = infos
+                value_loss, policy_loss, dist_entropy, grad_norm = infos
 
                 for k in summary_keys:
                     train_info[k] += locals()[k].item()

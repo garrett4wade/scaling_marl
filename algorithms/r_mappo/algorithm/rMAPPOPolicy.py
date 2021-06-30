@@ -1,4 +1,5 @@
 import torch
+import itertools
 from algorithms.r_mappo.algorithm.actor_critic import Actor, Critic
 from utils.utils import update_linear_schedule
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -55,19 +56,16 @@ class R_MAPPOPolicy:
             self.actor = DDP(self.actor, device_ids=[rank], output_device=rank)
             self.critic = DDP(self.actor, device_ids=[rank], output_device=rank)
 
-            self.policy_optimizer = torch.optim.Adam(self.actor.parameters(),
-                                                     lr=self.lr,
-                                                     eps=self.opti_eps,
-                                                     weight_decay=self.weight_decay)
-            self.value_optimizer = torch.optim.Adam(self.critic.parameters(),
-                                                    lr=self.lr,
-                                                    eps=self.opti_eps,
-                                                    weight_decay=self.weight_decay)
+            self.optimizer = torch.optim.Adam(self.parameters(),
+                                              lr=self.lr,
+                                              eps=self.opti_eps,
+                                              weight_decay=self.weight_decay)
         else:
-            for p in self.actor.parameters():
+            for p in self.parameters():
                 p.requires_grad = False  # we don't train anything here
-            for p in self.critic.parameters():
-                p.requires_grad = False  # we don't train anything here
+
+    def parameters(self):
+        return itertools.chain(self.actor.parameters(), self.critic.parameters())
 
     def lr_decay(self, episode, episodes):
         """
