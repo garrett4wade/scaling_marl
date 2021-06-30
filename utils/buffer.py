@@ -7,10 +7,12 @@ from algorithms.storage_registries import get_ppo_storage_specs, to_numpy_type, 
 from algorithms.utils.modules import compute_gae, masked_normalization
 from utils.utils import log
 from algorithms.utils.transforms import flatten, to_chunk, select
+from utils.popart import PopArt
 
 
 class ReplayBuffer:
     def __init__(self, args, obs_space, share_obs_space, act_space):
+        self.args = args
         # system configuration
         self.num_actors = args.num_actors
         self.num_splits = args.num_splits
@@ -238,6 +240,13 @@ class LearnerBuffer(ReplayBuffer):
         self.gamma = np.float32(args.gamma)
         self.lmbda = np.float32(args.gae_lambda)
 
+        # popart
+        self._use_popart = args.use_popart
+        if self._use_popart:
+            self.value_normalizer = PopArt((1, ), self.args.num_trainers)
+        else:
+            self.value_normalizer = None
+
         self._use_advantage_normalization = args.use_advantage_normalization
         self._use_recurrent_policy = args.use_recurrent_policy
 
@@ -320,16 +329,30 @@ class LearnerBuffer(ReplayBuffer):
     def feed_forward_generator(self, slot):
         output_tensors = {}
 
-        # TODO: add popart
+        if self.args.use_reanalyze:
+            # TODO: add reanalyze
+            pass
+        
+        if self._use_popart:
+            denormalized_values = self.value_normalizer.denormalize(self.values[slot])
+        else:
+            denormalized_values = self.values[slot]
+
         # compute value targets and advantages every time learner fetches data, because as the same slot
         # is reused, we need to recompute values of corresponding observations
-        gae_return = compute_gae(self.rewards[slot], self.values[slot], self.masks[slot], self.fct_masks[slot],
+        gae_return = compute_gae(self.rewards[slot], denormalized_values, self.masks[slot], self.fct_masks[slot],
                                  self.gamma, self.lmbda)
         v_target, advantage = gae_return.v_target, gae_return.advantage
+
         if self._use_advantage_normalization:
-            advantage = masked_normalization(gae_return.advantage, self.active_masks[slot, :-1])
+            advantage = masked_normalization(advantage, self.active_masks[slot, :-1])
+        
+        if self._use_popart:
+            v_target = self.value_normalizer(v_target)
 
         for k in self.storage_keys:
+            # we don't need rnn_states/fct_masks/rewards for MLP policy learning
+            # fct_masks/rewards are only used in gae computation
             if 'rnn_states' not in k and k != 'fct_masks' and k != 'rewards':
                 # flatten first 3 dims
                 # [T, B, A, D] -> [T * B * A, D]
@@ -338,7 +361,7 @@ class LearnerBuffer(ReplayBuffer):
         output_tensors['v_target'] = _cast(v_target)
         output_tensors['advantages'] = _cast(advantage)
 
-        # NOTE: following 2 lines are for debuggin only, which WILL SIGNIFICANTLY AFFECT PERFORMANCE
+        # NOTE: following 2 lines are for debuggin only, which WILL SIGNIFICANTLY AFFECT SYSTEM PERFORMANCE
         # for k, v in output_tensors.items():
         #     assert np.all(1 - np.isnan(v)) and np.all(1 - np.isinf(v)), k
 
@@ -346,24 +369,33 @@ class LearnerBuffer(ReplayBuffer):
             yield output_tensors
         else:
             rand = torch.randperm(self.batch_size).numpy()
-            indices = [
-                rand[i * self.mini_batch_size:(i + 1) * self.mini_batch_size] for i in range(self.num_mini_batch)
-            ]
-            for indice in indices:
+            for i in range(self.num_mini_batch):
+                indice = rand[i * self.mini_batch_size:(i + 1) * self.mini_batch_size]
                 yield {k: v[indice] for k, v in output_tensors.items()}
 
     def recurrent_generator(self, slot):
-        # TODO: add popart
         output_tensors = {}
 
-        # TODO: add popart
+        if self.args.use_reanalyze:
+            # TODO: add reanalyze
+            pass
+        
+        if self._use_popart:
+            denormalized_values = self.value_normalizer.denormalize(self.values[slot])
+        else:
+            denormalized_values = self.values[slot]
+
         # compute value targets and advantages every time learner fetches data, because as the same slot
         # is reused, we need to recompute values of corresponding observations
-        gae_return = compute_gae(self.rewards[slot], self.values[slot], self.masks[slot], self.fct_masks[slot],
+        gae_return = compute_gae(self.rewards[slot], denormalized_values, self.masks[slot], self.fct_masks[slot],
                                  self.gamma, self.lmbda)
         v_target, advantage = gae_return.v_target, gae_return.advantage
+
         if self._use_advantage_normalization:
-            advantage = masked_normalization(gae_return.advantage, self.active_masks[slot, :-1])
+            advantage = masked_normalization(advantage, self.active_masks[slot, :-1])
+        
+        if self._use_popart:
+            v_target = self.value_normalizer(v_target)
 
         def _cast(x):
             # [T, B, A, D] -> [T, B * A, D] -> [L, B * A * (T/L), D]
@@ -376,16 +408,17 @@ class LearnerBuffer(ReplayBuffer):
             return h.reshape(-1, *h.shape[3:]).swapaxes(0, 1)
 
         for k in self.storage_keys:
+            # we don't need fct_masks/rewards for policy learning, because they are used in v_target computation
             if k != 'fct_masks' and k != 'rewards':
-                if 'rnn_states' not in k:
-                    output_tensors[k] = _cast(self.storage[k][slot, :self.episode_length])
-                else:
+                if 'rnn_states' in k:
                     output_tensors[k] = _cast_h(self.storage[k][slot, :self.episode_length])
+                else:
+                    output_tensors[k] = _cast(self.storage[k][slot, :self.episode_length])
 
         output_tensors['v_target'] = _cast(v_target)
         output_tensors['advantages'] = _cast(advantage)
 
-        # NOTE: following 2 lines are for debuggin only, which WILL SIGNIFICANTLY AFFECT PERFORMANCE
+        # NOTE: following 2 lines are for debuggin only, which WILL SIGNIFICANTLY AFFECT SYSTEM PERFORMANCE
         # for k, v in output_tensors.items():
         #     assert np.all(1 - np.isnan(v)) and np.all(1 - np.isinf(v)), k
 
@@ -393,10 +426,8 @@ class LearnerBuffer(ReplayBuffer):
             yield output_tensors
         else:
             rand = torch.randperm(self.batch_size).numpy()
-            indices = [
-                rand[i * self.mini_batch_size:(i + 1) * self.mini_batch_size] for i in range(self.num_mini_batch)
-            ]
-            for indice in indices:
+            for i in range(self.num_mini_batch):
+                indice = rand[i * self.mini_batch_size:(i + 1) * self.mini_batch_size]
                 yield {k: v[indice] for k, v in output_tensors.items()}
 
 

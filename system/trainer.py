@@ -250,7 +250,7 @@ class Trainer:
         self.model_weights_socket.send_multipart(msg)
 
         if self.policy_version % 10 == 0:
-            log.debug('Broadcasting model weights...(ver {})'.format(self.policy_version))
+            log.debug('Broadcasting model weights...(ver. {})'.format(self.policy_version))
 
     def training_step(self, timing):
         log.info('buffer utilization before training step: {}/{}'.format(
@@ -338,16 +338,6 @@ class Trainer:
                          self.train_for_episodes, self.consumed_num_steps, self.train_for_env_steps, recent_rollout_fps,
                          global_avg_rollout_fps, recent_learning_fps, global_avg_learning_fps))
 
-            # assert self.env_name == "StarCraft2"
-            # with self.buffer.summary_lock:  # multiprocessing RLock
-            #     battles_won = np.sum(self.buffer.battles_won)
-            #     battles_game = np.sum(self.buffer.battles_game)
-            # recent_battles_won = battles_won - last_battles_won
-            # recent_battles_game = battles_game - last_battles_game
-
-            # recent_win_rate = recent_battles_won / recent_battles_game if recent_battles_game > 0 else 0.0
-            # log.info("recent winning rate is {}.".format(recent_win_rate))
-
             # as defined in https://cdn.openai.com/dota-2.pdf
             recent_sample_reuse = recent_consumed_num_steps / recent_received_num_steps
             global_sample_reuse = self.consumed_num_steps / self.received_num_steps
@@ -373,6 +363,29 @@ class Trainer:
             # last_battles_won = battles_won
             # self.last_consumed_num_steps = consumed_num_steps
             self.logging_tik = time.time()
+        
+            if self.env_name == 'StarCraft2':
+                with self.buffer.summary_lock:
+                    summary_info = self.buffer.summary_block.sum(0)
+                elapsed_episodes = summary_info[self.summary_idx_hash['elapsed_episodes']]
+                winning_episodes = summary_info[self.summary_idx_hash['winning_episodes']]
+                episode_return = summary_info[self.summary_idx_hash['episode_return']]
+
+                recent_elapsed_episodes = elapsed_episodes - self.last_elapsed_episodes
+                recent_winning_episodes = winning_episodes - self.last_winning_episodes
+                recent_episode_return = episode_return - self.last_episode_return
+
+                if recent_elapsed_episodes > 0:
+                    winning_rate = recent_winning_episodes / recent_elapsed_episodes
+                    assert 0 <= winning_rate and winning_rate <=1
+                    avg_return = recent_episode_return / recent_elapsed_episodes
+                    log.debug('Map: {}, Recent Winning Rate: {:.2%}, Avg. Return: {:.2f}.'.format(self.cfg.map_name, winning_rate, avg_return))
+
+                    self.last_elapsed_episodes = elapsed_episodes
+                    self.last_winning_episodes = winning_episodes
+                    self.last_episode_return = episode_return
+            else:
+                raise NotImplementedError
 
         dist.barrier()
 
@@ -405,26 +418,3 @@ class Trainer:
                     self.writter.add_scalars(k, {k: v}, self.consumed_num_steps)
         else:
             log.info(infos)
-        
-        if self.env_name == 'StarCraft2':
-            with self.buffer.summary_lock:
-                summary_info = self.buffer.summary_block.sum(0)
-            elapsed_episodes = summary_info[self.summary_idx_hash['elapsed_episodes']]
-            winning_episodes = summary_info[self.summary_idx_hash['winning_episodes']]
-            episode_return = summary_info[self.summary_idx_hash['episode_return']]
-
-            recent_elapsed_episodes = elapsed_episodes - self.last_elapsed_episodes
-            recent_winning_episodes = winning_episodes - self.last_winning_episodes
-            recent_episode_return = episode_return - self.last_episode_return
-
-            if recent_elapsed_episodes > 0:
-                winning_rate = recent_winning_episodes / recent_elapsed_episodes
-                assert 0 <= winning_rate and winning_rate <=1
-                avg_return = recent_episode_return / recent_elapsed_episodes
-                log.debug('Map: {}, Recent Winning Rate: {:.2%}, Avg. Return: {:.2f}.'.format(self.cfg.map_name, winning_rate, avg_return))
-
-                self.last_elapsed_episodes = elapsed_episodes
-                self.last_winning_episodes = winning_episodes
-                self.last_episode_return = episode_return
-        else:
-            raise NotImplementedError

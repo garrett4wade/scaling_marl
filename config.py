@@ -289,7 +289,10 @@ def get_config():
     parser.add_argument("--weight_decay", type=float, default=0)
 
     # ppo parameters
-    parser.add_argument("--sample_reuse", type=int, default=5, help='number of ppo epochs (default: 15)')
+    parser.add_argument("--sample_reuse", type=int, default=5, help='number of ppo epochs (default: 5)')
+    parser.add_argument("--use_reanalyze",
+                        action='store_true',
+                        help="whether to re-compute values after each udpate iteration")
     parser.add_argument("--use_clipped_value_loss",
                         action='store_false',
                         default=True,

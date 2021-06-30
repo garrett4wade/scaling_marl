@@ -80,6 +80,7 @@ save_interval: 1
 
 # tricks
 share_policy: true
+use_reanalyze: false
 use_fct_masks: true
 use_feature_normalization: true
 use_gae: true
@@ -87,7 +88,7 @@ use_huber_loss: true
 use_linear_lr_decay: false
 use_max_grad_norm: true
 use_orthogonal: false
-use_popart: true
+use_popart: false
 use_proper_time_limits: false
 use_ReLU: true
 use_active_masks: true
