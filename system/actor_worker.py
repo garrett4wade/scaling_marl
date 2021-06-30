@@ -185,7 +185,6 @@ class ActorWorker:
                     v[self.env_slice] = envstep_outputs[k]
             self.envstep_output_semaphore[split_idx].release()
 
-        # TODO: deal with episodic summary data
         with timing.add_time('env_step/summary'):
             dones = envstep_outputs['dones']
             for env_id, (done, info) in enumerate(zip(dones, infos)):
