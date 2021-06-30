@@ -282,6 +282,26 @@ class Trainer:
             slot_ids = torch.cat(tensor_list).tolist()
             assert len(np.unique(slot_ids)) == len(slot_ids)
 
+        with timing.add_time('training_step/reanalyze'):
+            if self.cfg.use_reanalyze:
+                # re-compute values/rnn_states for learning (re-analysis in MuZero, burn-in in R2D2 etc.)
+                with torch.no_grad():
+                    # TODO: deal with MLP (no rnn_states/masks)
+                    # TODO: deal with Hanabi (nonshared case)
+                    share_obs = self.buffer.share_obs[slot_id]
+                    rnn_states_critic = self.buffer.rnn_states_critic[slot_id][0]
+                    masks = self.buffer.masks[slot_id]
+                    reanalyze_inputs ={
+                                    'share_obs': share_obs.reshape(self.episode_length + 1, -1, *share_obs.shape[3:]),
+                                    'rnn_states_critic': rnn_states_critic.reshape(-1, *rnn_states_critic.shape[2:]).swapaxes(0, 1),
+                                    'masks': masks.reshape(self.episode_length + 1, -1, *masks.shape[3:]),
+                                    }
+                    for k, v in reanalyze_inputs.items():
+                        reanalyze_inputs[k] = torch.from_numpy(v).to(**self.tpdv)
+
+                    values = self.policy.get_values(**reanalyze_inputs).cpu().numpy()
+                    self.buffer.values[slot_id] = values.reshape(*self.buffer.values[slot_id].shape)
+
         for sample in data_generator:
             with timing.add_time('training_step/to_device'):
                 for k, v in sample.items():

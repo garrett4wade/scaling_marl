@@ -329,10 +329,6 @@ class LearnerBuffer(ReplayBuffer):
     def feed_forward_generator(self, slot):
         output_tensors = {}
 
-        if self.args.use_reanalyze:
-            # TODO: add reanalyze
-            pass
-        
         if self._use_popart:
             denormalized_values = self.value_normalizer.denormalize(self.values[slot])
         else:
@@ -376,10 +372,6 @@ class LearnerBuffer(ReplayBuffer):
     def recurrent_generator(self, slot):
         output_tensors = {}
 
-        if self.args.use_reanalyze:
-            # TODO: add reanalyze
-            pass
-        
         if self._use_popart:
             denormalized_values = self.value_normalizer.denormalize(self.values[slot])
         else:
