@@ -3,7 +3,7 @@ import time
 import numpy as np
 import multiprocessing as mp
 from queue import Empty
-from algorithms.storage_registries import get_ppo_storage_specs, to_numpy_type
+from algorithms.storage_registries import get_ppo_storage_specs, to_numpy_type, SUMMARY_KEYS
 from algorithms.utils.modules import compute_gae, masked_normalization
 from utils.utils import log
 from algorithms.utils.transforms import flatten, to_chunk, select
@@ -64,6 +64,10 @@ class ReplayBuffer:
         # the 2 handles point to the same block of memory
         self._storage = {k: getattr(self, '_' + k) for k in self.storage_keys}
         self.storage = {k: getattr(self, k) for k in self.storage_keys}
+
+        # to specify recorded summary infos
+        self.summary_keys = SUMMARY_KEYS[args.env_name]
+        self.summary_lock = mp.Lock()
 
         # buffer indicators
         self._is_readable = torch.zeros((self.num_slots, ), dtype=torch.uint8).share_memory_().numpy()
@@ -177,6 +181,9 @@ class WorkerBuffer(ReplayBuffer):
         # episode step record
         self._ep_step = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
 
+        # summary block
+        self.summary_block = torch.zeros((args.num_splits, self.envs_per_split * args.num_actors, len(self.summary_keys)), dtype=torch.float32).share_memory_().numpy()
+
     def _allocate(self, policy_worker_id, split_id):
         identity = (policy_worker_id, split_id)
         slot_id = super()._allocate()
@@ -221,6 +228,9 @@ class LearnerBuffer(ReplayBuffer):
         super().__init__(args, obs_space, share_obs_space, act_space)
 
         self._used_times = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
+
+        # summary block
+        self.summary_block = torch.zeros((len(args.seg_addrs), len(self.summary_keys)), dtype=torch.float32).share_memory_().numpy()
 
         self._ptr_lock = mp.RLock()
         self._global_ptr = torch.zeros((2, ), dtype=torch.int32).share_memory_().numpy()

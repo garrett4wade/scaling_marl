@@ -72,14 +72,16 @@ class ActorWorker:
 
         self.worker_idx = worker_idx
 
-        self.buffer = buffer
-
-        self.terminate = False
-
         self.envs_per_actor = cfg.envs_per_actor
         self.num_splits = cfg.num_splits
         assert self.envs_per_actor % self.num_splits == 0
         self.envs_per_split = self.envs_per_actor // self.num_splits
+
+        self.buffer = buffer
+        self.summary_keys = self.buffer.summary_keys
+        self.summary_offset = self.worker_idx * self.envs_per_split
+
+        self.terminate = False
 
         num_actors_per_policy_worker = self.cfg.num_actors // self.cfg.num_policy_workers
         self.local_idx = self.worker_idx % num_actors_per_policy_worker
@@ -184,6 +186,14 @@ class ActorWorker:
             self.envstep_output_semaphore[split_idx].release()
 
         # TODO: deal with episodic summary data
+        with timing.add_time('env_step/summary'):
+            dones = envstep_outputs['dones']
+            for env_id, (done, info) in enumerate(zip(dones, infos)):
+                if not np.all(done):
+                    continue
+                with self.buffer.summary_lock:
+                    for i, sum_key in enumerate(self.summary_keys):
+                        self.buffer.summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
 
         self.processed_envsteps += 1
 

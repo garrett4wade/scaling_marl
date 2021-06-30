@@ -284,6 +284,7 @@ class StarCraft2Env(MultiAgentEnv):
         self._obs = None
         self.battles_won = 0
         self.battles_game = 0
+        self.episode_return = 0
         self.timeouts = 0
         self.force_restarts = 0
         self.last_stats = None
@@ -555,10 +556,16 @@ class StarCraft2Env(MultiAgentEnv):
             self.battles_game += 1
             self.timeouts += 1
 
+        if self.reward_scale:
+            reward /= self.max_reward / self.reward_scale_rate
+
+        self.episode_return += reward
+
         for i in range(self.n_agents):
             infos[i] = {
-                "battles_won": self.battles_won,
-                "battles_game": self.battles_game,
+                "episode_return": self.episode_return,
+                "winning_episodes": self.battles_won,
+                "elapsed_episodes": self.battles_game,
                 "battles_draw": self.timeouts,
                 "restarts": self.force_restarts,
                 "won": self.win_counted,
@@ -571,9 +578,6 @@ class StarCraft2Env(MultiAgentEnv):
 
         if terminated:
             self._episode_count += 1
-
-        if self.reward_scale:
-            reward /= self.max_reward / self.reward_scale_rate
 
         rewards[:] = reward
 

@@ -43,6 +43,7 @@ class Transmitter:
     def _init(self):
         self.socket = zmq.Context().socket(zmq.REQ)
         self.socket.connect(self.cfg.seg_addrs[self.cfg.node_idx])
+        self.socket.identity = ("node-" + str(self.cfg.node_idx)).encode('ascii')
         self.socket.send(b'ready')
         self.socket_state = SocketState.SEND
 
@@ -58,11 +59,19 @@ class Transmitter:
             mem_data[k] = mem = getsizeof(compressed) / 1024**2
             total_mem += mem
             msg.extend([k.encode('ascii'), compressed])
+        with self.buffer.summary_lock:
+            summary_info = self.buffer.summary_block.sum(0).sum(0)
+        print(self.buffer.summary_block)
+        print('##############', summary_info)
+        msg.extend([self.socket.identity, summary_info])
+
         log.info('seg size:  {} (MB), total {:.2f} MB'.format(mem_data, total_mem))
         self.socket.send_multipart(msg)
+
         self.last_send_time = time.time()
         self.sending_intervals.append(self.last_send_time - self.last_recv_time)
         self.socket_state = SocketState.SEND
+
         log.info('Successfully sending data to head node on Transmitter %d...', self.transmitter_idx)
         log.info('Remaining segs in queue: %d', self.seg_queue.qsize())
 

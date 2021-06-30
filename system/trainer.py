@@ -25,11 +25,19 @@ class Trainer:
         # self.eval_envs = kwargs['eval_envs_fn'](self.rank, self.cfg)
         self.num_agents = self.cfg.num_agents
 
+        self.buffer = buffer
+
         # -------- parameters --------
         # names
         self.env_name = self.cfg.env_name
         self.algorithm_name = self.cfg.algorithm_name
         self.experiment_name = self.cfg.experiment_name
+        # summary
+        self.summary_keys = self.buffer.summary_keys
+        self.summary_idx_hash = {}
+        for i, k in enumerate(self.summary_keys):
+            self.summary_idx_hash[k] = i
+            setattr(self, 'last_' + k, 0)
         # tricks
         self.use_linear_lr_decay = self.cfg.use_linear_lr_decay
         # system dataflow
@@ -97,8 +105,6 @@ class Trainer:
         # algorithm
         self.algorithm_fn = TrainAlgo
         self.algorithm = None
-
-        self.buffer = buffer
 
         self.initialized = False
         self.terminate = False
@@ -239,7 +245,9 @@ class Trainer:
             msg.extend([k.encode('ascii'), v])
         msg.append(str(self.policy_version).encode('ascii'))
         self.model_weights_socket.send_multipart(msg)
-        log.debug('Broadcasting model weights...')
+
+        if self.policy_version % 10 == 0:
+            log.debug('Broadcasting model weights...(ver {})'.format(self.policy_version))
 
     def training_step(self, timing):
         log.info('buffer utilization before training step: {}/{}'.format(
@@ -320,10 +328,10 @@ class Trainer:
             recent_learning_fps = int(recent_consumed_num_steps / (time.time() - self.logging_tik))
             global_avg_learning_fps = int(self.consumed_num_steps / (time.time() - self.training_tik))
 
-            log.info("Map {} Algo {} Exp {} updates {}/{} episodes, consumed num timesteps {}/{}, "
+            log.info("Env {} Algo {} Exp {} updates {}/{} episodes, consumed num timesteps {}/{}, "
                      "recent rollout FPS {}, global average rollout FPS {}, "
                      "recent learning FPS {}, global average learning FPS {}.\n".format(
-                         self.cfg.map_name, self.algorithm_name, self.experiment_name, self.policy_version,
+                         self.env_name, self.algorithm_name, self.experiment_name, self.policy_version,
                          self.train_for_episodes, self.consumed_num_steps, self.train_for_env_steps, recent_rollout_fps,
                          global_avg_rollout_fps, recent_learning_fps, global_avg_learning_fps))
 
@@ -338,7 +346,6 @@ class Trainer:
             # log.info("recent winning rate is {}.".format(recent_win_rate))
 
             # as defined in https://cdn.openai.com/dota-2.pdf
-
             recent_sample_reuse = recent_consumed_num_steps / recent_received_num_steps
             global_sample_reuse = self.consumed_num_steps / self.received_num_steps
 
@@ -395,3 +402,26 @@ class Trainer:
                     self.writter.add_scalars(k, {k: v}, self.consumed_num_steps)
         else:
             log.info(infos)
+        
+        if self.env_name == 'StarCraft2':
+            with self.buffer.summary_lock:
+                summary_info = self.buffer.summary_block.sum(0)
+            elapsed_episodes = summary_info[self.summary_idx_hash['elapsed_episodes']]
+            winning_episodes = summary_info[self.summary_idx_hash['winning_episodes']]
+            episode_return = summary_info[self.summary_idx_hash['episode_return']]
+
+            recent_elapsed_episodes = elapsed_episodes - self.last_elapsed_episodes
+            recent_winning_episodes = winning_episodes - self.last_winning_episodes
+            recent_episode_return = episode_return - self.last_episode_return
+
+            if recent_elapsed_episodes > 0:
+                winning_rate = recent_winning_episodes / recent_elapsed_episodes
+                assert 0 <= winning_rate and winning_rate <=1
+                avg_return = recent_episode_return / recent_elapsed_episodes
+                log.debug('Map: {}, Recent Winning Rate: {:.2%}, Avg. Return: {:.2f}.'.format(self.cfg.map_name, winning_rate, avg_return))
+
+                self.last_elapsed_episodes = elapsed_episodes
+                self.last_winning_episodes = winning_episodes
+                self.last_episode_return = episode_return
+        else:
+            raise NotImplementedError

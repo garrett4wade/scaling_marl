@@ -48,7 +48,7 @@ class Receiver:
 
         seg_dict = {}
         decompression_time = 0
-        for i in range(len(msg) // 2):
+        for i in range(len(msg) // 2 - 1):
             k, v = msg[2 * i].decode('ascii'), msg[2 * i + 1]
             shape, dtype = self.buffer.shapes_and_dtypes[k]
 
@@ -60,9 +60,17 @@ class Receiver:
             array = np.frombuffer(decompressed, dtype=np.float32).reshape(*shape)
             seg_dict[k] = array
 
+        socket_ident, summary_info = msg[-2:]
+        summary_info = np.frombuffer(summary_info, dtype=np.float32)
+        print('##############', summary_info)
+        node_idx = int(socket_ident.decode('ascii')[-1])
+
         tik = time.time()
         with timing.add_time('put_buffer'):
             self.buffer.put(seg_dict)
+
+            with self.buffer.summary_lock:
+                self.buffer.summary_block[node_idx] = summary_info
         buffer_put_time = time.time() - tik
 
         log.info('Receiver {} decompression time: {:.2f}, buffer put time: {:.2f}'.format(
@@ -108,7 +116,7 @@ class Receiver:
                             self.last_recv_time = time.time()
 
                             self._unpack_msg(timing, msg)
-                            log.info('Receiver %d receives data from worker node %s...', self.receiver_idx, msg[0])
+                            log.info('Receiver %d receives data from worker node %s...', self.receiver_idx, msg[-2])
                     except zmq.ZMQError:
                         pass
 
