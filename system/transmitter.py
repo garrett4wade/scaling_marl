@@ -16,12 +16,14 @@ from sys import getsizeof
 
 
 class Transmitter:
-    def __init__(self, cfg, idx, task_queue, buffer):
+    def __init__(self, cfg, idx, task_queue, buffer, policy_worker_ready_events):
         self.cfg = cfg
         self.transmitter_idx = idx
         self.buffer = buffer
 
         self.task_queue = task_queue
+
+        self.policy_worker_ready_events = policy_worker_ready_events
 
         self.socket = None
         self.socket_state = SocketState.RECV
@@ -44,6 +46,9 @@ class Transmitter:
         self.socket = zmq.Context().socket(zmq.REQ)
         self.socket.connect(self.cfg.seg_addrs[self.cfg.node_idx])
         self.socket.identity = ("node-" + str(self.cfg.node_idx)).encode('ascii')
+
+        for event in self.policy_worker_ready_events:
+            event.wait()
         self.socket.send(b'ready')
         self.socket_state = SocketState.SEND
 
@@ -61,8 +66,6 @@ class Transmitter:
             msg.extend([k.encode('ascii'), compressed])
         with self.buffer.summary_lock:
             summary_info = self.buffer.summary_block.sum(0).sum(0)
-        print(self.buffer.summary_block)
-        print('##############', summary_info)
         msg.extend([self.socket.identity, summary_info])
 
         log.info('seg size:  {} (MB), total {:.2f} MB'.format(mem_data, total_mem))

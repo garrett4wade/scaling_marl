@@ -26,7 +26,7 @@ def _t2n(x):
 class PolicyWorker:
     def __init__(self, worker_idx, cfg, obs_space, share_obs_space, action_space, buffer, policy_queue, actor_queues,
                  report_queue, task_queue, policy_lock, resume_experience_collection_cv, act_shms, act_semaphores,
-                 envstep_output_shm, envstep_output_semaphores):
+                 envstep_output_shm, envstep_output_semaphores, policy_worker_ready_event):
         log.info('Initializing policy worker %d', worker_idx)
 
         self.worker_idx = worker_idx
@@ -57,6 +57,7 @@ class PolicyWorker:
         self.policy_queue = policy_queue
         self.actor_queues = actor_queues
         self.report_queue = report_queue
+        self.policy_worker_ready_event = policy_worker_ready_event
 
         self.act_shms = act_shms
         self.act_semaphores = act_semaphores
@@ -225,6 +226,7 @@ class PolicyWorker:
             for k, v in self.rollout_policy.state_dict().items():
                 self.model_weights_registries[k] = (v.shape, to_numpy_type(v.dtype))
 
+            self.policy_worker_ready_event.set()
             self._update_weights(timing, block=True)
             log.info('Initialized model on the policy worker %d!', self.worker_idx)
 

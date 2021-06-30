@@ -104,6 +104,8 @@ class SFWorkerNode:
         self.envstep_output_semaphores = [[multiprocessing.Semaphore(0) for _ in range(self.cfg.num_splits)]
                                           for _ in range(self.cfg.num_actors)]
 
+        self.policy_worker_ready_events = [multiprocessing.Event() for _ in range(self.cfg.num_policy_workers)]
+
         self.policy_avg_stats = dict()
 
         self.last_timing = dict()
@@ -271,6 +273,7 @@ class SFWorkerNode:
                 self.act_semaphores[actor_slice],
                 self.envstep_output_shms[i],
                 self.envstep_output_semaphores[actor_slice],
+                self.policy_worker_ready_events[i],
             )
             self.policy_workers.append(policy_worker)
             policy_worker.start_process()
@@ -295,7 +298,7 @@ class SFWorkerNode:
             transmitter_queues.append(TorchJoinableQueue())
 
         for idx in range(self.cfg.num_transmitters):
-            t = Transmitter(self.cfg, idx, transmitter_queues[i], self.buffer)
+            t = Transmitter(self.cfg, idx, transmitter_queues[i], self.buffer, self.policy_worker_ready_events)
             t.init()
             self.transmitters.append(t)
 

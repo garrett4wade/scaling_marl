@@ -14,7 +14,7 @@ import numpy as np
 
 
 class Receiver:
-    def __init__(self, cfg, idx, task_queue, buffer):
+    def __init__(self, cfg, idx, task_queue, buffer, nodes_ready_event):
         self.cfg = cfg
         self.receiver_idx = idx
         self.buffer = buffer
@@ -22,6 +22,12 @@ class Receiver:
         self.task_queue = task_queue
 
         self.socket = None
+        # learner must broadcast model weights after all worker nodes have finished env.reset,
+        # otherwise the initialized model weights will be thrown away by ZeroMQ, which causes a dead lock
+        # as the initialization of worker nodes and learner nodes are asynchronous,
+        # we must set a nodes_ready_event to indicate when to broadcast model weights
+        self.num_ready_nodes = 0
+        self.nodes_ready_event = nodes_ready_event
 
         self.receiving_intervals = deque([], maxlen=100)
         self.last_recv_time = None
@@ -62,7 +68,6 @@ class Receiver:
 
         socket_ident, summary_info = msg[-2:]
         summary_info = np.frombuffer(summary_info, dtype=np.float32)
-        print('##############', summary_info)
         node_idx = int(socket_ident.decode('ascii')[-1])
 
         tik = time.time()
@@ -111,12 +116,19 @@ class Receiver:
                         self.socket.send_multipart([msg[0], msg[1], b'ok'])
 
                         if len(msg) > 3:
+                            # this is a data message
                             if self.last_recv_time:
                                 self.receiving_intervals.append(time.time() - self.last_recv_time)
                             self.last_recv_time = time.time()
 
                             self._unpack_msg(timing, msg)
                             log.info('Receiver %d receives data from worker node %s...', self.receiver_idx, msg[-2])
+                        else:
+                            # this is a ready indicator
+                            self.num_ready_nodes += 1
+                            if self.num_ready_nodes >= len(self.cfg.seg_addrs):
+                                self.nodes_ready_event.set()
+
                     except zmq.ZMQError:
                         pass
 

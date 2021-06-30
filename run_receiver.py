@@ -6,6 +6,7 @@ import pathlib
 import yaml
 import torch
 import wandb
+import multiprocessing as mp
 from config import get_config
 from envs.starcraft2.StarCraft2_Env import StarCraft2Env
 from envs.env_wrappers import ShareDummyVecEnv, ShareSubprocVecEnv
@@ -120,12 +121,13 @@ def main():
 
     buffer = LearnerBuffer(all_args, all_args.observation_space, all_args.share_observation_space,
                            all_args.action_space)
+    nodes_ready_event = mp.Event()
 
-    recievers = [Receiver(all_args, i, TorchJoinableQueue(), buffer) for i in range(len(all_args.seg_addrs))]
+    recievers = [Receiver(all_args, i, TorchJoinableQueue(), buffer, nodes_ready_event) for i in range(len(all_args.seg_addrs))]
     for r in recievers:
         r.init()
 
-    trainers = [Trainer(rank, buffer, all_args, run_dir=pathlib.Path('log')) for rank in range(all_args.num_trainers)]
+    trainers = [Trainer(rank, buffer, all_args, nodes_ready_event, run_dir=pathlib.Path('log')) for rank in range(all_args.num_trainers)]
     for trainer in trainers:
         trainer.process.start()
 
