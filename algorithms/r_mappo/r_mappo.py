@@ -50,9 +50,10 @@ class R_MAPPO:
         assert update_actor, 'currently ppg not supported'
         (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch, value_preds_batch,
          v_target_batch, masks_batch, active_masks_batch, old_action_log_probs_batch, adv_targ,
-         available_actions_batch) = (sample['share_obs'], sample['obs'], sample['rnn_states'], sample['rnn_states_critic'],
-         sample['actions'], sample['values'], sample['v_target'], sample['masks'], sample['active_masks'],
-         sample['action_log_probs'], sample['advantages'], sample['available_actions'])
+         available_actions_batch) = (sample['share_obs'], sample['obs'], sample['rnn_states'],
+                                     sample['rnn_states_critic'], sample['actions'], sample['values'],
+                                     sample['v_target'], sample['masks'], sample['active_masks'],
+                                     sample['action_log_probs'], sample['advantages'], sample['available_actions'])
 
         old_action_log_probs_batch = check(old_action_log_probs_batch).to(**self.tpdv)
         adv_targ = check(adv_targ).to(**self.tpdv)

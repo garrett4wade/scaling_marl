@@ -363,7 +363,7 @@ class Trainer:
             # last_battles_won = battles_won
             # self.last_consumed_num_steps = consumed_num_steps
             self.logging_tik = time.time()
-        
+
             if self.env_name == 'StarCraft2':
                 with self.buffer.summary_lock:
                     summary_info = self.buffer.summary_block.sum(0)
@@ -377,9 +377,10 @@ class Trainer:
 
                 if recent_elapsed_episodes > 0:
                     winning_rate = recent_winning_episodes / recent_elapsed_episodes
-                    assert 0 <= winning_rate and winning_rate <=1
+                    assert 0 <= winning_rate and winning_rate <= 1
                     avg_return = recent_episode_return / recent_elapsed_episodes
-                    log.debug('Map: {}, Recent Winning Rate: {:.2%}, Avg. Return: {:.2f}.'.format(self.cfg.map_name, winning_rate, avg_return))
+                    log.debug('Map: {}, Recent Winning Rate: {:.2%}, Avg. Return: {:.2f}.'.format(
+                        self.cfg.map_name, winning_rate, avg_return))
 
                     self.last_elapsed_episodes = elapsed_episodes
                     self.last_winning_episodes = winning_episodes

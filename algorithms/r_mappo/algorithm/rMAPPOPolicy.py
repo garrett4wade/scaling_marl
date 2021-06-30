@@ -63,9 +63,9 @@ class R_MAPPOPolicy:
             self.actor_critic = DDP(self.actor_critic, device_ids=[rank], output_device=rank)
 
             self.optimizer = torch.optim.Adam(self.actor_critic.parameters(),
-                                                lr=self.lr,
-                                                eps=self.opti_eps,
-                                                weight_decay=self.weight_decay)
+                                              lr=self.lr,
+                                              eps=self.opti_eps,
+                                              weight_decay=self.weight_decay)
         else:
             for p in self.actor_critic.parameters():
                 p.requires_grad = False  # we don't train anything here
@@ -103,12 +103,18 @@ class R_MAPPOPolicy:
         :return rnn_states: (torch.Tensor) updated actor network RNN states.
         :return rnn_states_critic: (torch.Tensor) updated critic network RNN states.
         """
-        (action_dists, action_reduce_fn, log_prob_reduce_fn, _, _, _,
-         rnn_states, values, rnn_states_critic) = self.actor_critic(obs, rnn_states, masks, available_actions, share_obs, rnn_states_critic)
+        (action_dists, action_reduce_fn, log_prob_reduce_fn, _, _, _, rnn_states, values,
+         rnn_states_critic) = self.actor_critic(obs, rnn_states, masks, available_actions, share_obs, rnn_states_critic)
         actions, action_log_probs = get_actions_from_dist(action_dists, action_reduce_fn, log_prob_reduce_fn,
                                                           deterministic)
 
-        return {'values': values, 'actions': actions, 'action_log_probs': action_log_probs, 'rnn_states': rnn_states, 'rnn_states_critic': rnn_states_critic}
+        return {
+            'values': values,
+            'actions': actions,
+            'action_log_probs': action_log_probs,
+            'rnn_states': rnn_states,
+            'rnn_states_critic': rnn_states_critic
+        }
 
     def evaluate_actions(self,
                          share_obs,
@@ -146,8 +152,8 @@ class R_MAPPOPolicy:
         if active_masks is not None:
             active_masks = check(active_masks).to(**self.tpdv)
 
-        (action_dists, _, log_prob_reduce_fn, action_preprocess_fn, entropy_fn, entropy_reduce_fn,
-         _, values, _ ) = self.actor_critic(obs, rnn_states, masks, available_actions, share_obs, rnn_states_critic)
+        (action_dists, _, log_prob_reduce_fn, action_preprocess_fn, entropy_fn, entropy_reduce_fn, _, values,
+         _) = self.actor_critic(obs, rnn_states, masks, available_actions, share_obs, rnn_states_critic)
         action_log_probs, dist_entropy = evaluate_actions_from_dist(action_dists, action, log_prob_reduce_fn,
                                                                     action_preprocess_fn, entropy_fn, entropy_reduce_fn,
                                                                     active_masks)
@@ -170,8 +176,8 @@ class R_MAPPOPolicy:
         if available_actions is not None:
             available_actions = check(available_actions).to(**self.tpdv)
 
-        (action_dists, action_reduce_fn, log_prob_reduce_fn, _, _, _,
-         rnn_states, _, _) = self.actor_critic(obs, rnn_states, masks, available_actions)
+        (action_dists, action_reduce_fn, log_prob_reduce_fn, _, _, _, rnn_states, _,
+         _) = self.actor_critic(obs, rnn_states, masks, available_actions)
         actions, _ = get_actions_from_dist(action_dists, action_reduce_fn, log_prob_reduce_fn, deterministic)
 
         return actions, rnn_states

@@ -48,5 +48,8 @@ def get_ppo_storage_specs(args, obs_space, share_obs_space, act_space):
     policy_output_keys = ['actions', 'action_log_probs', 'values', 'rnn_states', 'rnn_states_critic']
     return ppo_storage_specs, policy_input_keys, policy_output_keys
 
-SUMMARY_KEYS = {'StarCraft2': ['elapsed_episodes', 'winning_episodes', 'episode_return'],
-                'Hanabi': ['elapsed_episodes', 'episode_return']}
+
+SUMMARY_KEYS = {
+    'StarCraft2': ['elapsed_episodes', 'winning_episodes', 'episode_return'],
+    'Hanabi': ['elapsed_episodes', 'episode_return']
+}
