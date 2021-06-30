@@ -18,6 +18,8 @@ train_for_seconds: 600
 model_dir: null
 
 # system parameters
+policy_worker_gpu_ranks:
+  - 0
 model_weights_addr: tcp://10.0.2.34:8889
 seg_addrs:
   - tcp://10.0.2.34:12346

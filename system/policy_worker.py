@@ -30,6 +30,11 @@ class PolicyWorker:
         log.info('Initializing policy worker %d', worker_idx)
 
         self.worker_idx = worker_idx
+        assert len(cfg.policy_worker_gpu_ranks) == 1 or len(cfg.policy_worker_gpu_ranks) == cfg.num_policy_workers, 'policy worker gpu ranks must be a list of length 1 or have the same length as num_policy_workers'
+        if len(cfg.policy_worker_gpu_ranks) == 1:
+            self.gpu_rank = cfg.policy_worker_gpu_ranks[0]
+        else:
+            self.gpu_rank = cfg.policy_worker_gpu_ranks[worker_idx]
         self.cfg = cfg
         self.tpdv = dict(device=torch.device(0), dtype=torch.float32)
 
@@ -211,8 +216,7 @@ class PolicyWorker:
             else:
                 self.device = torch.device('cpu')
 
-            # TODO: assign arbitrary gpu rank to rollout policy
-            self.rollout_policy = Policy(0,
+            self.rollout_policy = Policy(self.gpu_rank,
                                          self.cfg,
                                          self.obs_space,
                                          self.share_obs_space,
