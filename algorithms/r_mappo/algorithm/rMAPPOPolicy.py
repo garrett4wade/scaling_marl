@@ -51,10 +51,10 @@ class R_MAPPOPolicy:
         base, actor head and critic head.
         '''
         self.actor = Actor(args, obs_space, act_space).to(rank)
-        self.critic = Critic(args, cent_obs_space)
+        self.critic = Critic(args, cent_obs_space).to(rank)
         if is_training:
             self.actor = DDP(self.actor, device_ids=[rank], output_device=rank)
-            self.critic = DDP(self.actor, device_ids=[rank], output_device=rank)
+            self.critic = DDP(self.critic, device_ids=[rank], output_device=rank)
 
             self.optimizer = torch.optim.Adam(self.parameters(),
                                               lr=self.lr,
@@ -63,6 +63,11 @@ class R_MAPPOPolicy:
         else:
             for p in self.parameters():
                 p.requires_grad = False  # we don't train anything here
+        
+        self.actor_state_dict_keys = list(self.actor.state_dict().keys())
+        self.critic_state_dict_keys = list(self.critic.state_dict().keys())
+        assert all(k not in self.critic_state_dict_keys
+                   for k in self.actor_state_dict_keys), ("actor and critic model can not have same parameter names")
 
     def parameters(self):
         return itertools.chain(self.actor.parameters(), self.critic.parameters())
@@ -86,7 +91,7 @@ class R_MAPPOPolicy:
                     deterministic=False):
         # used during batched rollout, utilizing both actor and critic
         (action_dists, action_reduce_fn, log_prob_reduce_fn, _, _, _,
-         rnn_states) = self.actor_critic(obs, rnn_states, masks, available_actions)
+         rnn_states) = self.actor(obs, rnn_states, masks, available_actions)
         values, rnn_states_critic = self.critic(share_obs, rnn_states_critic, masks)
         actions, action_log_probs = get_actions_from_dist(action_dists, action_reduce_fn, log_prob_reduce_fn,
                                                           deterministic)
@@ -107,7 +112,7 @@ class R_MAPPOPolicy:
     def evaluate_actions(self,
                          share_obs,
                          obs,
-                         action,
+                         actions,
                          rnn_states=None,
                          rnn_states_critic=None,
                          masks=None,
@@ -117,7 +122,7 @@ class R_MAPPOPolicy:
         (action_dists, _, log_prob_reduce_fn, action_preprocess_fn, entropy_fn, entropy_reduce_fn,
          _) = self.actor(obs, rnn_states, masks, available_actions)
         values, _ = self.critic(share_obs, rnn_states_critic, masks)
-        action_log_probs, dist_entropy = evaluate_actions_from_dist(action_dists, action, log_prob_reduce_fn,
+        action_log_probs, dist_entropy = evaluate_actions_from_dist(action_dists, actions, log_prob_reduce_fn,
                                                                     action_preprocess_fn, entropy_fn, entropy_reduce_fn,
                                                                     active_masks)
 
@@ -133,13 +138,24 @@ class R_MAPPOPolicy:
         return actions, rnn_states
 
     def state_dict(self):
-        return self.actor_critic.state_dict()
+        return {**self.actor.state_dict(), **self.critic.state_dict()}
 
     def load_state_dict(self, state_dict):
-        self.actor_critic.load_state_dict(state_dict)
+        actor_state_dict, critic_state_dict = {}, {}
+        for k, v in state_dict.items():
+            if k in self.actor_state_dict_keys:
+                actor_state_dict[k] = v
+            elif k in self.critic_state_dict_keys:
+                critic_state_dict[k] = v
+            else:
+                raise NotImplementedError
+        self.actor.load_state_dict(actor_state_dict)
+        self.critic.load_state_dict(critic_state_dict)
 
     def train_mode(self):
-        self.actor_critic.train()
+        self.actor.train()
+        self.critic.train()
 
     def eval_mode(self):
-        self.actor_critic.eval()
+        self.actor.eval()
+        self.critic.eval()
