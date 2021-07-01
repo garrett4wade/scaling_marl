@@ -173,7 +173,8 @@ class WorkerBuffer(ReplayBuffer):
         self.target_num_slots = 1
         self.num_consumers_to_notify = 1
         self.num_slots = args.qsize
-        self.envs_per_seg = self.envs_per_slot = args.num_actors * args.envs_per_actor // args.num_splits // args.num_policy_workers
+        self.envs_per_slot = args.num_actors * args.envs_per_actor // args.num_splits // args.num_policy_workers
+        self.envs_per_seg = self.envs_per_slot
 
         super().__init__(args, obs_space, share_obs_space, act_space)
 
@@ -186,7 +187,9 @@ class WorkerBuffer(ReplayBuffer):
         self._ep_step = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
 
         # summary block
-        self.summary_block = torch.zeros((args.num_splits, self.envs_per_split * args.num_actors, len(self.summary_keys)), dtype=torch.float32).share_memory_().numpy()
+        self.summary_block = torch.zeros(
+            (args.num_splits, self.envs_per_split * args.num_actors, len(self.summary_keys)),
+            dtype=torch.float32).share_memory_().numpy()
 
     def _allocate(self, policy_worker_id, split_id):
         identity = (policy_worker_id, split_id)
@@ -221,8 +224,7 @@ class LearnerBuffer(ReplayBuffer):
         self.num_slots = args.qsize
         # concatenate several slots from workers into a single batch,
         # which will be then sent to GPU for optimziation
-        self.envs_per_seg = (args.num_actors * args.envs_per_actor // args.num_splits //
-                                            args.num_policy_workers)
+        self.envs_per_seg = (args.num_actors * args.envs_per_actor // args.num_splits // args.num_policy_workers)
         self.envs_per_slot = args.slots_per_update * self.envs_per_seg
 
         self.slots_per_update = args.slots_per_update
@@ -234,7 +236,8 @@ class LearnerBuffer(ReplayBuffer):
         self._used_times = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
 
         # summary block
-        self.summary_block = torch.zeros((len(args.seg_addrs), len(self.summary_keys)), dtype=torch.float32).share_memory_().numpy()
+        self.summary_block = torch.zeros((len(args.seg_addrs), len(self.summary_keys)),
+                                         dtype=torch.float32).share_memory_().numpy()
 
         self._ptr_lock = mp.RLock()
         self._global_ptr = torch.zeros((2, ), dtype=torch.int32).share_memory_().numpy()
@@ -292,8 +295,7 @@ class LearnerBuffer(ReplayBuffer):
                 self._global_ptr[1] += 1
 
         # copy data into main storage
-        batch_slice = slice(position_id * self.envs_per_seg,
-                            (position_id + 1) * self.envs_per_seg)
+        batch_slice = slice(position_id * self.envs_per_seg, (position_id + 1) * self.envs_per_seg)
 
         for k, v in seg_dict.items():
             self.storage[k][slot_id, :, batch_slice] = v
@@ -344,7 +346,7 @@ class LearnerBuffer(ReplayBuffer):
 
         if self._use_advantage_normalization:
             advantage = masked_normalization(advantage, self.active_masks[slot, :-1])
-        
+
         if self._use_popart:
             v_target = self.value_normalizer(v_target)
 
@@ -356,8 +358,8 @@ class LearnerBuffer(ReplayBuffer):
                 # [T, B, A, D] -> [T * B * A, D]
                 output_tensors[k] = flatten(self.storage[k][slot, :self.episode_length], 3)
 
-        output_tensors['v_target'] = _cast(v_target)
-        output_tensors['advantages'] = _cast(advantage)
+        output_tensors['v_target'] = flatten(v_target, 3)
+        output_tensors['advantages'] = flatten(advantage, 3)
 
         # NOTE: following 2 lines are for debuggin only, which WILL SIGNIFICANTLY AFFECT SYSTEM PERFORMANCE
         # for k, v in output_tensors.items():
@@ -387,7 +389,7 @@ class LearnerBuffer(ReplayBuffer):
 
         if self._use_advantage_normalization:
             advantage = masked_normalization(advantage, self.active_masks[slot, :-1])
-        
+
         if self._use_popart:
             v_target = self.value_normalizer(v_target)
 

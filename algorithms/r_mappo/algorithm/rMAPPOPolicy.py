@@ -63,7 +63,7 @@ class R_MAPPOPolicy:
         else:
             for p in self.parameters():
                 p.requires_grad = False  # we don't train anything here
-        
+
         self.actor_state_dict_keys = list(self.actor.state_dict().keys())
         self.critic_state_dict_keys = list(self.critic.state_dict().keys())
         assert all(k not in self.critic_state_dict_keys

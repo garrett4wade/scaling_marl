@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.multiprocessing as mp
 
 
@@ -38,8 +37,8 @@ class PopArt:
         # called before computing loss, to normalize target values and to update running mean/std
         np_input = isinstance(input_vector, np.ndarray)
         input_vector = input_vector if np_input else input_vector.numpy()
-        assert input_vector.shape[-self.remaining_axes:] == self.input_shape, ("trailing dimensions of the input vector " +
-            "are expected to be {} ".format(self.input_shape) +
+        assert input_vector.shape[-self.remaining_axes:] == self.input_shape, (
+            "trailing dimensions of the input vector " + "are expected to be {} ".format(self.input_shape) +
             "while the input vector has shape {}".format(input_vector.shape[-self.remaining_axes:]))
         norm_axes = len(input_vector.shape) - self.remaining_axes
 
@@ -54,7 +53,7 @@ class PopArt:
                 weight = self.beta
 
             self.running_mean = weight * self.running_mean + batch_mean * (1.0 - weight)
-            self.running_mean_sq = weight * self.running_mean_sq + batch_mean * (1.0 - weight)
+            self.running_mean_sq = weight * self.running_mean_sq + batch_sq_mean * (1.0 - weight)
             self.debiasing_term = weight * self.debiasing_term + 1.0 - weight
 
         self.barrier.wait()
@@ -68,8 +67,8 @@ class PopArt:
         # to denormalize values during rollout inference
         np_input = isinstance(input_vector, np.ndarray)
         input_vector = input_vector if np_input else input_vector.numpy()
-        assert input_vector.shape[-self.remaining_axes:] == self.input_shape, ("trailing dimensions of the input vector " +
-            "are expected to be {} ".format(self.input_shape) +
+        assert input_vector.shape[-self.remaining_axes:] == self.input_shape, (
+            "trailing dimensions of the input vector " + "are expected to be {} ".format(self.input_shape) +
             "while the input vector has shape {}".format(input_vector.shape[-self.remaining_axes:]))
 
         mean, var = self.running_mean_var()

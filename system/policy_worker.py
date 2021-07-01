@@ -30,7 +30,9 @@ class PolicyWorker:
         log.info('Initializing policy worker %d', worker_idx)
 
         self.worker_idx = worker_idx
-        assert len(cfg.policy_worker_gpu_ranks) == 1 or len(cfg.policy_worker_gpu_ranks) == cfg.num_policy_workers, 'policy worker gpu ranks must be a list of length 1 or have the same length as num_policy_workers'
+        assert len(cfg.policy_worker_gpu_ranks) == 1 or len(cfg.policy_worker_gpu_ranks) == cfg.num_policy_workers, (
+            'policy worker gpu ranks must be a list of length 1 or '
+            'have the same length as num_policy_workers')
         if len(cfg.policy_worker_gpu_ranks) == 1:
             self.gpu_rank = cfg.policy_worker_gpu_ranks[0]
         else:

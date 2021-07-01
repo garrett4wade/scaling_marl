@@ -5,8 +5,6 @@ import numpy as np
 import pathlib
 import yaml
 import torch
-import wandb
-import datetime
 import multiprocessing as mp
 from config import get_config
 from envs.starcraft2.StarCraft2_Env import StarCraft2Env
@@ -72,6 +70,7 @@ def make_eval_env(trainer_id, all_args):
     else:
         return ShareSubprocVecEnv([get_env_fn(i) for i in range(all_args.n_eval_rollout_threads)])
 
+
 def main():
     parser = get_config()
     all_args = parse_args(sys.argv[1:], parser)
@@ -123,14 +122,14 @@ def main():
     nodes_ready_events = [mp.Event() for i in range(len(all_args.seg_addrs))]
 
     recievers = [
-        Receiver(all_args, i, TorchJoinableQueue(), buffer, nodes_ready_events[i]) for i in range(len(all_args.seg_addrs))
+        Receiver(all_args, i, TorchJoinableQueue(), buffer, nodes_ready_events[i])
+        for i in range(len(all_args.seg_addrs))
     ]
     for r in recievers:
         r.init()
 
     trainers = [
-        Trainer(rank, buffer, all_args, nodes_ready_events, run_dir=run_dir)
-        for rank in range(all_args.num_trainers)
+        Trainer(rank, buffer, all_args, nodes_ready_events, run_dir=run_dir) for rank in range(all_args.num_trainers)
     ]
     for trainer in trainers:
         trainer.process.start()

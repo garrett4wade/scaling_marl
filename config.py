@@ -186,9 +186,7 @@ def get_config():
                         type=str,
                         default='garrett4wade',
                         help="[for wandb usage], to specify user's name for simply collecting training data.")
-    parser.add_argument("--use_wandb",
-                        action='store_true',
-                        help="whether to use [Weights & Biases] for logging")
+    parser.add_argument("--use_wandb", action='store_true', help="whether to use [Weights & Biases] for logging")
 
     # system parameters
     parser.add_argument("--num_actors", type=int, default=4)

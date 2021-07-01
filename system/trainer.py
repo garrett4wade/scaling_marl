@@ -112,7 +112,7 @@ class Trainer:
             self.model_weights_socket = zmq.Context().socket(zmq.PUB)
             model_port = self.cfg.model_weights_addr.split(':')[-1]
             self.model_weights_socket.bind('tcp://*:' + model_port)
-            
+
             if not self.cfg.no_summary:
                 self._init_summary()
 
@@ -127,7 +127,7 @@ class Trainer:
                 self.save_dir = str(self.run_dir / 'models')
                 if not os.path.exists(self.save_dir):
                     os.makedirs(self.save_dir)
-                
+
                 config_file = open(os.path.join(self.log_dir, 'config.yaml'), 'w')
                 yaml.dump(vars(self.cfg), config_file)
                 config_file.close()
@@ -156,7 +156,8 @@ class Trainer:
         for i, e in enumerate(self.nodes_ready_events):
             e.wait()
             if self.rank == 0:
-                log.debug('Waiting for all nodes ready... {}/{} have already finished initialization...'.format(i + 1, len(self.nodes_ready_events)))
+                log.debug('Waiting for all nodes ready... {}/{} have already finished initialization...'.format(
+                    i + 1, len(self.nodes_ready_events)))
 
         if self.rank == 0:
             self.pack_off_weights()
@@ -170,13 +171,13 @@ class Trainer:
         exp_name = str(self.cfg.experiment_name) + "_seed" + str(self.cfg.seed)
         if self.cfg.use_wandb:
             self.run = wandb.init(config=self.cfg,
-                            project=self.cfg.project_name,
-                            entity=self.cfg.user_name,
-                            name=exp_name,
-                            group=self.cfg.group_name,
-                            dir=str(self.run_dir),
-                            job_type="training",
-                            reinit=True)
+                                  project=self.cfg.project_name,
+                                  entity=self.cfg.user_name,
+                                  name=exp_name,
+                                  group=self.cfg.group_name,
+                                  dir=str(self.run_dir),
+                                  job_type="training",
+                                  reinit=True)
         else:
             curr_run = exp_name + postfix + '_' + str(datetime.datetime.now()).replace(' ', '_')
             self.run_dir /= curr_run
@@ -297,8 +298,8 @@ class Trainer:
 
     def training_step(self, timing):
         buffer_util = self.buffer.utilization
-        log.info('buffer utilization before training step: {}/{}'.format(
-            round(buffer_util * self.buffer.num_slots), self.buffer.num_slots))
+        log.info('buffer utilization before training step: {}/{}'.format(round(buffer_util * self.buffer.num_slots),
+                                                                         self.buffer.num_slots))
 
         if self.use_linear_lr_decay:
             self.policy.lr_decay(self.policy_version, self.train_for_episodes)
@@ -333,11 +334,11 @@ class Trainer:
                     share_obs = self.buffer.share_obs[slot_id]
                     rnn_states_critic = self.buffer.rnn_states_critic[slot_id][0]
                     masks = self.buffer.masks[slot_id]
-                    reanalyze_inputs ={
-                                    'share_obs': share_obs.reshape(self.episode_length + 1, -1, *share_obs.shape[3:]),
-                                    'rnn_states_critic': rnn_states_critic.reshape(-1, *rnn_states_critic.shape[2:]).swapaxes(0, 1),
-                                    'masks': masks.reshape(self.episode_length + 1, -1, *masks.shape[3:]),
-                                    }
+                    reanalyze_inputs = {
+                        'share_obs': share_obs.reshape(self.episode_length + 1, -1, *share_obs.shape[3:]),
+                        'rnn_states_critic': rnn_states_critic.reshape(-1, *rnn_states_critic.shape[2:]).swapaxes(0, 1),
+                        'masks': masks.reshape(self.episode_length + 1, -1, *masks.shape[3:]),
+                    }
                     for k, v in reanalyze_inputs.items():
                         reanalyze_inputs[k] = torch.from_numpy(v).to(**self.tpdv)
 
@@ -401,11 +402,11 @@ class Trainer:
             global_avg_learning_fps = int(self.consumed_num_steps / (time.time() - self.training_tik))
 
             log.debug("Env {} Algo {} Exp {} updates {}/{} episodes, consumed num timesteps {}/{}, "
-                     "recent rollout FPS {}, global average rollout FPS {}, "
-                     "recent learning FPS {}, global average learning FPS {}.\n".format(
-                         self.env_name, self.algorithm_name, self.experiment_name, self.policy_version,
-                         self.train_for_episodes, self.consumed_num_steps, self.train_for_env_steps, recent_rollout_fps,
-                         global_avg_rollout_fps, recent_learning_fps, global_avg_learning_fps))
+                      "recent rollout FPS {}, global average rollout FPS {}, "
+                      "recent learning FPS {}, global average learning FPS {}.\n".format(
+                          self.env_name, self.algorithm_name, self.experiment_name, self.policy_version,
+                          self.train_for_episodes, self.consumed_num_steps, self.train_for_env_steps,
+                          recent_rollout_fps, global_avg_rollout_fps, recent_learning_fps, global_avg_learning_fps))
 
             # as defined in https://cdn.openai.com/dota-2.pdf
             recent_sample_reuse = recent_consumed_num_steps / recent_received_num_steps
@@ -413,9 +414,14 @@ class Trainer:
 
             log.debug('recent sample reuse: {:.2f}, global average sample reuse: {:.2f}.'.format(
                 recent_sample_reuse, global_sample_reuse))
-            
-            log_infos = {'iteration': self.policy_version, 'rollout_FPS': recent_rollout_fps, 'learning_FPS': recent_learning_fps,
-            'sample_reuse': recent_sample_reuse, 'received_num_steps': self.received_num_steps}
+
+            log_infos = {
+                'iteration': self.policy_version,
+                'rollout_FPS': recent_rollout_fps,
+                'learning_FPS': recent_learning_fps,
+                'sample_reuse': recent_sample_reuse,
+                'received_num_steps': self.received_num_steps
+            }
 
             self.logging_tik = time.time()
 
