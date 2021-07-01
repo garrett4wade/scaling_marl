@@ -26,7 +26,6 @@ class Receiver:
         # otherwise the initialized model weights will be thrown away by ZeroMQ, which causes a dead lock
         # as the initialization of worker nodes and learner nodes are asynchronous,
         # we must set a nodes_ready_event to indicate when to broadcast model weights
-        self.num_ready_nodes = 0
         self.nodes_ready_event = nodes_ready_event
 
         self.receiving_intervals = deque([], maxlen=100)
@@ -125,9 +124,7 @@ class Receiver:
                             log.info('Receiver %d receives data from worker node %s...', self.receiver_idx, msg[-2])
                         else:
                             # this is a ready indicator
-                            self.num_ready_nodes += 1
-                            if self.num_ready_nodes >= len(self.cfg.seg_addrs):
-                                self.nodes_ready_event.set()
+                            self.nodes_ready_event.set()
 
                     except zmq.ZMQError:
                         pass

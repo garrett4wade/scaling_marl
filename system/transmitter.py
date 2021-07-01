@@ -90,7 +90,6 @@ class Transmitter:
 
         min_num_segs = 4
 
-        self.init()
         while not self.terminate:
             try:
                 # receive INIT and TERMINATE signal from the main process

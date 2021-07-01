@@ -43,10 +43,11 @@ class ReplayBuffer:
 
         self.shapes_and_dtypes = {}
 
-        def shape_prefix(bootstrap, select=False):
+        def shape_prefix(bootstrap, select=False, per_seg=False):
             t = self.episode_length if not select else self.episode_length // self.data_chunk_length
             t = t + 1 if bootstrap else t
-            return (self.num_slots, t, self.envs_per_slot, self.num_agents)
+            bs = self.envs_per_seg if per_seg else self.envs_per_slot
+            return (self.num_slots, t, bs, self.num_agents)
 
         for storage_spec in self.storage_specs:
             name, shape, dtype, bootstrap, init_value = storage_spec
@@ -60,10 +61,11 @@ class ReplayBuffer:
             setattr(self, name, getattr(self, '_' + name).numpy())
 
             # saved shape need to remove slot dim
-            self.shapes_and_dtypes[name] = (real_shape[1:], to_numpy_type(dtype))
+            seg_shape = (*shape_prefix(bootstrap, ('rnn_states' in name), per_seg=True), *shape)
+            self.shapes_and_dtypes[name] = (seg_shape[1:], to_numpy_type(dtype))
 
-        # self._storage is torch.Tensor handle while storage is numpy.array handle
-        # the 2 handles point to the same block of memory
+        # self._storage is torch.Tensor handle while self.storage is numpy.array handle
+        # these 2 handles point to the same block of memory
         self._storage = {k: getattr(self, '_' + k) for k in self.storage_keys}
         self.storage = {k: getattr(self, k) for k in self.storage_keys}
 
@@ -171,7 +173,7 @@ class WorkerBuffer(ReplayBuffer):
         self.target_num_slots = 1
         self.num_consumers_to_notify = 1
         self.num_slots = args.qsize
-        self.envs_per_slot = args.num_actors * args.envs_per_actor // args.num_splits // args.num_policy_workers
+        self.envs_per_seg = self.envs_per_slot = args.num_actors * args.envs_per_actor // args.num_splits // args.num_policy_workers
 
         super().__init__(args, obs_space, share_obs_space, act_space)
 
@@ -219,9 +221,9 @@ class LearnerBuffer(ReplayBuffer):
         self.num_slots = args.qsize
         # concatenate several slots from workers into a single batch,
         # which will be then sent to GPU for optimziation
-        self.worker_buffer_envs_per_slot = (args.num_actors * args.envs_per_actor // args.num_splits //
+        self.envs_per_seg = (args.num_actors * args.envs_per_actor // args.num_splits //
                                             args.num_policy_workers)
-        self.envs_per_slot = args.slots_per_update * self.worker_buffer_envs_per_slot
+        self.envs_per_slot = args.slots_per_update * self.envs_per_seg
 
         self.slots_per_update = args.slots_per_update
 
@@ -290,13 +292,13 @@ class LearnerBuffer(ReplayBuffer):
                 self._global_ptr[1] += 1
 
         # copy data into main storage
-        batch_slice = slice(position_id * self.worker_buffer_envs_per_slot,
-                            (position_id + 1) * self.worker_buffer_envs_per_slot)
+        batch_slice = slice(position_id * self.envs_per_seg,
+                            (position_id + 1) * self.envs_per_seg)
 
         for k, v in seg_dict.items():
             self.storage[k][slot_id, :, batch_slice] = v
 
-        self.total_timesteps += self.worker_buffer_envs_per_slot * self.episode_length
+        self.total_timesteps += self.envs_per_seg * self.episode_length
 
         # mark the slot as readable if needed
         if position_id == self.slots_per_update - 1:

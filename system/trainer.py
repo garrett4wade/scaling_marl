@@ -15,7 +15,7 @@ import torch.distributed as dist
 
 class Trainer:
     """ Base class for training. """
-    def __init__(self, rank, buffer, cfg, nodes_ready_event, **kwargs):
+    def __init__(self, rank, buffer, cfg, nodes_ready_events, **kwargs):
         self.rank = rank
         self.device = torch.device(rank)
         self.cfg = cfg
@@ -23,7 +23,7 @@ class Trainer:
         # TODO: support CPU
         self.tpdv = dict(device=torch.device(rank), dtype=torch.float32)
 
-        self.nodes_ready_event = nodes_ready_event
+        self.nodes_ready_events = nodes_ready_events
 
         # TODO: add eval
         # self.eval_envs = kwargs['eval_envs_fn'](self.rank, self.cfg)
@@ -144,8 +144,12 @@ class Trainer:
 
         self.algorithm = self.algorithm_fn(self.cfg, self.policy)
 
+        for i, e in enumerate(self.nodes_ready_events):
+            e.wait()
+            if self.rank == 0:
+                log.debug('Waiting for all nodes ready... {}/{} have already finished initialization...'.format(i + 1, len(self.nodes_ready_events)))
+
         if self.rank == 0:
-            self.nodes_ready_event.wait()
             self.pack_off_weights()
         self.initialized = True
         log.debug('Sucessfully initializing Learner %d!', self.rank)

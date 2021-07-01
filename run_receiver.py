@@ -121,16 +121,16 @@ def main():
 
     buffer = LearnerBuffer(all_args, all_args.observation_space, all_args.share_observation_space,
                            all_args.action_space)
-    nodes_ready_event = mp.Event()
+    nodes_ready_events = [mp.Event() for i in range(len(all_args.seg_addrs))]
 
     recievers = [
-        Receiver(all_args, i, TorchJoinableQueue(), buffer, nodes_ready_event) for i in range(len(all_args.seg_addrs))
+        Receiver(all_args, i, TorchJoinableQueue(), buffer, nodes_ready_events[i]) for i in range(len(all_args.seg_addrs))
     ]
     for r in recievers:
         r.init()
 
     trainers = [
-        Trainer(rank, buffer, all_args, nodes_ready_event, run_dir=pathlib.Path('log'))
+        Trainer(rank, buffer, all_args, nodes_ready_events, run_dir=pathlib.Path('log'))
         for rank in range(all_args.num_trainers)
     ]
     for trainer in trainers:
