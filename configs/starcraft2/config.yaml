@@ -9,7 +9,7 @@ benchmark: false
 cuda: true
 cuda_deterministic: true
 seed: 1
-no_summary: false
+no_summary: true
 use_wandb: true
 use_eval: false
 use_render: false
@@ -20,22 +20,15 @@ train_for_seconds: 600
 model_dir: null
 
 # system parameters
-num_learner_nodes: 2
-ddp_init_method: tcp://10.0.2.34:6666
+ddp_init_method: tcp://10.0.2.4:6666
 policy_worker_gpu_ranks:
   - 0
-model_weights_addr: tcp://10.0.2.34:8889
+model_weights_addrs:
+  - tcp://10.0.2.4:8889
+  - tcp://10.0.2.6:8889
 seg_addrs:
-  - tcp://10.0.2.34:12346
-  - tcp://10.0.2.34:12347
-  # - tcp://10.0.2.34:12348
-  # - tcp://10.0.2.34:12349
-  # - tcp://10.0.2.34:12350
-  # - tcp://10.0.2.34:12352
-  # - tcp://10.0.2.34:12353
-  # - tcp://10.0.2.34:12354
-  # - tcp://10.0.2.34:12355
-  # - tcp://10.0.2.34:12356
+  - tcp://10.0.2.4:12346
+  - tcp://10.0.2.6:12347
 num_actors: 8
 envs_per_actor: 4
 num_policy_workers: 1

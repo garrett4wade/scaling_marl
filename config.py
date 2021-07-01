@@ -154,7 +154,6 @@ def get_config():
     parser.add_argument('--worker_node_idx', type=int, help='index of worker nodes')
     parser.add_argument('--learner_node_idx', type=int, help='index of learner nodes')
 
-    parser.add_argument('--num_learner_nodes', type=int, default=1)
     parser.add_argument('--trainer_indices', type=str, help='trainer indices seperated by comma')
 
     parser.add_argument('--config', type=str)
@@ -204,8 +203,8 @@ def get_config():
     parser.add_argument("--force_envs_single_thread", default=True, action='store_false')
     parser.add_argument("--set_workers_cpu_affinity", default=True, action='store_false')
 
-    parser.add_argument("--model_weights_addr", type=str, default='tcp://127.0.0.1:8889')
-    parser.add_argument("--seg_addr", type=str, default='tcp://127.0.0.1:12345')
+    parser.add_argument("--model_weights_addrs", type=str, nargs='+')
+    parser.add_argument("--seg_addrs", type=str, nargs='+')
 
     parser.add_argument('--benchmark', default=False, action='store_true', help='Benchmark mode')
 

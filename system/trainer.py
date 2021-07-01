@@ -17,13 +17,15 @@ import datetime
 
 class Trainer:
     """ Base class for training. """
-    def __init__(self, rank, buffer, cfg, nodes_ready_events, **kwargs):
+    def __init__(self, rank, gpu_rank, buffer, cfg, nodes_ready_events, **kwargs):
+        self.node_idx = cfg.learner_node_idx
         self.rank = rank
-        self.device = torch.device(rank)
+        self.gpu_rank = gpu_rank
+        self.device = torch.device(gpu_rank)
         self.cfg = cfg
         self.num_trainers = self.cfg.num_trainers
         # TODO: support CPU
-        self.tpdv = dict(device=torch.device(rank), dtype=torch.float32)
+        self.tpdv = dict(device=torch.device(gpu_rank), dtype=torch.float32)
 
         self.nodes_ready_events = nodes_ready_events
 
@@ -108,15 +110,16 @@ class Trainer:
         self.process = mp.Process(target=self._run)
 
     def _init(self):
-        if self.rank == 0:
+        if self.gpu_rank == 0:
             self.model_weights_socket = zmq.Context().socket(zmq.PUB)
-            model_port = self.cfg.model_weights_addr.split(':')[-1]
+            model_port = self.cfg.model_weights_addrs[self.node_idx].split(':')[-1]
             self.model_weights_socket.bind('tcp://*:' + model_port)
 
+        if self.rank == 0:
             if not self.cfg.no_summary:
                 self._init_summary()
 
-            if self.use_wandb:
+            if not self.cfg.no_summary and self.use_wandb:
                 self.save_dir = str(wandb.run.dir)
                 self.run_dir = str(wandb.run.dir)
             else:
@@ -132,15 +135,17 @@ class Trainer:
                 yaml.dump(vars(self.cfg), config_file)
                 config_file.close()
 
-        dist.init_process_group('nccl',
+        # TODO: nccl does not work in multi-learner setting, need to figure out why
+        dist.init_process_group('gloo',
                                 rank=self.rank,
                                 world_size=self.cfg.num_trainers,
                                 init_method=self.cfg.ddp_init_method)
+        log.debug('Learner {} ucessfully initialized process group!'.format(self.rank))
         assert self.cfg.cuda and torch.cuda.is_available(), 'cpu training currently not supported'
-        torch.cuda.set_device(self.rank)
+        torch.cuda.set_device(self.gpu_rank)
 
         # policy network
-        self.policy = self.policy_fn(self.rank,
+        self.policy = self.policy_fn(self.gpu_rank,
                                      self.cfg,
                                      self.cfg.observation_space,
                                      self.cfg.share_observation_space,
@@ -155,11 +160,12 @@ class Trainer:
 
         for i, e in enumerate(self.nodes_ready_events):
             e.wait()
-            if self.rank == 0:
+            if self.gpu_rank == 0:
+                # the first learner in each node outputs debug info
                 log.debug('Waiting for all nodes ready... {}/{} have already finished initialization...'.format(
                     i + 1, len(self.nodes_ready_events)))
 
-        if self.rank == 0:
+        if self.gpu_rank == 0:
             self.pack_off_weights()
         self.initialized = True
         log.debug('Sucessfully initializing Learner %d!', self.rank)
@@ -252,7 +258,9 @@ class Trainer:
 
                     dist.barrier()
 
-                if self.policy_version % self.cfg.broadcast_interval == 0 and self.rank == 0:
+                # TODO: gpurank=0 may not indicate that this is the first learner on this node
+                if self.policy_version % self.cfg.broadcast_interval == 0 and self.gpu_rank == 0:
+                    # the first learner in each node broadcasts weights
                     self.pack_off_weights()
 
                 # TODO: add eval
@@ -320,10 +328,10 @@ class Trainer:
 
         with timing.add_time('training_step/different_slots_assertion'):
             # ensure all process get different slot ids
-            tensor_list = [torch.zeros(1).to(self.device) for _ in range(self.num_trainers)]
-            dist.all_gather(tensor_list, torch.Tensor([slot_id]).to(self.device))
-            slot_ids = torch.cat(tensor_list).tolist()
-            assert len(np.unique(slot_ids)) == len(slot_ids)
+            tensor_list = [torch.zeros(2).to(self.device) for _ in range(self.num_trainers)]
+            dist.all_gather(tensor_list, torch.Tensor([self.node_idx, slot_id]).to(self.device))
+            slot_ids = torch.stack(tensor_list).cpu().numpy()
+            assert len(np.unique(slot_ids, axis=0)) == len(slot_ids), (np.unique(slot_ids, axis=0), slot_ids)
 
         with timing.add_time('training_step/reanalyze'):
             if self.cfg.use_reanalyze:
@@ -347,6 +355,7 @@ class Trainer:
 
         for sample in data_generator:
             with timing.add_time('training_step/to_device'):
+                # TODO: currently DDP training using gloo/nccl backend will be stuck here, need to resolve it
                 for k, v in sample.items():
                     sample[k] = torch.from_numpy(v).to(**self.tpdv)
 
