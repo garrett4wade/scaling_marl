@@ -80,6 +80,11 @@ def main():
             all_args_dict = yaml.load(f, Loader=yaml.FullLoader)
         for k, v in all_args_dict.items():
             setattr(all_args, k, v)
+    if all_args.trainer_indices is None:
+        all_args.trainer_indices = list(range(all_args.num_trainers))
+    else:
+        all_args.trainer_indices = [int(ind) for ind in all_args.trainer_indices.split(',')]
+    # TODO: we need to have some assertion about trainer indices and num_trainer_nodes
 
     if all_args.algorithm_name == "rmappo":
         all_args.use_recurrent_policy = True
@@ -121,15 +126,21 @@ def main():
                            all_args.action_space)
     nodes_ready_events = [mp.Event() for i in range(len(all_args.seg_addrs))]
 
+    num_worker_nodes = len(all_args.seg_addrs)
+    assert num_worker_nodes % all_args.num_learner_nodes == 0, ('currently worker nodes must be '
+                                                                'statically distributed among learner nodes')
+    worker_nodes_per_learner = num_worker_nodes // all_args.num_learner_nodes
+
     recievers = [
         Receiver(all_args, i, TorchJoinableQueue(), buffer, nodes_ready_events[i])
-        for i in range(len(all_args.seg_addrs))
+        for i in range(all_args.learner_node_idx * worker_nodes_per_learner, (all_args.learner_node_idx + 1) *
+                       worker_nodes_per_learner)
     ]
     for r in recievers:
         r.init()
 
     trainers = [
-        Trainer(rank, buffer, all_args, nodes_ready_events, run_dir=run_dir) for rank in range(all_args.num_trainers)
+        Trainer(rank, buffer, all_args, nodes_ready_events, run_dir=run_dir) for rank in all_args.trainer_indices
     ]
     for trainer in trainers:
         trainer.process.start()

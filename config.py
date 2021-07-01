@@ -151,7 +151,12 @@ def get_config():
             by default None. set the path to pretrained model.
     """
     parser = argparse.ArgumentParser(description='onpolicy', formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--node_idx', type=int)
+    parser.add_argument('--worker_node_idx', type=int, help='index of worker nodes')
+    parser.add_argument('--learner_node_idx', type=int, help='index of learner nodes')
+
+    parser.add_argument('--num_learner_nodes', type=int, default=1)
+    parser.add_argument('--trainer_indices', type=str, help='trainer indices seperated by comma')
+
     parser.add_argument('--config', type=str)
     parser.add_argument('--project_name', type=str, default='test')
     parser.add_argument('--group_name', type=str, default='test')

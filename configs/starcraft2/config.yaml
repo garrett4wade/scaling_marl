@@ -20,7 +20,8 @@ train_for_seconds: 600
 model_dir: null
 
 # system parameters
-ddp_init_method: file:///dev/shm/ddp_marl
+num_learner_nodes: 2
+ddp_init_method: tcp://10.0.2.34:6666
 policy_worker_gpu_ranks:
   - 0
 model_weights_addr: tcp://10.0.2.34:8889

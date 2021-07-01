@@ -44,8 +44,8 @@ class Transmitter:
 
     def _init(self):
         self.socket = zmq.Context().socket(zmq.REQ)
-        self.socket.connect(self.cfg.seg_addrs[self.cfg.node_idx])
-        self.socket.identity = ("node-" + str(self.cfg.node_idx)).encode('ascii')
+        self.socket.connect(self.cfg.seg_addrs[self.cfg.worker_node_idx])
+        self.socket.identity = ("node-" + str(self.cfg.worker_node_idx)).encode('ascii')
 
         for event in self.policy_worker_ready_events:
             event.wait()

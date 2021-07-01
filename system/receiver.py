@@ -67,14 +67,14 @@ class Receiver:
 
         socket_ident, summary_info = msg[-2:]
         summary_info = np.frombuffer(summary_info, dtype=np.float32)
-        node_idx = int(socket_ident.decode('ascii')[-1])
+        worker_node_idx = int(socket_ident.decode('ascii')[-1])
 
         tik = time.time()
         with timing.add_time('put_buffer'):
             self.buffer.put(seg_dict)
 
             with self.buffer.summary_lock:
-                self.buffer.summary_block[node_idx] = summary_info
+                self.buffer.summary_block[worker_node_idx] = summary_info
         buffer_put_time = time.time() - tik
 
         log.info('Receiver {} decompression time: {:.2f}, buffer put time: {:.2f}'.format(
