@@ -1,11 +1,12 @@
 #!/usr/bin/env python
+import os
 import sys
-# import setproctitle
 import numpy as np
 import pathlib
 import yaml
 import torch
 import wandb
+import datetime
 import multiprocessing as mp
 from config import get_config
 from envs.starcraft2.StarCraft2_Env import StarCraft2Env
@@ -71,7 +72,6 @@ def make_eval_env(trainer_id, all_args):
     else:
         return ShareSubprocVecEnv([get_env_fn(i) for i in range(all_args.n_eval_rollout_threads)])
 
-
 def main():
     parser = get_config()
     all_args = parse_args(sys.argv[1:], parser)
@@ -95,6 +95,13 @@ def main():
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
 
+    run_dir = pathlib.Path('./log') / all_args.env_name
+    if all_args.env_name == 'StarCraft2':
+        run_dir /= all_args.map_name
+    run_dir = run_dir / all_args.algorithm_name / all_args.experiment_name
+    if not run_dir.exists():
+        os.makedirs(str(run_dir))
+
     # seed
     torch.manual_seed(all_args.seed)
     torch.cuda.manual_seed_all(all_args.seed)
@@ -111,14 +118,6 @@ def main():
 
     all_args.num_agents = get_map_params(all_args.map_name)["n_agents"]
 
-    if not all_args.no_summary:
-        run = wandb.init(config=all_args,
-                         project=all_args.env_name + '_distributed_nodes',
-                         entity=all_args.user_name,
-                         name=all_args.experiment_name,
-                         group=all_args.map_name,
-                         reinit=True)
-
     buffer = LearnerBuffer(all_args, all_args.observation_space, all_args.share_observation_space,
                            all_args.action_space)
     nodes_ready_events = [mp.Event() for i in range(len(all_args.seg_addrs))]
@@ -130,7 +129,7 @@ def main():
         r.init()
 
     trainers = [
-        Trainer(rank, buffer, all_args, nodes_ready_events, run_dir=pathlib.Path('log'))
+        Trainer(rank, buffer, all_args, nodes_ready_events, run_dir=run_dir)
         for rank in range(all_args.num_trainers)
     ]
     for trainer in trainers:
@@ -144,8 +143,6 @@ def main():
         r.close()
     log.info('Receivers joined!')
 
-    if not all_args.no_summary:
-        run.finish()
     log.info('Done!')
 
 

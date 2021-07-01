@@ -80,19 +80,7 @@ class Trainer:
 
         self.stop_experience_collection = False
 
-        if self.rank == 0:
-            if self.use_wandb:
-                self.save_dir = str(wandb.run.dir)
-                self.run_dir = str(wandb.run.dir)
-            else:
-                self.run_dir = kwargs["run_dir"]
-                self.log_dir = str(self.run_dir / 'logs')
-                if not os.path.exists(self.log_dir):
-                    os.makedirs(self.log_dir)
-                self.writter = SummaryWriter(self.log_dir)
-                self.save_dir = str(self.run_dir / 'models')
-                if not os.path.exists(self.save_dir):
-                    os.makedirs(self.save_dir)
+        self.run_dir = kwargs["run_dir"]
 
         from algorithms.r_mappo.r_mappo import R_MAPPO as TrainAlgo
         from algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
@@ -122,6 +110,21 @@ class Trainer:
             self.model_weights_socket = zmq.Context().socket(zmq.PUB)
             model_port = self.cfg.model_weights_addr.split(':')[-1]
             self.model_weights_socket.bind('tcp://*:' + model_port)
+            
+            if not self.cfg.no_summary:
+                self._init_summary()
+
+            if self.use_wandb:
+                self.save_dir = str(wandb.run.dir)
+                self.run_dir = str(wandb.run.dir)
+            else:
+                self.log_dir = str(self.run_dir / 'logs')
+                if not os.path.exists(self.log_dir):
+                    os.makedirs(self.log_dir)
+                self.writter = SummaryWriter(self.log_dir)
+                self.save_dir = str(self.run_dir / 'models')
+                if not os.path.exists(self.save_dir):
+                    os.makedirs(self.save_dir)
 
         dist.init_process_group('nccl',
                                 rank=self.rank,
@@ -154,9 +157,31 @@ class Trainer:
         self.initialized = True
         log.debug('Sucessfully initializing Learner %d!', self.rank)
 
+    def _init_summary(self):
+        algo = self.cfg.algorithm_name
+        network_cls = 'rnn' if algo == 'rmappo' else 'mlp' if algo == 'mappo' else None
+        postfix = 'r{}_'.format(str(self.cfg.sample_reuse)) + network_cls
+        exp_name = str(self.cfg.experiment_name) + "_seed" + str(self.cfg.seed)
+        if self.cfg.use_wandb:
+            self.run = wandb.init(config=self.cfg,
+                            project=self.cfg.project_name,
+                            entity=self.cfg.user_name,
+                            name=exp_name,
+                            group=self.cfg.group_name,
+                            dir=str(self.run_dir),
+                            job_type="training",
+                            reinit=True)
+        else:
+            curr_run = exp_name + postfix + '_' + str(datetime.datetime.now()).replace(' ', '_')
+            self.run_dir /= curr_run
+            if not self.run_dir.exists():
+                os.makedirs(str(self.run_dir))
+
     def _terminate(self):
         if self.rank == 0:
             self.model_weights_socket.close()
+            if hasattr(self, 'run'):
+                self.run.finish()
 
         dist.destroy_process_group()
 
@@ -212,7 +237,13 @@ class Trainer:
                 if not self.train_in_background:
                     train_infos = self.training_step(timing)
                     self.report(train_infos)
-                    self.after_training_step()
+
+                    self.maybe_save()
+
+                    log_infos = self.maybe_log()
+                    self.report(log_infos)
+
+                    dist.barrier()
 
                 if self.policy_version % self.cfg.broadcast_interval == 0 and self.rank == 0:
                     self.pack_off_weights()
@@ -259,8 +290,9 @@ class Trainer:
             log.debug('Broadcasting model weights...(ver. {})'.format(self.policy_version))
 
     def training_step(self, timing):
+        buffer_util = self.buffer.utilization
         log.info('buffer utilization before training step: {}/{}'.format(
-            round(self.buffer.utilization * self.buffer.num_slots), self.buffer.num_slots))
+            round(buffer_util * self.buffer.num_slots), self.buffer.num_slots))
 
         if self.use_linear_lr_decay:
             self.policy.lr_decay(self.policy_version, self.train_for_episodes)
@@ -339,14 +371,15 @@ class Trainer:
             self.policy_version += 1
             self.consumed_num_steps += self.transitions_per_batch
 
-        return train_info
+        return {**train_info, 'buffer_util': buffer_util}
 
-    def after_training_step(self):
-        # save model
+    def maybe_save(self):
         if self.rank == 0 and (self.policy_version % self.save_interval == 0
                                or self.policy_version == self.train_for_episodes - 1):
             self.save()
 
+    def maybe_log(self):
+        log_infos = None
         # log information
         if self.rank == 0 and self.policy_version % self.log_interval == 0:
             self.last_received_num_steps = self.received_num_steps
@@ -361,7 +394,7 @@ class Trainer:
             recent_learning_fps = int(recent_consumed_num_steps / (time.time() - self.logging_tik))
             global_avg_learning_fps = int(self.consumed_num_steps / (time.time() - self.training_tik))
 
-            log.info("Env {} Algo {} Exp {} updates {}/{} episodes, consumed num timesteps {}/{}, "
+            log.debug("Env {} Algo {} Exp {} updates {}/{} episodes, consumed num timesteps {}/{}, "
                      "recent rollout FPS {}, global average rollout FPS {}, "
                      "recent learning FPS {}, global average learning FPS {}.\n".format(
                          self.env_name, self.algorithm_name, self.experiment_name, self.policy_version,
@@ -372,26 +405,12 @@ class Trainer:
             recent_sample_reuse = recent_consumed_num_steps / recent_received_num_steps
             global_sample_reuse = self.consumed_num_steps / self.received_num_steps
 
-            log.info('recent sample reuse: {:.2f}, global average sample reuse: {:.2f}.'.format(
+            log.debug('recent sample reuse: {:.2f}, global average sample reuse: {:.2f}.'.format(
                 recent_sample_reuse, global_sample_reuse))
+            
+            log_infos = {'iteration': self.policy_version, 'rollout_FPS': recent_rollout_fps, 'learning_FPS': recent_learning_fps,
+            'sample_reuse': recent_sample_reuse, 'received_num_steps': self.received_num_steps}
 
-            # if self.use_wandb:
-            #     wandb.log(
-            #         {
-            #             "recent_win_rate": recent_win_rate,
-            #             'total_env_steps': consumed_num_steps,
-            #             'fps': recent_fps,
-            #             'buffer_util': buffer_util,
-            #             'iteraion': episode + 1,
-            #             'sample_reuse': recent_sample_reuse,
-            #         },
-            #         step=consuemd_num_steps)
-            # else:
-            #     self.writter.add_scalars("recent_win_rate", {"recent_win_rate": recent_win_rate}, consuemd_num_steps)
-
-            # last_battles_game = battles_game
-            # last_battles_won = battles_won
-            # self.last_consumed_num_steps = consumed_num_steps
             self.logging_tik = time.time()
 
             if self.env_name == 'StarCraft2':
@@ -415,10 +434,12 @@ class Trainer:
                     self.last_elapsed_episodes = elapsed_episodes
                     self.last_winning_episodes = winning_episodes
                     self.last_episode_return = episode_return
+
+                    log_infos = {**log_infos, 'train_winning_rate': winning_rate, 'train_episode_return': avg_return}
             else:
                 raise NotImplementedError
 
-        dist.barrier()
+        return log_infos
 
     def _should_end_training(self):
         end = self.terminate
@@ -441,6 +462,9 @@ class Trainer:
         self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model.pt'))
 
     def report(self, infos):
+        if infos is None or self.rank != 0:
+            return
+
         if not self.no_summary:
             for k, v in infos.items():
                 if self.use_wandb:

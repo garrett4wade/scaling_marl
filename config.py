@@ -153,6 +153,8 @@ def get_config():
     parser = argparse.ArgumentParser(description='onpolicy', formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--node_idx', type=int)
     parser.add_argument('--config', type=str)
+    parser.add_argument('--project_name', type=str, default='test')
+    parser.add_argument('--group_name', type=str, default='test')
     parser.add_argument('--no_summary', action='store_true')
 
     # prepare parameters
@@ -185,10 +187,8 @@ def get_config():
                         default='garrett4wade',
                         help="[for wandb usage], to specify user's name for simply collecting training data.")
     parser.add_argument("--use_wandb",
-                        action='store_false',
-                        default=True,
-                        help="[for wandb usage], by default True, will log date to wandb server. "
-                        "or else will use tensorboard to log data.")
+                        action='store_true',
+                        help="whether to use [Weights & Biases] for logging")
 
     # system parameters
     parser.add_argument("--num_actors", type=int, default=4)
@@ -204,7 +204,6 @@ def get_config():
     parser.add_argument("--model_weights_addr", type=str, default='tcp://127.0.0.1:8889')
     parser.add_argument("--seg_addr", type=str, default='tcp://127.0.0.1:12345')
 
-    parser.add_argument("--min_num_requests", type=int, default=-1)
     parser.add_argument('--benchmark', default=False, action='store_true', help='Benchmark mode')
 
     parser.add_argument("--default_niceness", default=0, type=int)
