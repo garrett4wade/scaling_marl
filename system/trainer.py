@@ -11,6 +11,8 @@ import time
 import torch.multiprocessing as mp
 
 import torch.distributed as dist
+import yaml
+import datetime
 
 
 class Trainer:
@@ -125,6 +127,10 @@ class Trainer:
                 self.save_dir = str(self.run_dir / 'models')
                 if not os.path.exists(self.save_dir):
                     os.makedirs(self.save_dir)
+                
+                config_file = open(os.path.join(self.log_dir, 'config.yaml'), 'w')
+                yaml.dump(vars(self.cfg), config_file)
+                config_file.close()
 
         dist.init_process_group('nccl',
                                 rank=self.rank,
