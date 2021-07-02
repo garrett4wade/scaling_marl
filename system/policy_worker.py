@@ -92,10 +92,41 @@ class PolicyWorker:
 
         self.process = TorchProcess(target=self._run, daemon=True)
 
-    def start_process(self):
-        self.process.start()
+    def _init(self, timing):
+        with timing.timeit('init'):
+            # initialize the Torch modules
+            log.info('Initializing model on the policy worker %d...', self.worker_idx)
 
-    def _init(self):
+            torch.set_num_threads(1)
+
+            if self.cfg.cuda:
+                # we should already see only one CUDA device, because of env vars
+                assert torch.cuda.device_count() == 1
+                self.device = torch.device('cuda', index=0)
+            else:
+                self.device = torch.device('cpu')
+
+            self.rollout_policy = Policy(self.gpu_rank,
+                                         self.cfg,
+                                         self.obs_space,
+                                         self.share_obs_space,
+                                         self.action_space,
+                                         is_training=False)
+            self.rollout_policy.eval_mode()
+
+            worker_nodes_per_learner = len(self.cfg.seg_addrs) // len(self.cfg.model_weights_addrs)
+            learner_node_idx = self.cfg.worker_node_idx // worker_nodes_per_learner
+            self.model_weights_socket = zmq.Context().socket(zmq.SUB)
+            self.model_weights_socket.connect(self.cfg.model_weights_addrs[learner_node_idx])
+            self.model_weights_socket.setsockopt(zmq.SUBSCRIBE, b'param')
+
+            for k, v in self.rollout_policy.state_dict().items():
+                self.model_weights_registries[k] = (v.shape, to_numpy_type(v.dtype))
+
+            self.policy_worker_ready_event.set()
+            self._update_weights(timing, block=True)
+            log.info('Initialized model on the policy worker %d!', self.worker_idx)
+
         log.info('Policy worker %d initialized', self.worker_idx)
         self.initialized = True
         self.initialized_event.set()
@@ -214,39 +245,7 @@ class PolicyWorker:
 
         timing = Timing()
 
-        with timing.timeit('init'):
-            # initialize the Torch modules
-            log.info('Initializing model on the policy worker %d...', self.worker_idx)
-
-            torch.set_num_threads(1)
-
-            if self.cfg.cuda:
-                # we should already see only one CUDA device, because of env vars
-                assert torch.cuda.device_count() == 1
-                self.device = torch.device('cuda', index=0)
-            else:
-                self.device = torch.device('cpu')
-
-            self.rollout_policy = Policy(self.gpu_rank,
-                                         self.cfg,
-                                         self.obs_space,
-                                         self.share_obs_space,
-                                         self.action_space,
-                                         is_training=False)
-            self.rollout_policy.eval_mode()
-
-            worker_nodes_per_learner = len(self.cfg.seg_addrs) // len(self.cfg.model_weights_addrs)
-            learner_node_idx = self.cfg.worker_node_idx // worker_nodes_per_learner
-            self.model_weights_socket = zmq.Context().socket(zmq.SUB)
-            self.model_weights_socket.connect(self.cfg.model_weights_addrs[learner_node_idx])
-            self.model_weights_socket.setsockopt(zmq.SUBSCRIBE, b'param')
-
-            for k, v in self.rollout_policy.state_dict().items():
-                self.model_weights_registries[k] = (v.shape, to_numpy_type(v.dtype))
-
-            self.policy_worker_ready_event.set()
-            self._update_weights(timing, block=True)
-            log.info('Initialized model on the policy worker %d!', self.worker_idx)
+        self._init(timing)
 
         last_report = last_cache_cleanup = time.time()
         last_report_samples = 0
@@ -280,9 +279,7 @@ class PolicyWorker:
                         task_type, data = self.task_queue.get_nowait()
 
                         # task from the task_queue
-                        if task_type == TaskType.INIT:
-                            self._init()
-                        elif task_type == TaskType.TERMINATE:
+                        if task_type == TaskType.TERMINATE:
                             self.terminate = True
                             break
 
@@ -324,9 +321,8 @@ class PolicyWorker:
         log.info('Policy worker total num sample: %d, total inference steps: %d, timing: %s', self.total_num_samples,
                  self.total_num_samples // self.rollout_bs, timing)
 
-    def init(self):
-        self.task_queue.put((TaskType.INIT, None))
-        self.initialized_event.wait()
+    def start_process(self):
+        self.process.start()
 
     def close(self):
         self.task_queue.put((TaskType.TERMINATE, None))

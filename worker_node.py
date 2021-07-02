@@ -306,7 +306,7 @@ class WorkerNode:
         """Wait until policy workers are fully initialized."""
         for w in self.policy_workers:
             log.debug('Waiting for policy worker %d to finish initialization...', w.worker_idx)
-            w.init()
+            w.initialized_event.wait()
             log.debug('Policy worker %d initialized!', w.worker_idx)
 
     def process_report(self, report):
