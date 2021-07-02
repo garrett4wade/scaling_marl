@@ -248,6 +248,7 @@ class Trainer:
                     #     self.resume_experience_collection_cv.notify_all()
 
                 if not self.train_in_background:
+                    # TODO: multi-node training will get stuck when loading data to device
                     train_infos = self.training_step(timing)
                     self.report(train_infos)
 
