@@ -141,8 +141,9 @@ def main():
     for r in recievers:
         r.init()
 
+    # NOTE: gpu_rank may not necessarily be the same as local_rank
     trainers = [
-        Trainer(rank, gpu_rank, buffer, all_args, nodes_ready_events, run_dir=run_dir) for gpu_rank, rank in enumerate(all_args.trainer_indices)
+        Trainer(rank, local_rank, local_rank, buffer, all_args, nodes_ready_events, run_dir=run_dir) for local_rank, rank in enumerate(all_args.trainer_indices)
     ]
     for trainer in trainers:
         trainer.process.start()

@@ -17,11 +17,17 @@ import datetime
 
 class Trainer:
     """ Base class for training. """
-    def __init__(self, rank, gpu_rank, buffer, cfg, nodes_ready_events, **kwargs):
+    def __init__(self, global_rank, local_rank, gpu_rank, buffer, cfg, nodes_ready_events, **kwargs):
         self.node_idx = cfg.learner_node_idx
-        self.rank = rank
+
+        # global_rank is the index of this trainer among all trainers in all nodes
+        self.global_rank = global_rank
+        # local_rank is the index of this trainer on its node
+        self.local_rank = local_rank
+        # gpu_rank is the local GPU id that this trainer uses
         self.gpu_rank = gpu_rank
         self.device = torch.device(gpu_rank)
+
         self.cfg = cfg
         self.num_trainers = self.cfg.num_trainers
         # TODO: support CPU
@@ -110,12 +116,14 @@ class Trainer:
         self.process = mp.Process(target=self._run)
 
     def _init(self):
-        if self.gpu_rank == 0:
+        if self.local_rank == 0:
+            # the first trainer on each node will manage its slice of worker nodes
             self.model_weights_socket = zmq.Context().socket(zmq.PUB)
             model_port = self.cfg.model_weights_addrs[self.node_idx].split(':')[-1]
             self.model_weights_socket.bind('tcp://*:' + model_port)
 
-        if self.rank == 0:
+        if self.global_rank == 0:
+            # only one trainer manages logging & summary
             if not self.cfg.no_summary:
                 self._init_summary()
 
@@ -137,10 +145,10 @@ class Trainer:
 
         # TODO: nccl does not work in multi-learner setting, need to figure out why
         dist.init_process_group('gloo',
-                                rank=self.rank,
+                                rank=self.global_rank,
                                 world_size=self.cfg.num_trainers,
                                 init_method=self.cfg.ddp_init_method)
-        log.debug('Learner {} ucessfully initialized process group!'.format(self.rank))
+        log.debug('Learner {} ucessfully initialized process group!'.format(self.global_rank))
         assert self.cfg.cuda and torch.cuda.is_available(), 'cpu training currently not supported'
         torch.cuda.set_device(self.gpu_rank)
 
@@ -160,15 +168,15 @@ class Trainer:
 
         for i, e in enumerate(self.nodes_ready_events):
             e.wait()
-            if self.gpu_rank == 0:
+            if self.local_rank == 0:
                 # the first learner in each node outputs debug info
                 log.debug('Waiting for all nodes ready... {}/{} have already finished initialization...'.format(
                     i + 1, len(self.nodes_ready_events)))
 
-        if self.gpu_rank == 0:
+        if self.local_rank == 0:
             self.pack_off_weights()
         self.initialized = True
-        log.debug('Sucessfully initializing Learner %d!', self.rank)
+        log.debug('Sucessfully initializing Learner %d!', self.global_rank)
 
     def _init_summary(self):
         algo = self.cfg.algorithm_name
@@ -191,7 +199,7 @@ class Trainer:
                 os.makedirs(str(self.run_dir))
 
     def _terminate(self):
-        if self.rank == 0:
+        if self.local_rank == 0:
             self.model_weights_socket.close()
             if hasattr(self, 'run'):
                 self.run.finish()
@@ -259,8 +267,7 @@ class Trainer:
 
                     dist.barrier()
 
-                # TODO: gpurank=0 may not indicate that this is the first learner on this node
-                if self.policy_version % self.cfg.broadcast_interval == 0 and self.gpu_rank == 0:
+                if self.policy_version % self.cfg.broadcast_interval == 0 and self.local_rank == 0:
                     # the first learner in each node broadcasts weights
                     self.pack_off_weights()
 
@@ -271,14 +278,14 @@ class Trainer:
                 # self._experience_collection_rate_stats()
 
             except RuntimeError as exc:
-                log.warning('Error in Learner: %d, exception: %s', self.rank, exc)
+                log.warning('Error in Learner: %d, exception: %s', self.global_rank, exc)
                 log.warning('Terminate process...')
                 self.terminate = True
             except KeyboardInterrupt:
-                log.warning('Keyboard interrupt detected on Learner %d', self.rank)
+                log.warning('Keyboard interrupt detected on Learner %d', self.global_rank)
                 self.terminate = True
             except Exception:
-                log.exception('Unknown exception in Learner %d', self.rank)
+                log.exception('Unknown exception in Learner %d', self.global_rank)
                 self.terminate = True
 
         if self.train_in_background:
@@ -391,14 +398,14 @@ class Trainer:
         return {**train_info, 'buffer_util': buffer_util}
 
     def maybe_save(self):
-        if self.rank == 0 and (self.policy_version % self.save_interval == 0
+        if self.global_rank == 0 and (self.policy_version % self.save_interval == 0
                                or self.policy_version == self.train_for_episodes - 1):
             self.save()
 
     def maybe_log(self):
         log_infos = None
         # log information
-        if self.rank == 0 and self.policy_version % self.log_interval == 0:
+        if self.global_rank == 0 and self.policy_version % self.log_interval == 0:
             self.last_received_num_steps = self.received_num_steps
             self.received_num_steps = self.buffer.total_timesteps.item()
 
@@ -484,7 +491,7 @@ class Trainer:
         self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model.pt'))
 
     def report(self, infos):
-        if infos is None or self.rank != 0:
+        if infos is None or self.global_rank != 0:
             return
 
         if not self.no_summary:
