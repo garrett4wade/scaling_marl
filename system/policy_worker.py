@@ -157,16 +157,25 @@ class PolicyWorker:
         self.total_num_samples += self.rollout_bs
 
     def _update_weights(self, timing, block=False):
-        flags = 0 if block else zmq.NOBLOCK
+        msg = None
 
-        try:
-            msg = self.model_weights_socket.recv_multipart(flags=flags)
-        except zmq.ZMQError:
+        if block:
+            msg = self.model_weights_socket.recv_multipart(flags=0)
+        else:
+            while True:
+                # receive the latest model parameters
+                try:
+                    msg = self.model_weights_socket.recv_multipart(flags=zmq.NOBLOCK)
+                except zmq.ZMQError:
+                    break
+
+        if msg is None:
             return
 
         with timing.add_time('update_weights/processing_msg'):
             # msg is multiple (key, tensor) pairs + policy version
-            assert len(msg) % 2 == 1
+            assert len(msg) % 2 == 0
+            msg = msg[1:]
             state_dict = OrderedDict()
             for i in range(len(msg) // 2):
                 key, value = msg[2 * i].decode('ascii'), msg[2 * i + 1]
@@ -185,7 +194,7 @@ class PolicyWorker:
         self.latest_policy_version = learner_policy_version
 
         if self.num_policy_updates % 10 == 0:
-            log.info(
+            log.debug(
                 'Updated weights on worker %d, policy_version %d (%s)',
                 self.worker_idx,
                 self.latest_policy_version,
@@ -230,7 +239,7 @@ class PolicyWorker:
             learner_node_idx = self.cfg.worker_node_idx // worker_nodes_per_learner
             self.model_weights_socket = zmq.Context().socket(zmq.SUB)
             self.model_weights_socket.connect(self.cfg.model_weights_addrs[learner_node_idx])
-            self.model_weights_socket.setsockopt(zmq.SUBSCRIBE, b'')
+            self.model_weights_socket.setsockopt(zmq.SUBSCRIBE, b'param')
 
             for k, v in self.rollout_policy.state_dict().items():
                 self.model_weights_registries[k] = (v.shape, to_numpy_type(v.dtype))

@@ -144,7 +144,7 @@ class Trainer:
                 config_file.close()
 
         # TODO: nccl does not work in multi-learner setting, need to figure out why
-        dist.init_process_group('gloo',
+        dist.init_process_group('nccl',
                                 rank=self.global_rank,
                                 world_size=self.cfg.num_trainers,
                                 init_method=self.cfg.ddp_init_method)
@@ -166,6 +166,7 @@ class Trainer:
 
         self.algorithm = self.algorithm_fn(self.cfg, self.policy)
 
+        log.debug('Waiting for all nodes ready...')
         for i, e in enumerate(self.nodes_ready_events):
             e.wait()
             if self.local_rank == 0:
@@ -303,7 +304,7 @@ class Trainer:
     def pack_off_weights(self):
         # remove prefix 'module.' of DDP models
         numpy_state_dict = {k.replace('module.', ''): v.cpu().numpy() for k, v in self.policy.state_dict().items()}
-        msg = []
+        msg = [b'param']
         for k, v in numpy_state_dict.items():
             msg.extend([k.encode('ascii'), v])
         msg.append(str(self.policy_version).encode('ascii'))
