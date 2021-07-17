@@ -143,6 +143,9 @@ class Trainer:
                 yaml.dump(vars(self.cfg), config_file)
                 config_file.close()
 
+        os.environ['NCCL_DEBUG'] = 'info'
+        os.environ['NCCL_SOCKET_IFNAME'] = 'eth0'
+        os.environ['NCCL_IB_DISABLE'] = '1'
         # TODO: nccl does not work in multi-learner setting, need to figure out why
         dist.init_process_group('nccl',
                                 rank=self.global_rank,
