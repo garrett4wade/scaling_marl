@@ -15,7 +15,7 @@ from utils.timing import Timing
 from utils.utils import log, join_or_kill, cuda_envvars_for_policy, memory_stats, TaskType
 from algorithms.storage_registries import to_numpy_type
 import zmq
-from collections import OrderedDict
+from collections import OrderedDict, deque
 
 
 def _t2n(x):
@@ -26,7 +26,7 @@ def _t2n(x):
 class PolicyWorker:
     def __init__(self, worker_idx, cfg, obs_space, share_obs_space, action_space, buffer, policy_queue, actor_queues,
                  report_queue, task_queue, policy_lock, resume_experience_collection_cv, act_shms, act_semaphores,
-                 envstep_output_shm, envstep_output_semaphores, policy_worker_ready_event):
+                 envstep_output_shms, policy_worker_ready_event):
         log.info('Initializing policy worker %d', worker_idx)
 
         self.worker_idx = worker_idx
@@ -50,10 +50,8 @@ class PolicyWorker:
         assert self.envs_per_actor % self.num_splits == 0
         self.envs_per_split = self.envs_per_actor // self.num_splits
 
-        self.num_actors_per_policy_worker = self.cfg.num_actors // self.cfg.num_policy_workers
-        self.rollout_bs = self.num_actors_per_policy_worker * self.envs_per_split
-        self.actor_cnt = np.zeros(self.num_splits, dtype=np.int32)
-        self.is_actor_ready = np.zeros((self.num_splits, self.num_actors_per_policy_worker), dtype=np.int32)
+        self.num_actors_per_group = self.cfg.num_actors // self.cfg.num_actor_groups
+        self.envs_per_group = self.num_actors_per_group * self.envs_per_split
 
         self.device = None
         self.actor_critic = None
@@ -67,11 +65,12 @@ class PolicyWorker:
         self.report_queue = report_queue
         self.policy_worker_ready_event = policy_worker_ready_event
 
+        self.request_clients = []
+
         self.act_shms = act_shms
         self.act_semaphores = act_semaphores
 
-        self.envstep_output_shm = envstep_output_shm
-        self.envstep_output_semaphores = envstep_output_semaphores
+        self.envstep_output_shms = envstep_output_shms
 
         # queue other components use to talk to this particular worker
         self.task_queue = task_queue
@@ -89,6 +88,7 @@ class PolicyWorker:
         self.num_policy_updates = 0
 
         self.total_num_samples = 0
+        self.total_inference_steps = 0
 
         self.process = TorchProcess(target=self._run, daemon=True)
 
@@ -124,34 +124,40 @@ class PolicyWorker:
                 self.model_weights_registries[k] = (v.shape, to_numpy_type(v.dtype))
 
             self.policy_worker_ready_event.set()
-            self._update_weights(timing, block=True)
+            # self._update_weights(timing, block=True)
             log.info('Initialized model on the policy worker %d!', self.worker_idx)
 
         log.info('Policy worker %d initialized', self.worker_idx)
         self.initialized = True
         self.initialized_event.set()
 
-    def _handle_policy_steps(self, split_idx, timing):
+    def _handle_policy_steps(self, timing):
         with torch.no_grad():
             with timing.add_time('inference/prepare_policy_inputs'):
-                policy_inputs = {
-                    k: v
-                    for k, v in self.envstep_output_shm[split_idx].items() if k in self.buffer.policy_input_keys
-                }
-                dones = self.envstep_output_shm[split_idx]['dones']
-                policy_inputs['masks'] = np.zeros_like(dones)
-                policy_inputs['masks'][:] = 1 - np.all(dones, axis=1, keepdims=True)
+                organized_requests = [(client // self.cfg.num_actor_groups, client % self.cfg.num_actor_groups) for client in self.request_clients]
+                envstep_outputs = {}
+                policy_inputs = {}
+                for k, shm_pairs in self.envstep_output_shms.items():
+                    data = np.stack([shm_pairs[group_idx][split_idx] for split_idx, group_idx in organized_requests], 0)
+                    envstep_outputs[k] = data
+                    if k in self.buffer.policy_input_keys:
+                        policy_inputs[k] = data
+                # TODO: deal with non-sharing senarios
+                policy_inputs['masks'] = np.zeros_like(envstep_outputs['dones'])
+                # masks/dones has shape (num_requests, envs_per_split, num_agents, 1)
+                policy_inputs['masks'][:] = 1 - np.all(envstep_outputs['dones'], axis=2, keepdims=True)
 
             with timing.add_time('inference/preprosessing'):
-                shared = policy_inputs['obs'].shape[:2] == (self.rollout_bs, self.num_agents)
+                shared = policy_inputs['obs'].shape[:3] == (len(organized_requests), self.envs_per_group, self.num_agents)
+                rollout_bs = len(organized_requests) * self.envs_per_group
                 if shared:
                     # all agents simultaneously advance an environment step, e.g. SMAC and MPE
                     for k, v in policy_inputs.items():
-                        policy_inputs[k] = v.reshape(self.rollout_bs * self.num_agents, *v.shape[2:])
+                        policy_inputs[k] = v.reshape(rollout_bs * self.num_agents, *v.shape[3:])
                 else:
                     # agent advances an environment step in turn, e.g. card games
                     for k, v in policy_inputs.items():
-                        policy_inputs[k] = v
+                        policy_inputs[k] = v.reshape(rollout_bs, *v.shape[2:])
 
             with timing.add_time('inference/to_device'):
                 for k, v in policy_inputs.items():
@@ -164,28 +170,33 @@ class PolicyWorker:
                 if shared:
                     # all agents simultaneously advance an environment step, e.g. SMAC and MPE
                     for k, v in policy_outputs.items():
-                        policy_outputs[k] = _t2n(v).reshape(self.rollout_bs, self.num_agents, *v.shape[1:])
+                        policy_outputs[k] = _t2n(v).reshape(len(self.request_clients), self.envs_per_group, self.num_agents, *v.shape[1:])
                 else:
                     # agent advances an environment step in turn, e.g. card games
                     for k, v in policy_outputs.items():
-                        policy_outputs[k] = _t2n(v)
+                        policy_outputs[k] = _t2n(v).reshape(len(self.request_clients), self.envs_per_group, *v.shape[1:])
 
             with timing.add_time('inference/copy_actions'):
-                for i, (shm_pair, semaphore_pair) in enumerate(zip(self.act_shms, self.act_semaphores)):
-                    env_slice = slice(i * self.envs_per_split, (i + 1) * self.envs_per_split)
-                    shm_pair[split_idx][:] = policy_outputs['actions'][env_slice]
-                    semaphore_pair[split_idx].release()
+                for i, (split_idx, group_idx) in enumerate(organized_requests):
+                    for local_actor_idx in range(self.num_actors_per_group):
+                        global_actor_idx = self.num_actors_per_group * group_idx + local_actor_idx
+                        env_slice = slice(local_actor_idx * self.envs_per_split, (local_actor_idx + 1) * self.envs_per_split)
+                        self.act_shms[global_actor_idx][split_idx][:] = policy_outputs['actions'][i, env_slice]
+                        self.act_semaphores[global_actor_idx][split_idx].release()
 
             with timing.add_time('inference/insert_after_inference'):
-                for k, v in self.envstep_output_shm[split_idx].items():
+                # copy rnn states into small shared memory block
+                for k, shm_pairs in self.envstep_output_shms.items():
                     if 'rnn_states' in k:
-                        v[:] = policy_outputs[k]
-                insert_data = {**self.envstep_output_shm[split_idx], **policy_outputs}
-                self.buffer.insert(self.worker_idx, split_idx, **insert_data)
+                        for i, (split_idx, group_idx) in enumerate(organized_requests):
+                            shm_pairs[group_idx][split_idx][:] = policy_outputs[k][i]
 
-        self.actor_cnt[split_idx] = 0
-        self.is_actor_ready[split_idx] = 0
-        self.total_num_samples += self.rollout_bs
+                insert_data = {**envstep_outputs, **policy_outputs}
+                self.buffer.insert(organized_requests, **insert_data)
+
+        self.request_clients = []
+        self.total_num_samples += rollout_bs
+        self.total_inference_steps += 1
 
     def _update_weights(self, timing, block=False):
         msg = None
@@ -251,6 +262,23 @@ class PolicyWorker:
         last_report_samples = 0
         cur_split = 0
 
+        # very conservative limit on the minimum number of requests to wait for
+        # this will almost guarantee that the system will continue collecting experience
+        # at max rate even when 2/3 of workers are stuck for some reason (e.g. doing a long env reset)
+        # Although if your workflow involves very lengthy operations that often freeze workers, it can be beneficial
+        # to set min_num_requests to 1 (at a cost of potential inefficiency, i.e. policy worker will use very small
+        # batches)
+        min_num_requests = self.cfg.min_num_requests
+        if min_num_requests is None or min_num_requests == -1:
+            min_num_requests = self.cfg.num_actor_groups // self.cfg.num_policy_workers
+            min_num_requests //= 3
+            min_num_requests = max(1, min_num_requests)
+        log.info('Min num requests: %d', min_num_requests)
+
+        # Again, very conservative timer. Only wait a little bit, then continue operation.
+        wait_for_min_requests = 0.025
+        num_requests = deque(maxlen=100)
+
         while not self.terminate:
             try:
                 # TODO: add stop experiment collection signal
@@ -258,21 +286,23 @@ class PolicyWorker:
                 #     with self.resume_experience_collection_cv:
                 #         self.resume_experience_collection_cv.wait(timeout=0.05)
 
+                waiting_started = time.time()
                 with timing.time_avg('waiting_avg'), timing.add_time('waiting'):
-                    for i, semaphore in enumerate(self.envstep_output_semaphores):
-                        if not self.is_actor_ready[cur_split, i]:
-                            ready = semaphore[cur_split].acquire(timeout=0.1)
-                            self.is_actor_ready[cur_split, i] = ready
-                            self.actor_cnt[cur_split] += ready
+                    while len(self.request_clients) < min_num_requests and time.time() - waiting_started < wait_for_min_requests:
+                        try:
+                            policy_requests = self.policy_queue.get_many(timeout=0.005)
+                            self.request_clients.extend(policy_requests)
+                        except Empty:
+                            pass
 
-                if self.actor_cnt[cur_split] >= self.num_actors_per_policy_worker:
+                if len(self.request_clients) > 0:
+                    num_requests.append(len(self.request_clients))
+
                     with timing.add_time('update_weights'):
                         self._update_weights(timing)
 
                     with timing.time_avg('inference_avg'), timing.add_time('inference'):
-                        self._handle_policy_steps(cur_split, timing)
-
-                    cur_split = (cur_split + 1) % self.num_splits
+                        self._handle_policy_steps(timing)
 
                 with timing.add_time('get_tasks'):
                     try:
@@ -318,8 +348,8 @@ class PolicyWorker:
 
         self.model_weights_socket.close()
         time.sleep(0.2)
-        log.info('Policy worker total num sample: %d, total inference steps: %d, timing: %s', self.total_num_samples,
-                 self.total_num_samples // self.rollout_bs, timing)
+        log.info('Policy worker avg requests: %d, total num sample: %d, total inference steps: %d, timing: %s', np.mean(num_requests), self.total_num_samples,
+                 self.total_inference_steps, timing)
 
     def start_process(self):
         self.process.start()

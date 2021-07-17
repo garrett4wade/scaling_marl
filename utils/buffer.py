@@ -13,20 +13,24 @@ from utils.popart import PopArt
 class ReplayBuffer:
     def __init__(self, args, obs_space, share_obs_space, act_space):
         self.args = args
+
+        self.obs_space = obs_space
+        self.share_obs_space = share_obs_space
+        self.act_space = act_space
+
         # system configuration
         self.num_actors = args.num_actors
+        self.num_actor_groups = args.num_actor_groups
         self.num_splits = args.num_splits
-        assert args.envs_per_actor % args.num_splits == 0
-        self.envs_per_split = args.envs_per_actor // args.num_splits
         self.qsize = args.qsize
 
+        self.envs_per_actor = args.envs_per_actor
+        self.envs_per_split = args.envs_per_actor // args.num_splits
+        self.actors_per_group = self.num_actors // self.num_actor_groups
         self.data_chunk_length = args.data_chunk_length
 
-        self.actor2policy_worker = {}
-        assert self.num_actors % args.num_policy_workers == 0
-        self.num_actors_per_policy_worker = self.num_actors // args.num_policy_workers
-        for actor_id in range(self.num_actors):
-            self.actor2policy_worker[actor_id] = actor_id // self.num_actors_per_policy_worker
+        assert args.envs_per_actor % self.num_splits == 0
+        assert self.num_actors % self.num_actor_groups == 0
 
         # storage shape configuration
         self.num_agents = args.num_agents
@@ -35,10 +39,11 @@ class ReplayBuffer:
         # TODO: support n-step bootstrap
         # self.bootstrap_step = bootstrap_step = args.bootstrap_step
 
+    def _init_storage(self):
         # initialize storage
         # TODO: replace get_ppo_storage_specs with get_${algorithm}_storage_specs
         self.storage_specs, self.policy_input_keys, self.policy_output_keys = get_ppo_storage_specs(
-            args, obs_space, share_obs_space, act_space)
+            self.args, self.obs_space, self.share_obs_space, self.act_space)
         self.storage_keys = [storage_spec.name for storage_spec in self.storage_specs]
 
         self.shapes_and_dtypes = {}
@@ -70,7 +75,7 @@ class ReplayBuffer:
         self.storage = {k: getattr(self, k) for k in self.storage_keys}
 
         # to specify recorded summary infos
-        self.summary_keys = SUMMARY_KEYS[args.env_name]
+        self.summary_keys = SUMMARY_KEYS[self.args.env_name]
         self.summary_lock = mp.Lock()
 
         # buffer indicators
@@ -170,13 +175,14 @@ class WorkerBuffer(ReplayBuffer):
     def __init__(self, args, obs_space, share_obs_space, act_space):
         # NOTE: value target computation is deferred to centralized trainer in consistent with off-policy correction
         # e.g. V-trace and Retrace
+        super().__init__(args, obs_space, share_obs_space, act_space)
         self.target_num_slots = 1
         self.num_consumers_to_notify = 1
-        self.num_slots = args.qsize
-        self.envs_per_slot = args.num_actors * args.envs_per_actor // args.num_splits // args.num_policy_workers
-        self.envs_per_seg = self.envs_per_slot
 
-        super().__init__(args, obs_space, share_obs_space, act_space)
+        self.num_slots = self.qsize * self.num_actor_groups
+        self.envs_per_seg = self.envs_per_slot = self.actors_per_group * self.envs_per_split
+
+        super()._init_storage()
 
         # hash table mapping client identity to slot id
         self._mp_mgr = mp.Manager()
@@ -191,8 +197,7 @@ class WorkerBuffer(ReplayBuffer):
             (args.num_splits, self.envs_per_split * args.num_actors, len(self.summary_keys)),
             dtype=torch.float32).share_memory_().numpy()
 
-    def _allocate(self, policy_worker_id, split_id):
-        identity = (policy_worker_id, split_id)
+    def _allocate(self, identity):
         slot_id = super()._allocate()
 
         if identity in self._slot_hash.keys():
@@ -434,67 +439,72 @@ class PolicyMixin:
 
 
 class SharedPolicyMixin(PolicyMixin):
-    def insert(self,
-               policy_worker_id,
-               split_id,
-               obs,
-               share_obs,
-               rewards,
-               dones,
-               fct_masks=None,
-               available_actions=None,
-               **policy_outputs):
-        if (policy_worker_id, split_id) not in self._slot_hash.keys():
-            self._allocate(policy_worker_id, split_id)
-        slot_id = self._slot_hash[(policy_worker_id, split_id)]
-        ep_step = self._ep_step[slot_id]
+    def insert(self, client_ids, obs, share_obs, rewards, dones, fct_masks=None, available_actions=None, **policy_outputs):
+        slot_ids = np.zeros(len(client_ids), dtype=np.int32)
+        for i, client_id in enumerate(client_ids):
+            if client_id not in self._slot_hash.keys():
+                self._allocate(client_id)
+            slot_ids[i] = self._slot_hash[client_id]
+        ep_steps = self._ep_step[slot_ids]
 
         # env step returns
-        self.share_obs[slot_id, ep_step] = share_obs
-        self.obs[slot_id, ep_step] = obs
-        if ep_step >= 1:
-            self.rewards[slot_id, ep_step - 1] = rewards
-        self.masks[slot_id, ep_step] = 1 - np.all(dones, axis=1, keepdims=True)
+        self.share_obs[slot_ids, ep_steps] = share_obs
+        self.obs[slot_ids, ep_steps] = obs
+        self.rewards[slot_ids[ep_steps >= 1], ep_steps[ep_steps >= 1] - 1] = rewards[ep_steps >= 1]
+        masks = 1 - np.all(dones, axis=2, keepdims=True)
+        self.masks[slot_ids, ep_steps] = masks
 
         if hasattr(self, 'available_actions') and available_actions is not None:
-            self.available_actions[slot_id, ep_step] = available_actions
+            self.available_actions[slot_ids, ep_steps] = available_actions
 
         if hasattr(self, 'active_masks'):
             dones_cp = dones.copy()
-            dones_cp[np.all(dones, axis=1).squeeze(-1)] = 0
-            self.active_masks[slot_id, ep_step] = 1 - dones_cp
+            # deal with the auto-reset
+            dones_cp[np.all(dones, axis=2).squeeze(-1)] = 0
+            self.active_masks[slot_ids, ep_steps] = 1 - dones_cp
 
         if hasattr(self, 'fct_masks') and fct_masks is not None:
-            self.fct_masks[slot_id, ep_step] = fct_masks
+            self.fct_masks[slot_ids, ep_steps] = fct_masks
 
         # model inference returns
-        rnn_mask = np.expand_dims(self.masks[slot_id, ep_step], -1)
+        rnn_mask = np.expand_dims(masks, -1)
         for k in policy_outputs.keys():
             if 'rnn_states' in k:
-                if (ep_step + 1) % self.data_chunk_length == 0 and (ep_step + 1) < self.episode_length:
-                    chunk_cnt = (ep_step + 1) // self.data_chunk_length
-                    self.storage[k][slot_id, chunk_cnt] = policy_outputs[k] * rnn_mask
+                selected_idx = np.logical_and((ep_steps + 1) % self.data_chunk_length == 0, (ep_steps + 1) < self.episode_length)
+                if np.any(selected_idx):
+                    self.storage[k][slot_ids[selected_idx], (ep_steps[selected_idx] + 1) // self.data_chunk_length] = (policy_outputs[k] * rnn_mask)[selected_idx]
             else:
-                self.storage[k][slot_id, ep_step] = policy_outputs[k]
-
-        # closure on the previous slot
-        if ep_step == 0 and (policy_worker_id, split_id) in self._prev_slot_hash.keys():
-            old_slot_id = self._prev_slot_hash[(policy_worker_id, split_id)]
-            self._slot_closure(old_slot_id, slot_id)
+                self.storage[k][slot_ids, ep_steps] = policy_outputs[k]
 
         # advance 1 timestep
-        self._ep_step[slot_id] += 1
+        self._ep_step[slot_ids] += 1
+
+        # fill in the bootstrap step of a previous slot
+        closure_slot_ids = []
+        old_closure_slot_ids = []
 
         # if a slot is full except for the bootstrap step, allocate a new slot for the corresponding client
-        # and then copy rnn states to the new slot
-        if ep_step == self.episode_length - 1:
-            self._ep_step[slot_id] = 0
-            self._allocate(policy_worker_id, split_id)
-            new_slot_id = self._slot_hash[(policy_worker_id, split_id)]
+        opening_slot_ids = []
+        opening_new_slot_ids = []
 
+        for ep_step, slot_id, client_id in zip(ep_steps, slot_ids, client_ids):
+            if ep_step == 0 and client_id in self._prev_slot_hash.keys():
+                closure_slot_ids.append(slot_id)
+                old_closure_slot_ids.append(self._prev_slot_hash[client_id])
+
+            if ep_step == self.episode_length - 1:
+                opening_slot_ids.append(slot_id)
+                self._allocate(client_id)
+                opening_new_slot_ids.append(self._slot_hash[client_id])
+
+        if len(closure_slot_ids) > 0:
+            self._slot_closure(old_closure_slot_ids, closure_slot_ids)
+
+        if len(opening_slot_ids) > 0:
+            self._ep_step[opening_slot_ids] = 0
             for k in self.storage_keys:
                 if 'rnn_states' in k:
-                    self.storage[k][new_slot_id, 0] = policy_outputs[k] * rnn_mask
+                    self.storage[k][opening_new_slot_ids, 0] = (policy_outputs[k] * rnn_mask)[ep_steps == self.episode_length - 1]
 
         self.total_timesteps += self.obs.shape[2]
 

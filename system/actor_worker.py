@@ -83,9 +83,9 @@ class ActorWorker:
 
         self.terminate = False
 
-        num_actors_per_policy_worker = self.cfg.num_actors // self.cfg.num_policy_workers
-        self.local_idx = self.worker_idx % num_actors_per_policy_worker
-        self.env_slice = slice(self.local_idx * self.envs_per_split, (self.local_idx + 1) * self.envs_per_split)
+        num_actors_per_group = self.cfg.num_actors // self.cfg.num_actor_groups
+        self.group_local_idx = self.worker_idx % num_actors_per_group
+        self.env_slice = slice(self.group_local_idx * self.envs_per_split, (self.group_local_idx + 1) * self.envs_per_split)
 
         self.env_runners = None
 
@@ -148,9 +148,9 @@ class ActorWorker:
             policy_inputs['rewards'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
             policy_inputs['dones'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
             policy_inputs['fct_masks'] = np.ones((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
-            for k, v in self.envstep_output_shm[split_idx].items():
+            for k, v in self.envstep_output_shm.items():
                 if 'rnn_states' not in k:
-                    v[self.env_slice] = policy_inputs[k]
+                    v[split_idx][self.env_slice] = policy_inputs[k]
 
         for split_idx in range(len(self.env_runners)):
             self.envstep_output_semaphore[split_idx].release()
@@ -180,9 +180,9 @@ class ActorWorker:
             force_terminations = np.array([[[agent_info.get('force_termination', 0)] for agent_info in info]
                                            for info in infos])
             envstep_outputs['fct_masks'] = 1 - force_terminations
-            for k, v in self.envstep_output_shm[split_idx].items():
+            for k, v in self.envstep_output_shm.items():
                 if 'rnn_states' not in k:
-                    v[self.env_slice] = envstep_outputs[k]
+                    v[split_idx][self.env_slice] = envstep_outputs[k]
             self.envstep_output_semaphore[split_idx].release()
 
         with timing.add_time('env_step/summary'):

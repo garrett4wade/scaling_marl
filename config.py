@@ -194,6 +194,7 @@ def get_config():
 
     # system parameters
     parser.add_argument("--num_actors", type=int, default=4)
+    parser.add_argument("--num_actor_groups", type=int, default=1, help='trade off between static and dynamic rollout')
     parser.add_argument("--envs_per_actor", type=int, default=2)
     parser.add_argument("--num_splits", type=int, default=2)
     parser.add_argument("--qsize", type=int, default=8)
@@ -215,6 +216,7 @@ def get_config():
     parser.add_argument("--num_policy_workers", type=int, default=1)
 
     parser.add_argument("--slots_per_update", type=int, default=1)
+    parser.add_argument("--min_num_requests", type=int, default=-1)
 
     parser.add_argument("--reset_timeout_seconds", type=int, default=60)
     parser.add_argument('--train_for_env_steps',

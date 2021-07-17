@@ -24,6 +24,7 @@ from torch.multiprocessing import JoinableQueue as TorchJoinableQueue
 from system.actor_worker import ActorWorker
 from system.policy_worker import PolicyWorker
 from system.transmitter import Transmitter
+from system.actor_group_manager import ActorGroupManager
 from utils.buffer import SharedWorkerBuffer
 from utils.timing import Timing
 from utils.utils import log, set_global_cuda_envvars, list_child_processes, kill_processes
@@ -74,7 +75,7 @@ class WorkerNode:
         # faster_fifo queue is initialized using BYTES!
         self.report_queue = MpQueue(40 * 1000 * 1000)
         # TODO: policy queue -> policy queues to support PBT
-        self.policy_queues = [MpQueue() for _ in range(self.cfg.num_policy_workers)]
+        self.policy_queue = MpQueue()
 
         # TODO: here we only consider actions for policy-sharing
         act_shape = (self.cfg.envs_per_actor // self.cfg.num_splits, self.num_agents, 1)
@@ -87,20 +88,17 @@ class WorkerNode:
         # TODO: initialize env step outputs using config
         # following is just the case of StarCraft2 (policy-sharing environments)
         keys = ['obs', 'share_obs', 'rewards', 'available_actions', 'fct_masks', 'rnn_states', 'rnn_states_critic']
-        self.envstep_output_shms = []
-        for _ in range(self.cfg.num_policy_workers):
-            shms = []
-            for _ in range(self.cfg.num_splits):
-                shm_dict = {}
-                for k in keys:
-                    if not hasattr(self.buffer, k):
-                        continue
-                    shape = getattr(self.buffer, k).shape[2:]
-                    shm_dict[k] = torch.zeros(shape, dtype=torch.float32).share_memory_().numpy()
-                shm_dict['dones'] = torch.zeros(self.buffer.masks.shape[2:],
-                                                dtype=torch.float32).share_memory_().numpy()
-                shms.append(shm_dict)
-            self.envstep_output_shms.append(shms)
+        self.envstep_output_shms = {}
+        for k in keys:
+            # TODO: some environments may not need available actions and fct_masks
+            # if not hasattr(self.buffer, k):
+            #     continue
+
+            # buffer storage shape (num_slots, episode_length, num_envs, num_agents, *shape)
+            shape = getattr(self.buffer, k).shape[2:]
+            self.envstep_output_shms[k] = [[torch.zeros(shape, dtype=torch.float32).share_memory_().numpy() for _ in range(self.cfg.num_splits)] for _ in range(self.cfg.num_actor_groups)]
+        dones_shape = self.buffer.masks.shape[2:]
+        self.envstep_output_shms['dones'] = [[torch.zeros(dones_shape, dtype=torch.float32).share_memory_().numpy()for _ in range(self.cfg.num_splits)] for _ in range(self.cfg.num_actor_groups)]
         self.envstep_output_semaphores = [[multiprocessing.Semaphore(0) for _ in range(self.cfg.num_splits)]
                                           for _ in range(self.cfg.num_actors)]
 
@@ -138,9 +136,8 @@ class WorkerNode:
         pass
 
     def create_actor_worker(self, idx, actor_queue):
-        num_actors_per_queue = self.cfg.num_actors // self.cfg.num_policy_workers
-        policy_worker_idx = idx // num_actors_per_queue
-        print('#####################', policy_worker_idx)
+        num_actors_per_group = self.cfg.num_actors // self.cfg.num_actor_groups
+        group_idx = idx // num_actors_per_group
         return ActorWorker(
             self.cfg,
             self.env_fn,
@@ -148,11 +145,11 @@ class WorkerNode:
             idx,
             self.buffer,
             task_queue=actor_queue,
-            policy_queue=self.policy_queues[policy_worker_idx],
+            policy_queue=self.policy_queue,
             report_queue=self.report_queue,
             act_shm=self.act_shms[idx],
             act_semaphore=self.act_semaphores[idx],
-            envstep_output_shm=self.envstep_output_shms[policy_worker_idx],
+            envstep_output_shm={k: v[group_idx] for k, v in self.envstep_output_shms.items()},
             envstep_output_semaphore=self.envstep_output_semaphores[idx],
         )
 
@@ -247,15 +244,22 @@ class WorkerNode:
         for i in range(self.cfg.num_policy_workers):
             policy_worker_queues.append(TorchJoinableQueue())
 
-        log.info('Initializing learners...')
+        log.info('Initializing group managers...')
+        num_actors_per_group = self.cfg.num_actors // self.cfg.num_actor_groups
+
+        self.group_managers = []
+        for idx in range(self.cfg.num_actor_groups):
+            s = slice(idx * num_actors_per_group, (idx + 1) * num_actors_per_group)
+            gm = ActorGroupManager(self.cfg, idx, self.policy_queue, self.envstep_output_semaphores[s])
+            gm.start()
+            self.group_managers.append(gm)
+
+        log.info('Initializing policy workers...')
         policy_lock = multiprocessing.Lock()
         resume_experience_collection_cv = multiprocessing.Condition()
 
-        log.info('Initializing policy workers...')
-
         num_actors_per_policy_worker = self.cfg.num_actors // self.cfg.num_policy_workers
         for i in range(self.cfg.num_policy_workers):
-            actor_slice = slice(i * num_actors_per_policy_worker, (i + 1) * num_actors_per_policy_worker)
             policy_worker = PolicyWorker(
                 i,
                 self.cfg,
@@ -263,16 +267,15 @@ class WorkerNode:
                 self.share_obs_space,
                 self.action_space,
                 self.buffer,
-                self.policy_queues[i],
-                actor_queues[actor_slice],
+                self.policy_queue,
+                actor_queues,
                 self.report_queue,
                 policy_worker_queues[i],
                 policy_lock,
                 resume_experience_collection_cv,
-                self.act_shms[actor_slice],
-                self.act_semaphores[actor_slice],
-                self.envstep_output_shms[i],
-                self.envstep_output_semaphores[actor_slice],
+                self.act_shms,
+                self.act_semaphores,
+                self.envstep_output_shms,
                 self.policy_worker_ready_events[i],
             )
             self.policy_workers.append(policy_worker)
