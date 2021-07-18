@@ -191,6 +191,11 @@ class WorkerBuffer(ReplayBuffer):
 
         # episode step record
         self._ep_step = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
+        # Buffer insertion is invoked after copying actions to small shared memory for actors.
+        # Since buffer insertion is slow, it is very possible that before the buffer insertion on policy worker #1
+        # finishes, policy worker #2 starts buffer insertion of the same client (slot),
+        # which causes confusion on ep_step. One solution is adding a multiprocessing lock.
+        self._ep_step_lock = mp.Lock()
 
         # summary block
         self.summary_block = torch.zeros(
@@ -445,7 +450,25 @@ class SharedPolicyMixin(PolicyMixin):
             if client_id not in self._slot_hash.keys():
                 self._allocate(client_id)
             slot_ids[i] = self._slot_hash[client_id]
-        ep_steps = self._ep_step[slot_ids]
+
+        # fill in the bootstrap step of a previous slot
+        closure_slot_ids, old_closure_slot_ids = [], []
+        # if a slot is full except for the bootstrap step, allocate a new slot for the corresponding client
+        opening_slot_ids, opening_new_slot_ids = [], []
+
+        with self._ep_step_lock:
+            ep_steps = self._ep_step[slot_ids]
+
+            # advance 1 timestep
+            self._ep_step[slot_ids] += 1
+
+            for ep_step, slot_id, client_id in zip(ep_steps, slot_ids, client_ids):
+                if ep_step == self.episode_length - 1:
+                    opening_slot_ids.append(slot_id)
+                    self._allocate(client_id)
+                    opening_new_slot_ids.append(self._slot_hash[client_id])
+
+            self._ep_step[opening_slot_ids] = 0
 
         # env step returns
         self.share_obs[slot_ids, ep_steps] = share_obs
@@ -476,32 +499,15 @@ class SharedPolicyMixin(PolicyMixin):
             else:
                 self.storage[k][slot_ids, ep_steps] = policy_outputs[k]
 
-        # advance 1 timestep
-        self._ep_step[slot_ids] += 1
-
-        # fill in the bootstrap step of a previous slot
-        closure_slot_ids = []
-        old_closure_slot_ids = []
-
-        # if a slot is full except for the bootstrap step, allocate a new slot for the corresponding client
-        opening_slot_ids = []
-        opening_new_slot_ids = []
-
         for ep_step, slot_id, client_id in zip(ep_steps, slot_ids, client_ids):
             if ep_step == 0 and client_id in self._prev_slot_hash.keys():
                 closure_slot_ids.append(slot_id)
                 old_closure_slot_ids.append(self._prev_slot_hash[client_id])
 
-            if ep_step == self.episode_length - 1:
-                opening_slot_ids.append(slot_id)
-                self._allocate(client_id)
-                opening_new_slot_ids.append(self._slot_hash[client_id])
-
         if len(closure_slot_ids) > 0:
             self._slot_closure(old_closure_slot_ids, closure_slot_ids)
 
         if len(opening_slot_ids) > 0:
-            self._ep_step[opening_slot_ids] = 0
             for k in self.storage_keys:
                 if 'rnn_states' in k:
                     self.storage[k][opening_new_slot_ids, 0] = (policy_outputs[k] * rnn_mask)[ep_steps == self.episode_length - 1]

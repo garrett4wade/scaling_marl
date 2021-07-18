@@ -2,7 +2,7 @@ project_name: scaling
 group_name: wandb_test
 algorithm_name: rmappo
 env_name: StarCraft2
-map_name: 3m
+map_name: 27m_vs_30m
 user_name: garrett4wade
 experiment_name: test
 benchmark: false
@@ -16,7 +16,7 @@ use_render: false
 
 num_env_steps: 10000000
 train_for_env_steps: 10000000000
-train_for_seconds: 600
+train_for_seconds: 500
 model_dir: null
 
 # system parameters
@@ -28,13 +28,13 @@ model_weights_addrs:
   - tcp://10.0.4.4:8889
 seg_addrs:
   - tcp://10.0.4.4:12346
-num_actors: 8
-num_actor_groups: 4
+num_actors: 128
+num_actor_groups: 64
 envs_per_actor: 2
 min_num_requests: -1
-num_policy_workers: 2
+num_policy_workers: 4
 slots_per_update: 1
-qsize: 32
+qsize: 8
 num_splits: 2
 num_transmitters: 1
 data_chunk_length: 10

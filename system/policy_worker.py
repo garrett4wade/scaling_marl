@@ -97,7 +97,7 @@ class PolicyWorker:
             # initialize the Torch modules
             log.info('Initializing model on the policy worker %d...', self.worker_idx)
 
-            torch.set_num_threads(1)
+            torch.set_num_threads(32)
 
             if self.cfg.cuda:
                 # we should already see only one CUDA device, because of env vars
@@ -348,7 +348,7 @@ class PolicyWorker:
 
         self.model_weights_socket.close()
         time.sleep(0.2)
-        log.info('Policy worker avg requests: %d, total num sample: %d, total inference steps: %d, timing: %s', np.mean(num_requests), self.total_num_samples,
+        log.info('Policy worker avg requests: %.2f, total num sample: %d, total inference steps: %d, timing: %s', np.mean(num_requests), self.total_num_samples,
                  self.total_inference_steps, timing)
 
     def start_process(self):
