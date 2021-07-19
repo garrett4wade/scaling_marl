@@ -430,7 +430,10 @@ class Trainer:
                           recent_rollout_fps, global_avg_rollout_fps, recent_learning_fps, global_avg_learning_fps))
 
             # as defined in https://cdn.openai.com/dota-2.pdf
-            recent_sample_reuse = recent_consumed_num_steps / recent_received_num_steps
+            if recent_received_num_steps > 0:
+                recent_sample_reuse = recent_consumed_num_steps / recent_received_num_steps
+            else:
+                recent_sample_reuse = np.nan
             global_sample_reuse = self.consumed_num_steps / self.received_num_steps
 
             log.debug('recent sample reuse: {:.2f}, global average sample reuse: {:.2f}.'.format(

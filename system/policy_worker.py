@@ -184,7 +184,7 @@ class PolicyWorker:
                         self.act_shms[global_actor_idx][split_idx][:] = policy_outputs['actions'][i, env_slice]
                         self.act_semaphores[global_actor_idx][split_idx].release()
 
-            with timing.add_time('inference/insert_after_inference'):
+            with timing.add_time('inference/insert'):
                 # copy rnn states into small shared memory block
                 for k, shm_pairs in self.envstep_output_shms.items():
                     if 'rnn_states' in k:
@@ -192,7 +192,7 @@ class PolicyWorker:
                             shm_pairs[group_idx][split_idx][:] = policy_outputs[k][i]
 
                 insert_data = {**envstep_outputs, **policy_outputs}
-                self.buffer.insert(organized_requests, **insert_data)
+                self.buffer.insert(timing, self.request_clients, **insert_data)
 
         self.request_clients = []
         self.total_num_samples += rollout_bs
