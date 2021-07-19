@@ -447,8 +447,6 @@ class PolicyMixin:
 
 class SharedPolicyMixin(PolicyMixin):
     def insert(self, timing, client_ids, obs, share_obs, rewards, dones, fct_masks=None, available_actions=None, **policy_outputs):
-        slot_ids = np.zeros(len(client_ids), dtype=np.int32)
-
         # fill in the bootstrap step of a previous slot
         closure_slot_ids, old_closure_slot_ids = [], []
         # if a slot is full except for the bootstrap step, allocate a new slot for the corresponding client
@@ -461,8 +459,7 @@ class SharedPolicyMixin(PolicyMixin):
             for i, client_id in enumerate(client_ids):
                 if self._slot_indices[client_id] == -1:
                     self._allocate(client_id)
-                slot_ids[i] = self._slot_indices[client_id]
-
+            slot_ids = self._slot_indices[client_ids]
             ep_steps = self._ep_step[slot_ids]
 
         with timing.add_time('inference/insert/process_marginal'), timing.time_avg('inference/insert/process_marginal_once'):

@@ -244,15 +244,16 @@ class WorkerNode:
         for i in range(self.cfg.num_policy_workers):
             policy_worker_queues.append(TorchJoinableQueue())
 
-        log.info('Initializing group managers...')
         num_actors_per_group = self.cfg.num_actors // self.cfg.num_actor_groups
 
-        self.group_managers = []
-        for idx in range(self.cfg.num_actor_groups):
-            s = slice(idx * num_actors_per_group, (idx + 1) * num_actors_per_group)
-            gm = ActorGroupManager(self.cfg, idx, self.policy_queue, self.envstep_output_semaphores[s])
-            gm.start()
-            self.group_managers.append(gm)
+        if num_actors_per_group > 1:
+            log.info('Initializing group managers...')
+            self.group_managers = []
+            for idx in range(self.cfg.num_actor_groups):
+                s = slice(idx * num_actors_per_group, (idx + 1) * num_actors_per_group)
+                gm = ActorGroupManager(self.cfg, idx, self.policy_queue, self.envstep_output_semaphores[s])
+                gm.start()
+                self.group_managers.append(gm)
 
         log.info('Initializing policy workers...')
         policy_lock = multiprocessing.Lock()
