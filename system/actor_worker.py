@@ -81,6 +81,7 @@ class ActorWorker:
         self.summary_keys = self.buffer.summary_keys
         self.summary_offset = self.worker_idx * self.envs_per_split
 
+        self.initialized = False
         self.terminate = False
 
         self.num_actors_per_group = self.cfg.num_actors // self.cfg.num_actor_groups
@@ -131,6 +132,8 @@ class ActorWorker:
                     for j in range(self.envs_per_split)
                 ]))
             safe_put(self.report_queue, dict(initialized_env=(self.worker_idx, i)), queue_name='report')
+        
+        self.initialized = True
 
     def _terminate(self):
         for env_runner in self.env_runners:
@@ -233,13 +236,14 @@ class ActorWorker:
         with torch.no_grad():
             while not self.terminate:
                 try:
-                    with timing.add_time('waiting'), timing.time_avg('wait_for_inference'):
-                        ready = self.act_semaphore[cur_split].acquire(timeout=0.1)
+                    if self.initialized:
+                        with timing.add_time('waiting'), timing.time_avg('wait_for_inference'):
+                            ready = self.act_semaphore[cur_split].acquire(timeout=0.1)
 
-                    with timing.add_time('env_step'), timing.time_avg('one_env_step'):
-                        if ready:
-                            self._advance_rollouts(cur_split, timing)
-                            cur_split = (cur_split + 1) % self.num_splits
+                        with timing.add_time('env_step'), timing.time_avg('one_env_step'):
+                            if ready:
+                                self._advance_rollouts(cur_split, timing)
+                                cur_split = (cur_split + 1) % self.num_splits
 
                     with timing.add_time('get_tasks'):
                         try:
@@ -261,7 +265,7 @@ class ActorWorker:
                             break
 
                         # handling actual workload
-                        if task_type == TaskType.RESET:
+                        if self.initialized and task_type == TaskType.RESET:
                             with timing.add_time('first_reset'):
                                 self._handle_reset()
 
