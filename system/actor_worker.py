@@ -84,8 +84,7 @@ class ActorWorker:
         self.initialized = False
         self.terminate = False
 
-        self.num_actors_per_group = self.cfg.num_actors // self.cfg.num_actor_groups
-        self.group_local_idx = self.worker_idx % self.num_actors_per_group
+        self.group_local_idx = self.worker_idx % self.cfg.actor_group_size
         self.env_slice = slice(self.group_local_idx * self.envs_per_split, (self.group_local_idx + 1) * self.envs_per_split)
 
         self.env_runners = None
@@ -157,7 +156,7 @@ class ActorWorker:
 
         for split_idx in range(len(self.env_runners)):
             self.envstep_output_semaphore[split_idx].release()
-            if self.num_actors_per_group == 1:
+            if self.cfg.actor_group_size == 1:
                 # when #actors == #groups
                 self.policy_queue.put(split_idx * self.cfg.num_actors + self.worker_idx)
 
@@ -191,7 +190,7 @@ class ActorWorker:
                     v[split_idx][self.env_slice] = envstep_outputs[k]
             self.envstep_output_semaphore[split_idx].release()
 
-            if self.num_actors_per_group == 1:
+            if self.cfg.actor_group_size == 1:
                 # when #actors == #groups
                 self.policy_queue.put(split_idx * self.cfg.num_actors + self.worker_idx)
 

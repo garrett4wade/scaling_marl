@@ -11,39 +11,38 @@ from utils.popart import PopArt
 
 
 class ReplayBuffer:
-    def __init__(self, args, obs_space, share_obs_space, act_space):
-        self.args = args
+    def __init__(self, cfg, obs_space, share_obs_space, act_space):
+        self.cfg = cfg
 
         self.obs_space = obs_space
         self.share_obs_space = share_obs_space
         self.act_space = act_space
 
         # system configuration
-        self.num_actors = args.num_actors
-        self.num_actor_groups = args.num_actor_groups
-        self.num_splits = args.num_splits
-        self.qsize = args.qsize
+        self.num_actors = cfg.num_actors
+        self.num_actor_groups = self.num_actors // self.cfg.actor_group_size
+        self.num_splits = cfg.num_splits
+        self.qsize = cfg.qsize
 
-        self.envs_per_actor = args.envs_per_actor
-        self.envs_per_split = args.envs_per_actor // args.num_splits
-        self.actors_per_group = self.num_actors // self.num_actor_groups
-        self.data_chunk_length = args.data_chunk_length
+        self.envs_per_actor = cfg.envs_per_actor
+        self.envs_per_split = cfg.envs_per_actor // cfg.num_splits
+        self.data_chunk_length = cfg.data_chunk_length
 
-        assert args.envs_per_actor % self.num_splits == 0
-        assert self.num_actors % self.num_actor_groups == 0
+        assert cfg.envs_per_actor % self.num_splits == 0
+        assert self.num_actors % self.cfg.actor_group_size == 0
 
         # storage shape configuration
-        self.num_agents = args.num_agents
-        self.episode_length = args.episode_length
+        self.num_agents = cfg.num_agents
+        self.episode_length = cfg.episode_length
 
         # TODO: support n-step bootstrap
-        # self.bootstrap_step = bootstrap_step = args.bootstrap_step
+        # self.bootstrap_step = bootstrap_step = cfg.bootstrap_step
 
     def _init_storage(self):
         # initialize storage
         # TODO: replace get_ppo_storage_specs with get_${algorithm}_storage_specs
         self.storage_specs, self.policy_input_keys, self.policy_output_keys = get_ppo_storage_specs(
-            self.args, self.obs_space, self.share_obs_space, self.act_space)
+            self.cfg, self.obs_space, self.share_obs_space, self.act_space)
         self.storage_keys = [storage_spec.name for storage_spec in self.storage_specs]
 
         self.shapes_and_dtypes = {}
@@ -75,7 +74,7 @@ class ReplayBuffer:
         self.storage = {k: getattr(self, k) for k in self.storage_keys}
 
         # to specify recorded summary infos
-        self.summary_keys = SUMMARY_KEYS[self.args.env_name]
+        self.summary_keys = SUMMARY_KEYS[self.cfg.env_name]
         self.summary_lock = mp.Lock()
 
         # buffer indicators
@@ -101,7 +100,7 @@ class ReplayBuffer:
                 readable_slots = np.nonzero(self._is_readable)[0]
                 assert len(readable_slots) > 0, 'please increase qsize!'
                 # replace the oldest readable slot, in a FIFO pattern
-                slot_id = readable_slots[np.argsort(self._time_stamp[readable_slots])[0]]
+                slot_id = readable_slots[np.cfgort(self._time_stamp[readable_slots])[0]]
                 # readable -> busy
                 self._is_readable[slot_id] = 0
                 self._time_stamp[slot_id] = 0
@@ -172,15 +171,15 @@ class ReplayBuffer:
 
 
 class WorkerBuffer(ReplayBuffer):
-    def __init__(self, args, obs_space, share_obs_space, act_space):
+    def __init__(self, cfg, obs_space, share_obs_space, act_space):
         # NOTE: value target computation is deferred to centralized trainer in consistent with off-policy correction
         # e.g. V-trace and Retrace
-        super().__init__(args, obs_space, share_obs_space, act_space)
+        super().__init__(cfg, obs_space, share_obs_space, act_space)
         self.target_num_slots = 1
         self.num_consumers_to_notify = 1
 
         self.num_slots = self.qsize * self.num_actor_groups
-        self.envs_per_seg = self.envs_per_slot = self.actors_per_group * self.envs_per_split
+        self.envs_per_seg = self.envs_per_slot = self.cfg.actor_group_size * self.envs_per_split
 
         super()._init_storage()
 
@@ -198,7 +197,7 @@ class WorkerBuffer(ReplayBuffer):
 
         # summary block
         self.summary_block = torch.zeros(
-            (args.num_splits, self.envs_per_split * args.num_actors, len(self.summary_keys)),
+            (cfg.num_splits, self.envs_per_split * cfg.num_actors, len(self.summary_keys)),
             dtype=torch.float32).share_memory_().numpy()
 
     def _allocate(self, identity):
@@ -229,46 +228,46 @@ class WorkerBuffer(ReplayBuffer):
 
 
 class LearnerBuffer(ReplayBuffer):
-    def __init__(self, args, obs_space, share_obs_space, act_space):
-        super().__init__(args, obs_space, share_obs_space, act_space)
+    def __init__(self, cfg, obs_space, share_obs_space, act_space):
+        super().__init__(cfg, obs_space, share_obs_space, act_space)
 
-        self.target_num_slots = self.num_consumers_to_notify = args.num_trainers
-        self.num_slots = args.qsize
+        self.target_num_slots = self.num_consumers_to_notify = cfg.num_trainers
+        self.num_slots = cfg.qsize
         # concatenate several slots from workers into a single batch,
         # which will be then sent to GPU for optimziation
-        self.envs_per_seg = self.actors_per_group * self.envs_per_split
-        self.envs_per_slot = args.slots_per_update * self.envs_per_seg
+        self.envs_per_seg = self.cfg.actor_group_size * self.envs_per_split
+        self.envs_per_slot = cfg.slots_per_update * self.envs_per_seg
 
-        self.slots_per_update = args.slots_per_update
+        self.slots_per_update = cfg.slots_per_update
 
-        self.sample_reuse = args.sample_reuse
+        self.sample_reuse = cfg.sample_reuse
 
         super()._init_storage()        
 
         self._used_times = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
 
         # summary block
-        self.summary_block = torch.zeros((len(args.seg_addrs), len(self.summary_keys)),
+        self.summary_block = torch.zeros((len(cfg.seg_addrs), len(self.summary_keys)),
                                          dtype=torch.float32).share_memory_().numpy()
 
         self._ptr_lock = mp.RLock()
         self._global_ptr = torch.zeros((2, ), dtype=torch.int32).share_memory_().numpy()
 
-        self.gamma = np.float32(args.gamma)
-        self.lmbda = np.float32(args.gae_lambda)
+        self.gamma = np.float32(cfg.gamma)
+        self.lmbda = np.float32(cfg.gae_lambda)
 
         # popart
-        self._use_popart = args.use_popart
+        self._use_popart = cfg.use_popart
         if self._use_popart:
-            self.value_normalizer = PopArt((1, ), self.args.num_trainers)
+            self.value_normalizer = PopArt((1, ), self.cfg.num_trainers)
         else:
             self.value_normalizer = None
 
-        self._use_advantage_normalization = args.use_advantage_normalization
-        self._use_recurrent_policy = args.use_recurrent_policy
+        self._use_advantage_normalization = cfg.use_advantage_normalization
+        self._use_recurrent_policy = cfg.use_recurrent_policy
 
-        if args.use_recurrent_policy:
-            self.data_chunk_length = args.data_chunk_length
+        if cfg.use_recurrent_policy:
+            self.data_chunk_length = cfg.data_chunk_length
             assert self.episode_length % self.data_chunk_length == 0
             self.num_chunks = self.episode_length // self.data_chunk_length
 
@@ -282,7 +281,7 @@ class LearnerBuffer(ReplayBuffer):
             log.info('Use feed forward policy. Batch size: {%d envs} * {%d timesteps} * {%d agents} = %d',
                      self.envs_per_slot, self.episode_length, self.num_agents, self.batch_size)
 
-        self.num_mini_batch = args.num_mini_batch
+        self.num_mini_batch = cfg.num_mini_batch
         assert self.batch_size >= self.num_mini_batch and self.batch_size % self.num_mini_batch == 0
         self.mini_batch_size = self.batch_size // self.num_mini_batch
 
@@ -440,7 +439,7 @@ class LearnerBuffer(ReplayBuffer):
 
 
 class PolicyMixin:
-    def insert(self, *args, **kwargs):
+    def insert(self, *cfg, **kwcfg):
         ''' insert data returned by inference and env.step. '''
         raise NotImplementedError
 
@@ -646,8 +645,8 @@ class SharedWorkerBuffer(WorkerBuffer, SharedPolicyMixin):
 #             self._agent_ids[server_id, split_id] += 1
 
 # class SequentialReplayBuffer(ReplayBuffer, SequentialPolicyMixin):
-#     def __init__(self, *args, **kwargs):
-#         super().__init__(*args, **kwargs)
+#     def __init__(self, *cfg, **kwcfg):
+#         super().__init__(*cfg, **kwcfg)
 #         # following arrays may not be shared between processes because
 #         # 1) only servers can access them (trainers should not access)
 #         # 2) each server will access individual parts according to server_id, there's no communication among them

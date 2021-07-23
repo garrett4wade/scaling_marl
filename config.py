@@ -195,7 +195,7 @@ def get_config():
 
     # system parameters
     parser.add_argument("--num_actors", type=int, default=4)
-    parser.add_argument("--num_actor_groups", type=int, default=1, help='trade off between static and dynamic rollout')
+    parser.add_argument("--actor_group_size", type=int, default=1, help='trade off between static and dynamic rollout')
     parser.add_argument("--envs_per_actor", type=int, default=2)
     parser.add_argument("--num_splits", type=int, default=2)
     parser.add_argument("--qsize", type=int, default=8)

@@ -50,8 +50,8 @@ class PolicyWorker:
         assert self.envs_per_actor % self.num_splits == 0
         self.envs_per_split = self.envs_per_actor // self.num_splits
 
-        self.num_actors_per_group = self.cfg.num_actors // self.cfg.num_actor_groups
-        self.envs_per_group = self.num_actors_per_group * self.envs_per_split
+        self.num_actor_groups = self.cfg.num_actors // self.cfg.actor_group_size
+        self.envs_per_group = self.cfg.actor_group_size * self.envs_per_split
 
         self.device = None
         self.actor_critic = None
@@ -124,7 +124,8 @@ class PolicyWorker:
                 self.model_weights_registries[k] = (v.shape, to_numpy_type(v.dtype))
 
             self.policy_worker_ready_event.set()
-            # self._update_weights(timing, block=True)
+            # NOTE: comment the next line to run a single worker node to benchmark throughput
+            self._update_weights(timing, block=True)
             log.info('Initialized model on the policy worker %d!', self.worker_idx)
 
         log.info('Policy worker %d initialized', self.worker_idx)
@@ -134,7 +135,7 @@ class PolicyWorker:
     def _handle_policy_steps(self, timing):
         with torch.no_grad():
             with timing.add_time('inference/prepare_policy_inputs'):
-                organized_requests = [(client // self.cfg.num_actor_groups, client % self.cfg.num_actor_groups) for client in self.request_clients]
+                organized_requests = [(client // self.num_actor_groups, client % self.num_actor_groups) for client in self.request_clients]
                 envstep_outputs = {}
                 policy_inputs = {}
                 for k, shm_pairs in self.envstep_output_shms.items():
@@ -178,8 +179,8 @@ class PolicyWorker:
 
             with timing.add_time('inference/copy_actions'):
                 for i, (split_idx, group_idx) in enumerate(organized_requests):
-                    for local_actor_idx in range(self.num_actors_per_group):
-                        global_actor_idx = self.num_actors_per_group * group_idx + local_actor_idx
+                    for local_actor_idx in range(self.cfg.actor_group_size):
+                        global_actor_idx = self.cfg.actor_group_size * group_idx + local_actor_idx
                         env_slice = slice(local_actor_idx * self.envs_per_split, (local_actor_idx + 1) * self.envs_per_split)
                         self.act_shms[global_actor_idx][split_idx][:] = policy_outputs['actions'][i, env_slice]
                         self.act_semaphores[global_actor_idx][split_idx].release()
@@ -270,7 +271,7 @@ class PolicyWorker:
         # batches)
         min_num_requests = self.cfg.min_num_requests
         if min_num_requests is None or min_num_requests == -1:
-            min_num_requests = self.cfg.num_actor_groups // self.cfg.num_policy_workers
+            min_num_requests = self.num_actor_groups // self.cfg.num_policy_workers
             min_num_requests //= 3
             min_num_requests = max(1, min_num_requests)
         log.info('Min num requests: %d', min_num_requests)

@@ -77,6 +77,7 @@ class WorkerNode:
         # TODO: policy queue -> policy queues to support PBT
         self.policy_queue = MpQueue()
 
+        self.num_actor_groups = self.cfg.num_actors // self.cfg.actor_group_size
         # TODO: here we only consider actions for policy-sharing
         act_shape = (self.cfg.envs_per_actor // self.cfg.num_splits, self.num_agents, 1)
         self.act_shms = [[
@@ -96,9 +97,9 @@ class WorkerNode:
 
             # buffer storage shape (num_slots, episode_length, num_envs, num_agents, *shape)
             shape = getattr(self.buffer, k).shape[2:]
-            self.envstep_output_shms[k] = [[torch.zeros(shape, dtype=torch.float32).share_memory_().numpy() for _ in range(self.cfg.num_splits)] for _ in range(self.cfg.num_actor_groups)]
+            self.envstep_output_shms[k] = [[torch.zeros(shape, dtype=torch.float32).share_memory_().numpy() for _ in range(self.cfg.num_splits)] for _ in range(self.num_actor_groups)]
         dones_shape = self.buffer.masks.shape[2:]
-        self.envstep_output_shms['dones'] = [[torch.zeros(dones_shape, dtype=torch.float32).share_memory_().numpy()for _ in range(self.cfg.num_splits)] for _ in range(self.cfg.num_actor_groups)]
+        self.envstep_output_shms['dones'] = [[torch.zeros(dones_shape, dtype=torch.float32).share_memory_().numpy()for _ in range(self.cfg.num_splits)] for _ in range(self.num_actor_groups)]
         self.envstep_output_semaphores = [[multiprocessing.Semaphore(0) for _ in range(self.cfg.num_splits)]
                                           for _ in range(self.cfg.num_actors)]
 
@@ -136,8 +137,7 @@ class WorkerNode:
         pass
 
     def create_actor_worker(self, idx, actor_queue):
-        num_actors_per_group = self.cfg.num_actors // self.cfg.num_actor_groups
-        group_idx = idx // num_actors_per_group
+        group_idx = idx // self.cfg.actor_group_size
         return ActorWorker(
             self.cfg,
             self.env_fn,
@@ -244,13 +244,11 @@ class WorkerNode:
         for i in range(self.cfg.num_policy_workers):
             policy_worker_queues.append(TorchJoinableQueue())
 
-        num_actors_per_group = self.cfg.num_actors // self.cfg.num_actor_groups
-
-        if num_actors_per_group > 1:
+        if self.cfg.actor_group_size > 1:
             log.info('Initializing group managers...')
             self.group_managers = []
-            for idx in range(self.cfg.num_actor_groups):
-                s = slice(idx * num_actors_per_group, (idx + 1) * num_actors_per_group)
+            for idx in range(self.num_actor_groups):
+                s = slice(idx * self.cfg.actor_group_size, (idx + 1) * self.cfg.actor_group_size)
                 gm = ActorGroupManager(self.cfg, idx, self.policy_queue, self.envstep_output_semaphores[s])
                 gm.start()
                 self.group_managers.append(gm)
