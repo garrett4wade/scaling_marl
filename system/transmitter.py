@@ -43,8 +43,10 @@ class Transmitter:
         self.process.start()
 
     def _init(self):
+        worker_nodes_per_learner = self.cfg.num_worker_nodes // len(self.cfg.model_weights_addrs)
+        learner_node_idx = self.cfg.worker_node_idx // worker_nodes_per_learner
         self.socket = zmq.Context().socket(zmq.REQ)
-        self.socket.connect(self.cfg.seg_addrs[self.cfg.worker_node_idx])
+        self.socket.connect(self.cfg.seg_addrs[learner_node_idx])
         self.socket.identity = ("node-" + str(self.cfg.worker_node_idx)).encode('ascii')
 
         for event in self.policy_worker_ready_events:

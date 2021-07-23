@@ -125,7 +125,7 @@ def main():
     buffer = LearnerBuffer(all_args, all_args.observation_space, all_args.share_observation_space,
                            all_args.action_space)
 
-    num_worker_nodes = len(all_args.seg_addrs)
+    num_worker_nodes = all_args.num_worker_nodes
     num_learner_nodes = len(all_args.model_weights_addrs)
     assert num_worker_nodes % num_learner_nodes == 0, ('currently worker nodes must be '
                                                                 'statically distributed among learner nodes')

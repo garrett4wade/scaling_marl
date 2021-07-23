@@ -20,18 +20,17 @@ train_for_seconds: 500
 model_dir: null
 
 # system parameters
-ddp_init_method: tcp://10.0.4.42:6666
+ddp_init_method: tcp://10.0.4.16:6666
 policy_worker_gpu_ranks:
   - 0
-num_trainers: 2
+num_trainers: 1
+num_worker_nodes: 1
 model_weights_addrs:
-  - tcp://10.0.4.42:8889
-  - tcp://10.0.4.6:8889
+  - tcp://10.0.4.16:8889
 seg_addrs:
-  - tcp://10.0.4.26:12346
-  - tcp://10.0.
-num_actors: 128
-num_actor_groups: 128
+  - tcp://10.0.4.16:12346
+num_actors: 8
+num_actor_groups: 8
 envs_per_actor: 2
 min_num_requests: -1
 num_policy_workers: 4

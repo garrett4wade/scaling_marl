@@ -16,6 +16,7 @@ import numpy as np
 class Receiver:
     def __init__(self, cfg, idx, task_queue, buffer, nodes_ready_event):
         self.cfg = cfg
+        # NOTE: receiver idx is the same as the learner idx, i.e., receivers and learners have one-to-one relation
         self.receiver_idx = idx
         self.buffer = buffer
 
