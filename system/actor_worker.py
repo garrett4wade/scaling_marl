@@ -178,7 +178,7 @@ class ActorWorker:
         """
         env = self.env_runners[split_idx]
 
-        with timing.add_time('env_step/simulation'):
+        with timing.add_time('env_step/simulation'), timing.time_avg('env_step/simulation_avg'):
             envstep_outputs = env.step(self.act_shm[split_idx])
 
         with timing.add_time('env_step/copy_outputs'):
@@ -288,7 +288,7 @@ class ActorWorker:
                     log.exception('Unknown exception in rollout worker')
                     self.terminate = True
 
-        if self.worker_idx <= 1:
+        if self.worker_idx % 16 == 0:
             time.sleep(0.1)
             log.info(
                 'Env runner %d, CPU aff. %r, processed env steps %d, timing %s',
