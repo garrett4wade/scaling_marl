@@ -184,8 +184,8 @@ class WorkerBuffer(ReplayBuffer):
         super()._init_storage()
 
         # indices mapping client identity to slot id
-        self._slot_indices = (-1) * torch.ones((self.num_splits * self.num_actor_groups, ), dtype=torch.int32).share_memory_().numpy()
-        self._prev_slot_indices = (-1) * torch.ones((self.num_splits * self.num_actor_groups, ), dtype=torch.int32).share_memory_().numpy()
+        self._slot_indices = ((-1) * torch.ones((self.num_splits * self.num_actor_groups, ), dtype=torch.int32)).share_memory_().numpy()
+        self._prev_slot_indices = ((-1) * torch.ones((self.num_splits * self.num_actor_groups, ), dtype=torch.int32)).share_memory_().numpy()
 
         # episode step record
         self._ep_step = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
