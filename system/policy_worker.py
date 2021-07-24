@@ -114,7 +114,7 @@ class PolicyWorker:
                                          is_training=False)
             self.rollout_policy.eval_mode()
 
-            worker_nodes_per_learner = self.cfg.num_worker_nodes // len(self.cfg.model_weights_addrs)
+            worker_nodes_per_learner = len(self.cfg.seg_addrs[0]) // len(self.cfg.model_weights_addrs)
             learner_node_idx = self.cfg.worker_node_idx // worker_nodes_per_learner
             self.model_weights_socket = zmq.Context().socket(zmq.SUB)
             self.model_weights_socket.connect(self.cfg.model_weights_addrs[learner_node_idx])

@@ -125,18 +125,13 @@ def main():
     buffer = LearnerBuffer(all_args, all_args.observation_space, all_args.share_observation_space,
                            all_args.action_space)
 
-    num_worker_nodes = all_args.num_worker_nodes
-    num_learner_nodes = len(all_args.model_weights_addrs)
-    assert num_worker_nodes % num_learner_nodes == 0, ('currently worker nodes must be '
-                                                                'statically distributed among learner nodes')
-    worker_nodes_per_learner = num_worker_nodes // num_learner_nodes
+    num_worker_nodes = len(all_args.seg_addrs[0])
+    nodes_ready_events = [mp.Event() for _ in range(num_worker_nodes)]
 
-    nodes_ready_events = [mp.Event() for _ in range(worker_nodes_per_learner)]
-
+    # (num_worker_nodes * num_learner_nodes) receivers in total, (num_worker_nodes) receivers for each learner node
     recievers = [
-        Receiver(all_args, receiver_idx, TorchJoinableQueue(), buffer, nodes_ready_events[i])
-        for i, receiver_idx in enumerate(range(all_args.learner_node_idx * worker_nodes_per_learner, (all_args.learner_node_idx + 1) *
-                       worker_nodes_per_learner))
+        Receiver(all_args, num_worker_nodes * all_args.learner_node_idx + i, TorchJoinableQueue(), buffer, nodes_ready_events[i])
+        for i in range(num_worker_nodes)
     ]
     for r in recievers:
         r.init()

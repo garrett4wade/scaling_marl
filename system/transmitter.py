@@ -25,10 +25,11 @@ class Transmitter:
 
         self.policy_worker_ready_events = policy_worker_ready_events
 
-        self.socket = None
-        self.socket_state = SocketState.RECV
+        self.num_learner_nodes = num_learner_nodes = len(self.cfg.model_weights_addrs)
+        self.sockets = [None for _ in range(num_learner_nodes)]
+        self.socket_states = [SocketState.RECV for _ in range(num_learner_nodes)]
 
-        self.seg_queue = Queue()
+        self.seg_queues = [Queue() for _ in range(self.num_learner_nodes)]
 
         self.sending_delays = deque([], maxlen=100)
         self.sending_intervals = deque([], maxlen=100)
@@ -39,24 +40,29 @@ class Transmitter:
 
         self.initialized = False
 
+        self.remaining_segs = 0
+
         self.process = mp.Process(target=self._run)
         self.process.start()
 
     def _init(self):
-        worker_nodes_per_learner = self.cfg.num_worker_nodes // len(self.cfg.model_weights_addrs)
-        learner_node_idx = self.cfg.worker_node_idx // worker_nodes_per_learner
-        self.socket = zmq.Context().socket(zmq.REQ)
-        self.socket.connect(self.cfg.seg_addrs[learner_node_idx])
-        self.socket.identity = ("node-" + str(self.cfg.worker_node_idx)).encode('ascii')
+        self._context = zmq.Context()
+        for i in range(self.num_learner_nodes):
+            socket = self._context.socket(zmq.REQ)
+            socket.connect(self.cfg.seg_addrs[i][self.cfg.worker_node_idx])
+            socket.identity = ("node-" + str(self.cfg.worker_node_idx) + "to" + str(i)).encode('ascii')
+            self.sockets[i] = socket
 
         for event in self.policy_worker_ready_events:
             event.wait()
-        self.socket.send(b'ready')
-        self.socket_state = SocketState.SEND
+        
+        for i, socket in enumerate(self.sockets):
+            socket.send(b'ready')
+            self.socket_states[i] = SocketState.SEND
 
         self.initialized = True
 
-    def _pack_msg(self, slot):
+    def _pack_msg(self, slot, dst):
         msg = []
         mem_data = {}
         total_mem = 0
@@ -68,17 +74,17 @@ class Transmitter:
             msg.extend([k.encode('ascii'), compressed])
         with self.buffer.summary_lock:
             summary_info = self.buffer.summary_block.sum(0).sum(0)
-        msg.extend([self.socket.identity, summary_info])
+        msg.extend([self.sockets[dst].identity, summary_info])
 
         log.info('seg size:  {} (MB), total {:.2f} MB'.format(mem_data, total_mem))
-        self.socket.send_multipart(msg)
+        self.sockets[dst].send_multipart(msg)
 
         self.last_send_time = time.time()
         self.sending_intervals.append(self.last_send_time - self.last_recv_time)
-        self.socket_state = SocketState.SEND
+        self.socket_states[dst] = SocketState.SEND
 
         log.info('Successfully sending data to head node on Transmitter %d...', self.transmitter_idx)
-        log.info('Remaining segs in queue: %d', self.seg_queue.qsize())
+        log.info('Remaining segs in queue: %d', self.remaining_segs)
 
     def _run(self):
         log.info('Initializing Transmitter %d...', self.transmitter_idx)
@@ -109,37 +115,45 @@ class Transmitter:
                 except Empty:
                     pass
 
-                if self.initialized and self.socket_state == SocketState.SEND:
-                    try:
-                        # we don't care what we receive from the head node
-                        _ = self.socket.recv(flags=zmq.NOBLOCK)
-                        self.last_recv_time = time.time()
-                        if self.last_send_time:
-                            self.sending_delays.append(self.last_recv_time - self.last_send_time)
-                        self.socket_state = SocketState.RECV
-                        log.info('Receiving data request from head node on Transmitter %d...', self.transmitter_idx)
-                    except zmq.ZMQError:
-                        pass
+                for i, socket in enumerate(self.sockets):
+                    if self.initialized and self.socket_states[i] == SocketState.SEND:
+                        try:
+                            # we don't care what we receive from the head node
+                            _ = socket.recv(flags=zmq.NOBLOCK)
+                            self.last_recv_time = time.time()
+                            if self.last_send_time:
+                                self.sending_delays.append(self.last_recv_time - self.last_send_time)
+                            self.socket_states[i] = SocketState.RECV
+                            log.info('Receiving data request from head node on Transmitter %d...', self.transmitter_idx)
+                        except zmq.ZMQError:
+                            pass
 
-                if self.initialized and self.socket_state == SocketState.RECV:
-                    try:
-                        slot = self.seg_queue.get(block=False)
-                    except Empty:
-                        slot = None
-
-                    if slot is not None:
-                        with timing.add_time('pack_seg'):
-                            self._pack_msg(slot)
-
-                        with timing.add_time('after_sending'):
-                            self.buffer.close_out(slot)
-
-                with timing.add_time('waiting_and_prefetching'):
-                    if self.seg_queue.qsize() <= min_num_segs:
-                        slot = self.buffer.get(timeout=0.02)
+                    if self.initialized and self.socket_states[i] == SocketState.RECV:
+                        try:
+                            slot = self.seg_queues[i].get(block=False)
+                        except Empty:
+                            slot = None
 
                         if slot is not None:
-                            self.seg_queue.put(slot)
+                            with timing.add_time('pack_seg'):
+                                self._pack_msg(slot, i)
+
+                            with timing.add_time('after_sending'):
+                                self.buffer.close_out(slot)
+                                self.remaining_segs -= 1
+
+                with timing.add_time('waiting_and_prefetching'):
+                    if self.remaining_segs <= min_num_segs:
+                        slot = self.buffer.get(timeout=0.02)
+
+                        # TODO: get dst from buffer
+                        num_worker_nodes = len(self.cfg.seg_addrs[0])
+                        worker_nodes_per_learner = self.num_learner_nodes // num_worker_nodes
+                        dst = self.cfg.worker_node_idx // worker_nodes_per_learner
+
+                        if slot is not None:
+                            self.seg_queues[dst].put(slot)
+                            self.remaining_segs += 1
 
             except RuntimeError as exc:
                 log.warning('Error while transmitting data tran: %d, exception: %s', self.transmitter_idx, exc)
@@ -152,7 +166,8 @@ class Transmitter:
                 log.exception('Unknown exception in Transmitter')
                 self.terminate = True
 
-        self.socket.close()
+        for socket in self.sockets:
+            socket.close()
         time.sleep(0.2)
         log.info('Transmitter avg. sending interval: %.2f, avg. delay: %.3f, timing: %s',
                  np.mean(self.sending_intervals), np.mean(self.sending_delays), timing)

@@ -153,7 +153,6 @@ def get_config():
     parser = argparse.ArgumentParser(description='onpolicy', formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--worker_node_idx', type=int, help='index of worker nodes')
     parser.add_argument('--learner_node_idx', type=int, help='index of learner nodes')
-    parser.add_argument('--num_worker_nodes', type=int, default=1, help='number of worker nodes, will be removed in the future')
 
     parser.add_argument('--trainer_indices', type=str, help='trainer indices seperated by comma')
 

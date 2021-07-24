@@ -18,6 +18,8 @@ class Receiver:
         self.cfg = cfg
         # NOTE: receiver idx is the same as the learner idx, i.e., receivers and learners have one-to-one relation
         self.receiver_idx = idx
+        num_worker_nodes = len(self.cfg.seg_addrs[0])
+        self.local_idx = self.receiver_idx % num_worker_nodes
         self.buffer = buffer
 
         self.task_queue = task_queue
@@ -42,11 +44,11 @@ class Receiver:
 
     def _init(self):
         self.socket = zmq.Context().socket(zmq.ROUTER)
-        seg_port = self.cfg.seg_addrs[self.receiver_idx].split(':')[-1]
+        seg_port = self.cfg.seg_addrs[self.cfg.learner_node_idx][self.local_idx].split(':')[-1]
         self.socket.bind('tcp://*:' + seg_port)
 
         self.initialized = True
-        log.info('Reiceiver %d is ready!', self.receiver_idx)
+        log.info('Reiceiver %d is ready!', self.local_idx)
 
     def _unpack_msg(self, timing, msg):
         msg = msg[2:]
@@ -79,10 +81,10 @@ class Receiver:
         buffer_put_time = time.time() - tik
 
         log.info('Receiver {} decompression time: {:.2f}, buffer put time: {:.2f}'.format(
-            self.receiver_idx, decompression_time, buffer_put_time))
+            self.local_idx, decompression_time, buffer_put_time))
 
     def _run(self):
-        log.info('Initializing Receiver %d...', self.receiver_idx)
+        log.info('Initializing Receiver %d...', self.local_idx)
 
         # should ignore Ctrl+C because the termination is handled in the event loop by a special msg
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -122,7 +124,7 @@ class Receiver:
                             self.last_recv_time = time.time()
 
                             self._unpack_msg(timing, msg)
-                            log.info('Receiver %d receives data from worker node %s...', self.receiver_idx, msg[-2])
+                            log.info('Receiver %d receives data from worker node %s...', self.local_idx, msg[-2])
                         else:
                             # this is a ready indicator
                             self.nodes_ready_event.set()
@@ -131,11 +133,11 @@ class Receiver:
                         pass
 
             except RuntimeError as exc:
-                log.warning('Error while receiving data Receiver: %d, exception: %s', self.receiver_idx, exc)
+                log.warning('Error while receiving data Receiver: %d, exception: %s', self.local_idx, exc)
                 log.warning('Terminate process...')
                 self.terminate = True
             except KeyboardInterrupt:
-                log.warning('Keyboard interrupt detected on Receiver %d', self.receiver_idx)
+                log.warning('Keyboard interrupt detected on Receiver %d', self.local_idx)
                 self.terminate = True
             except Exception:
                 log.exception('Unknown exception in Receiver')
