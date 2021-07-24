@@ -47,25 +47,6 @@ class ActorWorker:
         envstep_output_shm,
         envstep_output_semaphore,
     ):
-        """
-        Ctor.
-
-        :param cfg: global config (all CLI params)
-        :param obs_space: observation space (spaces) of the environment
-        :param action_space: action space(s)
-        :param num_agents: number of agents per env (all env should have the same number of agents right now,
-        although it should be easy to fix)
-        :param worker_idx: index of this worker process
-        :param shared_buffers: shared memory data structures initialized in main process (see shared_buffers.py)
-        :param task_queue: queue for incoming messages for THIS particular actor worker. See the task types in the loop
-        below, but the most common task is ROLLOUT_STEP, which means "here's your actions, advance simulation by
-        one step".
-        :param policy_queues: FIFO queues associated with all policies participating in training. We send requests
-        for policy queue #N to get actions for envs (agents) that are controlled by policy #N.
-        :param report_queue: one-way communication with the main process, various stats and whatnot
-        :param learner_queues: one-way communication with the learner, sending trajectory buffers for learning
-        """
-
         self.cfg = cfg
         self.env_fn = env_fn
         self.num_agents = num_agents
@@ -302,10 +283,6 @@ class ActorWorker:
 
     def request_reset(self):
         self.task_queue.put((TaskType.RESET, None))
-
-    def request_step(self, split, actions):
-        data = (split, actions)
-        self.task_queue.put((TaskType.ROLLOUT_STEP, data))
 
     def close(self):
         self.task_queue.put((TaskType.TERMINATE, None))

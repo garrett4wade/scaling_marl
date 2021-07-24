@@ -240,10 +240,6 @@ class WorkerNode:
 
         actor_queues = [MpQueue(2 * 1000 * 1000) for _ in range(self.cfg.num_actors)]
 
-        policy_worker_queues = []
-        for i in range(self.cfg.num_policy_workers):
-            policy_worker_queues.append(TorchJoinableQueue())
-
         if self.cfg.actor_group_size > 1:
             log.info('Initializing group managers...')
             self.group_managers = []
@@ -267,9 +263,7 @@ class WorkerNode:
                 self.action_space,
                 self.buffer,
                 self.policy_queue,
-                actor_queues,
                 self.report_queue,
-                policy_worker_queues[i],
                 policy_lock,
                 resume_experience_collection_cv,
                 self.act_shms,

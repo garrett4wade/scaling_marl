@@ -80,11 +80,33 @@ def main():
             all_args_dict = yaml.load(f, Loader=yaml.FullLoader)
         for k, v in all_args_dict.items():
             setattr(all_args, k, v)
-    if all_args.trainer_indices is None:
-        all_args.trainer_indices = list(range(all_args.num_trainers))
-    else:
-        all_args.trainer_indices = [int(ind) for ind in all_args.trainer_indices.split(',')]
     # TODO: we need to have some assertion about trainer indices and num_trainer_nodes
+
+    # learner config has the following strucuture:
+    # {learner_node_idx: {gpu_idx: policy_learner_idx, ...}, ...}
+    task_rank_offsets, task_rank_cnts, task_gpu_ranks = {}, {}, {}
+    local_learner_config = all_args.learner_config[str(all_args.learner_node_idx)]
+    for gpu_rank, v in local_learner_config.items():
+        task_rank_offsets[v] = 0
+        if v not in task_rank_cnts:
+            task_rank_cnts[v] = 1
+        else:
+            task_rank_cnts[v] += 1
+        if v not in task_gpu_ranks:
+            task_gpu_ranks[v] = [int(gpu_rank)]
+        else:
+            task_gpu_ranks[v].append(int(gpu_rank))
+
+    all_policy_learner_idxes = []
+    for node_idx, local_config in all_args.learner_config.items():
+        for _, v in local_config.items():
+            all_policy_learner_idxes.append(v)
+            for task_v in task_rank_offsets.keys():
+                if int(node_idx) < all_args.learner_node_idx and v == task_v:
+                    task_rank_offsets[task_v] += 1
+    # sanity checks
+    assert all_args.learner_node_idx < len(all_args.learner_config)
+    assert list(range(all_args.num_policies)) == list(np.unique(sorted(all_policy_learner_idxes)))
 
     if all_args.algorithm_name == "rmappo":
         all_args.use_recurrent_policy = True
@@ -121,7 +143,17 @@ def main():
     del example_env
 
     all_args.num_agents = get_map_params(all_args.map_name)["n_agents"]
+    # TODO: num_trainers is different for different buffers
+    all_args.num_trainers = len(local_learner_config)
 
+    if all_args.learner_node_idx == 0:
+        from system.task_dispatcher import TaskDispatcher
+        from meta_controllers.naive import NaiveMetaController
+        task_dispatcher = TaskDispatcher(all_args, NaiveMetaController(all_args))
+        task_dispatcher.start_process()
+
+    # TODO: currently we only support training a single policy (policy sharing)
+    assert all_args.num_policies == 1
     buffer = LearnerBuffer(all_args, all_args.observation_space, all_args.share_observation_space,
                            all_args.action_space)
 
@@ -136,20 +168,30 @@ def main():
     for r in recievers:
         r.init()
 
+    all_trainers = []
     # NOTE: gpu_rank may not necessarily be the same as local_rank
-    trainers = [
-        Trainer(rank, local_rank, local_rank, buffer, all_args, nodes_ready_events, run_dir=run_dir) for local_rank, rank in enumerate(all_args.trainer_indices)
-    ]
-    for trainer in trainers:
-        trainer.process.start()
+    for policy_id, offset in task_rank_offsets.items():
+        cur_num_trainers = task_rank_cnts[policy_id]
+        for local_rank, gpu_rank in zip(range(cur_num_trainers), task_gpu_ranks[policy_id]):
+            global_rank = local_rank + offset
 
-    for trainer in trainers:
+            # TODO: some logic about ranks in trainer may be not correct, check them
+            trainer = Trainer(global_rank, local_rank, gpu_rank, buffer, all_args, nodes_ready_events, run_dir=run_dir)
+            trainer.process.start()
+
+            all_trainers.append(trainer)
+
+    for trainer in all_trainers:
         trainer.process.join()
     log.info('Trainers joined!')
 
     for r in recievers:
         r.close()
     log.info('Receivers joined!')
+
+    if all_args.learner_node_idx == 0:
+        task_dispatcher.close()
+        log.info('Task Dispatcher joined!')
 
     log.info('Done!')
 

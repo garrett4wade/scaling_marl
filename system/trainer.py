@@ -18,6 +18,10 @@ import datetime
 class Trainer:
     """ Base class for training. """
     def __init__(self, global_rank, local_rank, gpu_rank, buffer, cfg, nodes_ready_events, **kwargs):
+        # TODO: specify policy rank
+        self.policy_rank = 0
+        assert cfg.num_policies == 1
+
         self.node_idx = cfg.learner_node_idx
 
         # global_rank is the index of this trainer among all trainers in all nodes
@@ -111,16 +115,26 @@ class Trainer:
         self.initialized = False
         self.terminate = False
 
+        self._context = None
         self.model_weights_socket = None
+        self.task_socket = None
 
         self.process = mp.Process(target=self._run)
 
     def _init(self):
+        self._context = zmq.Context()
+
         if self.local_rank == 0:
+            # TODO: init model weights socket when task (global) rank ==0
             # the first trainer on each node will manage its slice of worker nodes
-            self.model_weights_socket = zmq.Context().socket(zmq.PUB)
+            self.model_weights_socket = self._context.socket(zmq.PUB)
             model_port = self.cfg.model_weights_addrs[self.node_idx].split(':')[-1]
             self.model_weights_socket.bind('tcp://*:' + model_port)
+        
+        if self.global_rank == 0:
+            self.task_socket = self._context.socket(zmq.REQ)
+            self.task_socket.connect(self.cfg.task_dispatcher_addr)
+            self.task_socket.send(('learner-' + str(self.policy_rank)).encode('ascii'))
 
         if self.global_rank == 0:
             # only one trainer manages logging & summary

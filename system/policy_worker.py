@@ -24,12 +24,14 @@ def _t2n(x):
 
 
 class PolicyWorker:
-    def __init__(self, worker_idx, cfg, obs_space, share_obs_space, action_space, buffer, policy_queue, actor_queues,
-                 report_queue, task_queue, policy_lock, resume_experience_collection_cv, act_shms, act_semaphores,
+    def __init__(self, worker_idx, cfg, obs_space, share_obs_space, action_space, buffer, policy_queue,
+                 report_queue, policy_lock, resume_experience_collection_cv, act_shms, act_semaphores,
                  envstep_output_shms, policy_worker_ready_event):
         log.info('Initializing policy worker %d', worker_idx)
 
         self.worker_idx = worker_idx
+        # TODO: add local rank
+        self.local_rank = 0
         assert len(cfg.policy_worker_gpu_ranks) == 1 or len(cfg.policy_worker_gpu_ranks) == cfg.num_policy_workers, (
             'policy worker gpu ranks must be a list of length 1 or '
             'have the same length as num_policy_workers')
@@ -58,10 +60,11 @@ class PolicyWorker:
         self.policy_lock = policy_lock
         self.resume_experience_collection_cv = resume_experience_collection_cv
 
+        self._context = None
         self.model_weights_socket = None
+        self.task_socket = None
 
         self.policy_queue = policy_queue
-        self.actor_queues = actor_queues
         self.report_queue = report_queue
         self.policy_worker_ready_event = policy_worker_ready_event
 
@@ -73,7 +76,7 @@ class PolicyWorker:
         self.envstep_output_shms = envstep_output_shms
 
         # queue other components use to talk to this particular worker
-        self.task_queue = task_queue
+        self.termination_queue = torch.multiprocessing.JoinableQueue(1)
 
         self.initialized = False
         self.terminate = False
@@ -114,14 +117,27 @@ class PolicyWorker:
                                          is_training=False)
             self.rollout_policy.eval_mode()
 
+            self._context = zmq.Context()
+            if self.worker_idx == 0:
+                self.task_socket = self._context.socket(zmq.REQ)
+                self.task_socket.connect(self.cfg.task_dispatcher_addr)
+                self.task_socket.send(('workertask-' + str(self.local_rank + self.cfg.num_tasks_per_node * self.cfg.worker_node_idx)).encode('ascii'))
+
+            # TODO: model weights socket need to subscribe all learner nodes
+            # TODO: initialize model weights socket only when this is the first policy worker of a task
             worker_nodes_per_learner = len(self.cfg.seg_addrs[0]) // len(self.cfg.model_weights_addrs)
             learner_node_idx = self.cfg.worker_node_idx // worker_nodes_per_learner
-            self.model_weights_socket = zmq.Context().socket(zmq.SUB)
+            self.model_weights_socket = self._context.socket(zmq.SUB)
             self.model_weights_socket.connect(self.cfg.model_weights_addrs[learner_node_idx])
             self.model_weights_socket.setsockopt(zmq.SUBSCRIBE, b'param')
 
             for k, v in self.rollout_policy.state_dict().items():
                 self.model_weights_registries[k] = (v.shape, to_numpy_type(v.dtype))
+
+            if self.worker_idx == 0:
+                # TODO: deal with task information received from task dispatcher
+                task = self.task_socket.recv_multipart()
+                log.info('Receiving new task from task dispatcher, %s', task)
 
             self.policy_worker_ready_event.set()
             # NOTE: comment the next line to run a single worker node to benchmark throughput
@@ -307,14 +323,13 @@ class PolicyWorker:
 
                 with timing.add_time('get_tasks'):
                     try:
-                        task_type, data = self.task_queue.get_nowait()
+                        task_type = self.termination_queue.get_nowait()
 
-                        # task from the task_queue
                         if task_type == TaskType.TERMINATE:
                             self.terminate = True
                             break
 
-                        self.task_queue.task_done()
+                        self.termination_queue.task_done()
                     except Empty:
                         pass
 
@@ -356,7 +371,7 @@ class PolicyWorker:
         self.process.start()
 
     def close(self):
-        self.task_queue.put((TaskType.TERMINATE, None))
+        self.termination_queue.put(TaskType.TERMINATE)
 
     def join(self):
         join_or_kill(self.process)

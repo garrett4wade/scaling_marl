@@ -153,8 +153,10 @@ def get_config():
     parser = argparse.ArgumentParser(description='onpolicy', formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--worker_node_idx', type=int, help='index of worker nodes')
     parser.add_argument('--learner_node_idx', type=int, help='index of learner nodes')
-
-    parser.add_argument('--trainer_indices', type=str, help='trainer indices seperated by comma')
+    parser.add_argument('--num_tasks_per_node', type=int, default=1, help='how many tasks a worker node will manage')
+    parser.add_argument('--task_dispatcher_addr', type=str, help='address of meta controller to distributed tasks')
+    parser.add_argument('--learner_config', help='learner gpu configuration')
+    parser.add_argument('--num_policies', type=int, default=1, help='number of policies to be trained')
 
     parser.add_argument('--config', type=str)
     parser.add_argument('--project_name', type=str, default='test')
@@ -212,7 +214,6 @@ def get_config():
     parser.add_argument("--default_niceness", default=0, type=int)
     parser.add_argument("--actor_worker_gpus", default=0, type=int)
 
-    parser.add_argument("--num_trainers", type=int, default=1)
     parser.add_argument("--num_policy_workers", type=int, default=1)
 
     parser.add_argument("--slots_per_update", type=int, default=1)
