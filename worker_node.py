@@ -1,16 +1,3 @@
-"""
-Algorithm entry poing.
-Methods of the APPO class initiate all other components (rollout & policy workers and learners) in the main thread,
-and then fork their separate processes.
-All data structures that are shared between processes are also created during the construction of APPO.
-
-This class contains the algorithm main loop. All the actual work is done in separate worker processes, so
-the only task of the main loop is to collect summaries and stats from the workers and log/save them to disk.
-
-Hyperparameters specific to policy gradient algorithms are defined in this file. See also algorithm.py.
-
-"""
-
 import math
 import multiprocessing
 import os
@@ -39,19 +26,10 @@ class ExperimentStatus:
     SUCCESS, FAILURE, INTERRUPTED = range(3)
 
 
-# custom experiments can define functions to this list to do something extra with the raw episode summaries
-# coming from the environments
-EXTRA_EPISODIC_STATS_PROCESSING = []
-
-# custom experiments or environments can append functions to this list to postprocess some summaries, or aggregate
-# summaries, or do whatever else the user wants
-EXTRA_PER_POLICY_SUMMARIES = []
-
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 
 class WorkerNode:
-    """Async PPO."""
     def __init__(self, cfg, env_fn):
 
         # we should not use CUDA in the main thread, only on the workers
@@ -109,36 +87,20 @@ class WorkerNode:
 
         self.policy_worker_ready_events = [multiprocessing.Event() for _ in range(self.cfg.num_policy_workers)]
 
-        self.policy_avg_stats = dict()
-
-        self.last_timing = dict()
-        self.env_steps = dict()
         self.samples_collected = 0
-        self.total_env_steps_since_resume = 0
 
         # currently this applies only to the current run, not experiment as a whole
         # to change this behavior we'd need to save the state of the main loop to a filesystem
         self.total_train_seconds = 0
 
         self.last_report = time.time()
-        self.last_experiment_summaries = 0
 
         self.report_interval = 5.0  # sec
-        self.log_interval = self.cfg.log_interval  # sec
-
         self.avg_stats_intervals = (2, 12, 60)  # 10 seconds, 1 minute, 5 minutes
 
         self.throughput_stats = [deque([], maxlen=stat_len) for stat_len in self.avg_stats_intervals]
         self.avg_stats = dict()
         self.stats = dict()  # regular (non-averaged) stats
-
-        # TODO: add summary writer
-
-    def initialize(self):
-        pass
-
-    def finalize(self):
-        pass
 
     def create_actor_worker(self, idx, actor_queue):
         group_idx = idx // self.cfg.actor_group_size
@@ -255,9 +217,6 @@ class WorkerNode:
                 self.group_managers.append(gm)
 
         log.info('Initializing policy workers...')
-        policy_lock = multiprocessing.Lock()
-        resume_experience_collection_cv = multiprocessing.Condition()
-
         for i in range(self.cfg.num_policy_workers):
             policy_worker = PolicyWorker(
                 i,
@@ -268,8 +227,6 @@ class WorkerNode:
                 self.buffer,
                 self.policy_queue,
                 self.report_queue,
-                policy_lock,
-                resume_experience_collection_cv,
                 self.act_shms,
                 self.act_semaphores,
                 self.envstep_output_shms,
@@ -342,28 +299,14 @@ class WorkerNode:
 
         self.print_stats(sample_throughputs)
 
-        if time.time() - self.last_experiment_summaries > self.log_interval:
-            # TODO: write to wandb/TensorBoard
-            pass
-
     def print_stats(self, sample_throughputs):
         log.debug('Throughput: {:.2f} (10 sec), {:.2f} (1 min), {:.2f} (5 mins). Samples: {}.'.format(
             *sample_throughputs, self.samples_collected))
 
-        # TODO: episodic summary, e.g. reward & winning rate
-        # if 'reward' in self.policy_avg_stats:
-        #     policy_reward_stats = []
-        #     reward_stats = self.policy_avg_stats['reward']
-        #     if len(reward_stats) > 0:
-        #         policy_reward_stats.append(f'{np.mean(reward_stats):.3f}')
-        #     log.debug('Avg episode reward: %r', policy_reward_stats)
-
-    def _should_end_training(self):
-        end = len(self.env_steps) > 0 and all(s > self.cfg.train_for_env_steps for s in self.env_steps.values())
-        end |= self.total_train_seconds > self.cfg.train_for_seconds
+    def _should_terminate(self):
+        end = self.total_train_seconds > self.cfg.train_for_seconds
 
         if self.cfg.benchmark:
-            end |= self.total_env_steps_since_resume >= int(2e6)
             end |= sum(self.samples_collected) >= int(1e6)
 
         return end
@@ -385,9 +328,9 @@ class WorkerNode:
 
         timing = Timing()
         with timing.timeit('experience'):
-            # noinspection PyBroadException
             try:
-                while not self._should_end_training():
+                while not self._should_terminate():
+                    # TODO: termination should refer to task dispatcher through zmq socket
                     try:
                         reports = self.report_queue.get_many(timeout=0.1)
                         for report in reports:
@@ -426,7 +369,7 @@ class WorkerNode:
         log.debug('Closing Transmitters...')
         for t in self.transmitters:
             t.close()
-            time.sleep(0.02)
+            time.sleep(0.01)
         for t in self.transmitters:
             t.join()
         log.debug('Transmitters joined!')
@@ -434,13 +377,9 @@ class WorkerNode:
         # VizDoom processes often refuse to die for an unidentified reason, so we're force killing them with a hack
         kill_processes(child_processes)
 
-        fps = self.total_env_steps_since_resume / timing.experience
-        log.info('Collected %r, FPS: %.1f', self.env_steps, fps)
+        fps = self.samples_collected / timing.experience
+        log.info('Collected %r, FPS: %.1f', self.samples_collected, fps)
         log.info('Timing: %s', timing)
-
-        # if self._should_end_training():
-        #     with open(done_filename(self.cfg), 'w') as fobj:
-        #         fobj.write(f'{self.env_steps}')
 
         time.sleep(0.5)
         log.info('Done!')

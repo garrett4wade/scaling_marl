@@ -25,7 +25,7 @@ def _t2n(x):
 
 class PolicyWorker:
     def __init__(self, worker_idx, cfg, obs_space, share_obs_space, action_space, buffer, policy_queue, report_queue,
-                 policy_lock, resume_experience_collection_cv, act_shms, act_semaphores, envstep_output_shms,
+                 act_shms, act_semaphores, envstep_output_shms,
                  policy_worker_ready_event):
         log.info('Initializing policy worker %d', worker_idx)
 
@@ -57,8 +57,6 @@ class PolicyWorker:
 
         self.device = None
         self.actor_critic = None
-        self.policy_lock = policy_lock
-        self.resume_experience_collection_cv = resume_experience_collection_cv
 
         self._context = None
         self.model_weights_socket = None
@@ -254,8 +252,7 @@ class PolicyWorker:
             learner_policy_version = int(msg[-1].decode('ascii'))
 
         with timing.time_avg('load_state_dict'), timing.add_time('update_weights/load_state_dict'):
-            with self.policy_lock:
-                self.rollout_policy.load_state_dict(state_dict)
+            self.rollout_policy.load_state_dict(state_dict)
 
         self.latest_policy_version = learner_policy_version
 
@@ -305,9 +302,6 @@ class PolicyWorker:
         while not self.terminate:
             try:
                 # TODO: add stop experiment collection signal
-                # while self.stop_experience_collection:
-                #     with self.resume_experience_collection_cv:
-                #         self.resume_experience_collection_cv.wait(timeout=0.05)
 
                 waiting_started = time.time()
                 with timing.time_avg('waiting_avg'), timing.add_time('waiting'):
