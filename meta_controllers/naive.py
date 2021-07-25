@@ -11,11 +11,11 @@ class NaiveMetaController(MetaController):
         task = []
         for _ in range(self.num_learner_tasks):
             task.append((str(TaskType.TRAIN).encode('ascii'), b'0'))
-        
+
         for _ in range(self.num_worker_tasks):
             task.append((str(TaskType.ROLLOUT).encode('ascii'), b'0'))
-        
+
         return task
-    
+
     def step(self, report):
         return [None for _ in range(self.num_learner_tasks + self.num_worker_tasks)]

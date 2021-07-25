@@ -3,7 +3,7 @@ import signal
 import itertools
 from queue import Empty
 import multiprocessing as mp
-from utils.timing import Timing
+import time
 from utils.utils import log, join_or_kill, TaskType
 
 
@@ -35,7 +35,7 @@ class TaskDispatcher:
 
     def start_process(self):
         self.process.start()
-    
+
     def _init(self):
         self.socket = zmq.Context().socket(zmq.ROUTER)
 
@@ -70,8 +70,6 @@ class TaskDispatcher:
         # should ignore Ctrl+C because the termination is handled in the event loop by a special msg
         signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-        timing = Timing()
-
         self._init()
         while not self.terminate:
             try:
@@ -96,7 +94,7 @@ class TaskDispatcher:
                     except zmq.ZMQError:
                         pass
 
-            except RuntimeError as exc:
+            except RuntimeError:
                 log.warning('Error while distributing tasks on Task Dispatcher')
                 log.warning('Terminate process...')
                 self.terminate = True

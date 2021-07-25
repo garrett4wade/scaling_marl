@@ -97,9 +97,13 @@ class WorkerNode:
 
             # buffer storage shape (num_slots, episode_length, num_envs, num_agents, *shape)
             shape = getattr(self.buffer, k).shape[2:]
-            self.envstep_output_shms[k] = [[torch.zeros(shape, dtype=torch.float32).share_memory_().numpy() for _ in range(self.cfg.num_splits)] for _ in range(self.num_actor_groups)]
+            self.envstep_output_shms[k] = [[
+                torch.zeros(shape, dtype=torch.float32).share_memory_().numpy() for _ in range(self.cfg.num_splits)
+            ] for _ in range(self.num_actor_groups)]
         dones_shape = self.buffer.masks.shape[2:]
-        self.envstep_output_shms['dones'] = [[torch.zeros(dones_shape, dtype=torch.float32).share_memory_().numpy()for _ in range(self.cfg.num_splits)] for _ in range(self.num_actor_groups)]
+        self.envstep_output_shms['dones'] = [[
+            torch.zeros(dones_shape, dtype=torch.float32).share_memory_().numpy() for _ in range(self.cfg.num_splits)
+        ] for _ in range(self.num_actor_groups)]
         self.envstep_output_semaphores = [[multiprocessing.Semaphore(0) for _ in range(self.cfg.num_splits)]
                                           for _ in range(self.cfg.num_actors)]
 
@@ -149,7 +153,8 @@ class WorkerNode:
             report_queue=self.report_queue,
             act_shm=self.act_shms[idx],
             act_semaphore=self.act_semaphores[idx],
-            envstep_output_shm={k: v[group_idx] for k, v in self.envstep_output_shms.items()},
+            envstep_output_shm={k: v[group_idx]
+                                for k, v in self.envstep_output_shms.items()},
             envstep_output_semaphore=self.envstep_output_semaphores[idx],
         )
 
@@ -253,7 +258,6 @@ class WorkerNode:
         policy_lock = multiprocessing.Lock()
         resume_experience_collection_cv = multiprocessing.Condition()
 
-        num_actors_per_policy_worker = self.cfg.num_actors // self.cfg.num_policy_workers
         for i in range(self.cfg.num_policy_workers):
             policy_worker = PolicyWorker(
                 i,

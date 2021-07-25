@@ -184,8 +184,10 @@ class WorkerBuffer(ReplayBuffer):
         super()._init_storage()
 
         # indices mapping client identity to slot id
-        self._slot_indices = ((-1) * torch.ones((self.num_splits * self.num_actor_groups, ), dtype=torch.int32)).share_memory_().numpy()
-        self._prev_slot_indices = ((-1) * torch.ones((self.num_splits * self.num_actor_groups, ), dtype=torch.int32)).share_memory_().numpy()
+        self._slot_indices = ((-1) * torch.ones(
+            (self.num_splits * self.num_actor_groups, ), dtype=torch.int32)).share_memory_().numpy()
+        self._prev_slot_indices = ((-1) * torch.ones(
+            (self.num_splits * self.num_actor_groups, ), dtype=torch.int32)).share_memory_().numpy()
 
         # episode step record
         self._ep_step = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
@@ -196,9 +198,8 @@ class WorkerBuffer(ReplayBuffer):
         self._insertion_idx_lock = mp.Lock()
 
         # summary block
-        self.summary_block = torch.zeros(
-            (cfg.num_splits, self.envs_per_split * cfg.num_actors, len(self.summary_keys)),
-            dtype=torch.float32).share_memory_().numpy()
+        self.summary_block = torch.zeros((cfg.num_splits, self.envs_per_split * cfg.num_actors, len(self.summary_keys)),
+                                         dtype=torch.float32).share_memory_().numpy()
 
     def _allocate(self, identity):
         slot_id = super()._allocate()
@@ -242,7 +243,7 @@ class LearnerBuffer(ReplayBuffer):
 
         self.sample_reuse = cfg.sample_reuse
 
-        super()._init_storage()        
+        super()._init_storage()
 
         self._used_times = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
 
@@ -445,7 +446,16 @@ class PolicyMixin:
 
 
 class SharedPolicyMixin(PolicyMixin):
-    def insert(self, timing, client_ids, obs, share_obs, rewards, dones, fct_masks=None, available_actions=None, **policy_outputs):
+    def insert(self,
+               timing,
+               client_ids,
+               obs,
+               share_obs,
+               rewards,
+               dones,
+               fct_masks=None,
+               available_actions=None,
+               **policy_outputs):
         # fill in the bootstrap step of a previous slot
         closure_slot_ids, old_closure_slot_ids = [], []
         # if a slot is full except for the bootstrap step, allocate a new slot for the corresponding client
@@ -461,7 +471,8 @@ class SharedPolicyMixin(PolicyMixin):
             slot_ids = self._slot_indices[client_ids]
             ep_steps = self._ep_step[slot_ids]
 
-        with timing.add_time('inference/insert/process_marginal'), timing.time_avg('inference/insert/process_marginal_once'):
+        with timing.add_time('inference/insert/process_marginal'), timing.time_avg(
+                'inference/insert/process_marginal_once'):
             # advance 1 timestep
             self._ep_step[slot_ids] += 1
 
@@ -502,9 +513,11 @@ class SharedPolicyMixin(PolicyMixin):
             rnn_mask = np.expand_dims(masks, -1)
             for k in policy_outputs.keys():
                 if 'rnn_states' in k:
-                    selected_idx = np.logical_and((ep_steps + 1) % self.data_chunk_length == 0, (ep_steps + 1) < self.episode_length)
+                    selected_idx = np.logical_and((ep_steps + 1) % self.data_chunk_length == 0,
+                                                  (ep_steps + 1) < self.episode_length)
                     if np.any(selected_idx):
-                        self.storage[k][slot_ids[selected_idx], (ep_steps[selected_idx] + 1) // self.data_chunk_length] = (policy_outputs[k] * rnn_mask)[selected_idx]
+                        self.storage[k][slot_ids[selected_idx], (ep_steps[selected_idx] + 1) //
+                                        self.data_chunk_length] = (policy_outputs[k] * rnn_mask)[selected_idx]
                 else:
                     self.storage[k][slot_ids, ep_steps] = policy_outputs[k]
 
@@ -515,7 +528,8 @@ class SharedPolicyMixin(PolicyMixin):
             if len(opening_slot_ids) > 0:
                 for k in self.storage_keys:
                     if 'rnn_states' in k:
-                        self.storage[k][opening_new_slot_ids, 0] = (policy_outputs[k] * rnn_mask)[ep_steps == self.episode_length - 1]
+                        self.storage[k][opening_new_slot_ids,
+                                        0] = (policy_outputs[k] * rnn_mask)[ep_steps == self.episode_length - 1]
 
         self.total_timesteps += self.obs.shape[2]
 

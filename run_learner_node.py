@@ -31,20 +31,20 @@ def parse_args(args, parser):
     parser.add_argument("--use_mustalive", action='store_false', default=True)
     parser.add_argument("--add_center_xy", action='store_true', default=False)
 
-    all_args = parser.parse_known_args(args)[0]
+    cfg = parser.parse_known_args(args)[0]
 
-    return all_args
+    return cfg
 
 
-def make_example_env(all_args):
+def make_example_env(cfg):
     def get_env_fn(rank):
         def init_env():
-            if all_args.env_name == "StarCraft2":
-                env = StarCraft2Env(all_args)
+            if cfg.env_name == "StarCraft2":
+                env = StarCraft2Env(cfg)
             else:
-                print("Can not support the " + all_args.env_name + "environment.")
+                print("Can not support the " + cfg.env_name + "environment.")
                 raise NotImplementedError
-            env.seed(all_args.seed + rank * 10000)
+            env.seed(cfg.seed + rank * 10000)
             return env
 
         return init_env
@@ -52,40 +52,40 @@ def make_example_env(all_args):
     return ShareDummyVecEnv([get_env_fn(0)])
 
 
-def make_eval_env(trainer_id, all_args):
+def make_eval_env(trainer_id, cfg):
     def get_env_fn(rank):
         def init_env():
-            if all_args.env_name == "StarCraft2":
-                env = StarCraft2Env(all_args)
+            if cfg.env_name == "StarCraft2":
+                env = StarCraft2Env(cfg)
             else:
-                print("Can not support the " + all_args.env_name + "environment.")
+                print("Can not support the " + cfg.env_name + "environment.")
                 raise NotImplementedError
-            env.seed(all_args.seed * 50000 + rank * 10000 + 12345 * trainer_id)
+            env.seed(cfg.seed * 50000 + rank * 10000 + 12345 * trainer_id)
             return env
 
         return init_env
 
-    if all_args.n_eval_rollout_threads == 1:
+    if cfg.n_eval_rollout_threads == 1:
         return ShareDummyVecEnv([get_env_fn(0)])
     else:
-        return ShareSubprocVecEnv([get_env_fn(i) for i in range(all_args.n_eval_rollout_threads)])
+        return ShareSubprocVecEnv([get_env_fn(i) for i in range(cfg.n_eval_rollout_threads)])
 
 
 def main():
     parser = get_config()
-    all_args = parse_args(sys.argv[1:], parser)
+    cfg = parse_args(sys.argv[1:], parser)
     # overwrite default configuration using yaml file
-    if all_args.config is not None:
-        with open(all_args.config) as f:
-            all_args_dict = yaml.load(f, Loader=yaml.FullLoader)
-        for k, v in all_args_dict.items():
-            setattr(all_args, k, v)
+    if cfg.config is not None:
+        with open(cfg.config) as f:
+            cfg_dict = yaml.load(f, Loader=yaml.FullLoader)
+        for k, v in cfg_dict.items():
+            setattr(cfg, k, v)
     # TODO: we need to have some assertion about trainer indices and num_trainer_nodes
 
     # learner config has the following strucuture:
     # {learner_node_idx: {gpu_idx: policy_learner_idx, ...}, ...}
     task_rank_offsets, task_rank_cnts, task_gpu_ranks = {}, {}, {}
-    local_learner_config = all_args.learner_config[str(all_args.learner_node_idx)]
+    local_learner_config = cfg.learner_config[str(cfg.learner_node_idx)]
     for gpu_rank, v in local_learner_config.items():
         task_rank_offsets[v] = 0
         if v not in task_rank_cnts:
@@ -98,72 +98,72 @@ def main():
             task_gpu_ranks[v].append(int(gpu_rank))
 
     all_policy_learner_idxes = []
-    for node_idx, local_config in all_args.learner_config.items():
+    for node_idx, local_config in cfg.learner_config.items():
         for _, v in local_config.items():
             all_policy_learner_idxes.append(v)
             for task_v in task_rank_offsets.keys():
-                if int(node_idx) < all_args.learner_node_idx and v == task_v:
+                if int(node_idx) < cfg.learner_node_idx and v == task_v:
                     task_rank_offsets[task_v] += 1
     # sanity checks
-    assert all_args.learner_node_idx < len(all_args.learner_config)
-    assert list(range(all_args.num_policies)) == list(np.unique(sorted(all_policy_learner_idxes)))
+    assert cfg.learner_node_idx < len(cfg.learner_config)
+    assert list(range(cfg.num_policies)) == list(np.unique(sorted(all_policy_learner_idxes)))
 
-    if all_args.algorithm_name == "rmappo":
-        all_args.use_recurrent_policy = True
-    elif all_args.algorithm_name == 'mappo':
-        all_args.use_recurrent_policy = False
+    if cfg.algorithm_name == "rmappo":
+        cfg.use_recurrent_policy = True
+    elif cfg.algorithm_name == 'mappo':
+        cfg.use_recurrent_policy = False
     else:
         raise NotImplementedError
 
     # NOTE: this line may incur a bug
-    # torch.set_num_threads(all_args.n_training_threads)
-    if all_args.cuda_deterministic:
+    # torch.set_num_threads(cfg.n_training_threads)
+    if cfg.cuda_deterministic:
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
 
-    run_dir = pathlib.Path('./log') / all_args.env_name
-    if all_args.env_name == 'StarCraft2':
-        run_dir /= all_args.map_name
-    run_dir = run_dir / all_args.algorithm_name / all_args.experiment_name
+    run_dir = pathlib.Path('./log') / cfg.env_name
+    if cfg.env_name == 'StarCraft2':
+        run_dir /= cfg.map_name
+    run_dir = run_dir / cfg.algorithm_name / cfg.experiment_name
     if not run_dir.exists():
         os.makedirs(str(run_dir))
 
     # seed
-    torch.manual_seed(all_args.seed)
-    torch.cuda.manual_seed_all(all_args.seed)
-    np.random.seed(all_args.seed)
+    torch.manual_seed(cfg.seed)
+    torch.cuda.manual_seed_all(cfg.seed)
+    np.random.seed(cfg.seed)
 
-    example_env = make_example_env(all_args)
-    all_args.share_observation_space = example_env.share_observation_space[
-        0] if all_args.use_centralized_V else example_env.observation_space[0]
-    all_args.observation_space = example_env.observation_space[0]
-    all_args.action_space = example_env.action_space[0]
+    example_env = make_example_env(cfg)
+    cfg.share_observation_space = example_env.share_observation_space[
+        0] if cfg.use_centralized_V else example_env.observation_space[0]
+    cfg.observation_space = example_env.observation_space[0]
+    cfg.action_space = example_env.action_space[0]
 
     example_env.close()
     del example_env
 
-    all_args.num_agents = get_map_params(all_args.map_name)["n_agents"]
+    cfg.num_agents = get_map_params(cfg.map_name)["n_agents"]
     # TODO: num_trainers is different for different buffers
-    all_args.num_trainers = len(local_learner_config)
+    cfg.num_trainers = len(local_learner_config)
 
-    if all_args.learner_node_idx == 0:
+    if cfg.learner_node_idx == 0:
         from system.task_dispatcher import TaskDispatcher
         from meta_controllers.naive import NaiveMetaController
-        task_dispatcher = TaskDispatcher(all_args, NaiveMetaController(all_args))
+        task_dispatcher = TaskDispatcher(cfg, NaiveMetaController(cfg))
         task_dispatcher.start_process()
 
     # TODO: currently we only support training a single policy (policy sharing)
-    assert all_args.num_policies == 1
-    buffer = LearnerBuffer(all_args, all_args.observation_space, all_args.share_observation_space,
-                           all_args.action_space)
+    assert cfg.num_policies == 1
+    buffer = LearnerBuffer(cfg, cfg.observation_space, cfg.share_observation_space,
+                           cfg.action_space)
 
-    num_worker_nodes = len(all_args.seg_addrs[0])
+    num_worker_nodes = len(cfg.seg_addrs[0])
     nodes_ready_events = [mp.Event() for _ in range(num_worker_nodes)]
 
     # (num_worker_nodes * num_learner_nodes) receivers in total, (num_worker_nodes) receivers for each learner node
     recievers = [
-        Receiver(all_args, num_worker_nodes * all_args.learner_node_idx + i, TorchJoinableQueue(), buffer, nodes_ready_events[i])
-        for i in range(num_worker_nodes)
+        Receiver(cfg, num_worker_nodes * cfg.learner_node_idx + i, TorchJoinableQueue(), buffer,
+                 nodes_ready_events[i]) for i in range(num_worker_nodes)
     ]
     for r in recievers:
         r.init()
@@ -176,7 +176,7 @@ def main():
             global_rank = local_rank + offset
 
             # TODO: some logic about ranks in trainer may be not correct, check them
-            trainer = Trainer(global_rank, local_rank, gpu_rank, buffer, all_args, nodes_ready_events, run_dir=run_dir)
+            trainer = Trainer(global_rank, local_rank, gpu_rank, buffer, cfg, nodes_ready_events, run_dir=run_dir)
             trainer.process.start()
 
             all_trainers.append(trainer)
@@ -189,7 +189,7 @@ def main():
         r.close()
     log.info('Receivers joined!')
 
-    if all_args.learner_node_idx == 0:
+    if cfg.learner_node_idx == 0:
         task_dispatcher.close()
         log.info('Task Dispatcher joined!')
 

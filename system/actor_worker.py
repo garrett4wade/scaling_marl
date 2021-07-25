@@ -66,7 +66,8 @@ class ActorWorker:
         self.terminate = False
 
         self.group_local_idx = self.worker_idx % self.cfg.actor_group_size
-        self.env_slice = slice(self.group_local_idx * self.envs_per_split, (self.group_local_idx + 1) * self.envs_per_split)
+        self.env_slice = slice(self.group_local_idx * self.envs_per_split,
+                               (self.group_local_idx + 1) * self.envs_per_split)
 
         self.env_runners = None
 
@@ -112,7 +113,7 @@ class ActorWorker:
                     for j in range(self.envs_per_split)
                 ]))
             safe_put(self.report_queue, dict(initialized_env=(self.worker_idx, i)), queue_name='report')
-        
+
         self.initialized = True
 
     def _terminate(self):

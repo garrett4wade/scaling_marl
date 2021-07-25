@@ -130,7 +130,7 @@ class Trainer:
             self.model_weights_socket = self._context.socket(zmq.PUB)
             model_port = self.cfg.model_weights_addrs[self.node_idx].split(':')[-1]
             self.model_weights_socket.bind('tcp://*:' + model_port)
-        
+
         if self.global_rank == 0:
             self.task_socket = self._context.socket(zmq.REQ)
             self.task_socket.connect(self.cfg.task_dispatcher_addr)
@@ -417,7 +417,7 @@ class Trainer:
 
     def maybe_save(self):
         if self.global_rank == 0 and (self.policy_version % self.save_interval == 0
-                               or self.policy_version == self.train_for_episodes - 1):
+                                      or self.policy_version == self.train_for_episodes - 1):
             self.save()
 
     def maybe_log(self):

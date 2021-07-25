@@ -55,7 +55,7 @@ class Transmitter:
 
         for event in self.policy_worker_ready_events:
             event.wait()
-        
+
         for i, socket in enumerate(self.sockets):
             socket.send(b'ready')
             self.socket_states[i] = SocketState.SEND
