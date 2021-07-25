@@ -32,13 +32,6 @@ class PolicyWorker:
         # TODO: the ranks of a policy worker includes: task id in this node, policy id and replicator_id
         self.worker_idx = worker_idx
         self.local_rank = 0
-        assert len(cfg.policy_worker_gpu_ranks) == 1 or len(cfg.policy_worker_gpu_ranks) == cfg.num_policy_workers, (
-            'policy worker gpu ranks must be a list of length 1 or '
-            'have the same length as num_policy_workers')
-        if len(cfg.policy_worker_gpu_ranks) == 1:
-            self.gpu_rank = cfg.policy_worker_gpu_ranks[0]
-        else:
-            self.gpu_rank = cfg.policy_worker_gpu_ranks[worker_idx]
         self.cfg = cfg
         self.tpdv = dict(device=torch.device(0), dtype=torch.float32)
 
@@ -104,7 +97,8 @@ class PolicyWorker:
             else:
                 self.device = torch.device('cpu')
 
-            self.rollout_policy = Policy(self.gpu_rank,
+            # we've already set CUDA_VISIBLE_DEVICES, thus gpu_rank=0 for all policy workers
+            self.rollout_policy = Policy(0,
                                          self.cfg,
                                          self.obs_space,
                                          self.share_obs_space,
@@ -335,7 +329,7 @@ class PolicyWorker:
 
                 with timing.add_time('report'):
                     if time.time() - last_report > 3.0 and 'inference_avg' in timing:
-                        timing_stats = dict(wait_policy=timing.waiting_avg, step_policy=timing.inference_avg)
+                        timing_stats = dict(wait_policy=timing.waiting_avg.value, step_policy=timing.inference_avg.value)
                         samples_since_last_report = self.total_num_samples - last_report_samples
 
                         stats = memory_stats('policy_worker', self.device)

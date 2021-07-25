@@ -220,7 +220,7 @@ class ActorWorker:
                         with timing.add_time('waiting'), timing.time_avg('wait_for_inference'):
                             ready = self.act_semaphore[cur_split].acquire(timeout=0.1)
 
-                        with timing.add_time('env_step'), timing.time_avg('one_env_step'):
+                        with timing.add_time('env_step'):
                             if ready:
                                 self._advance_rollouts(cur_split, timing)
                                 cur_split = (cur_split + 1) % self.num_splits
@@ -250,8 +250,8 @@ class ActorWorker:
                                 self._handle_reset()
 
                     with timing.add_time('report'):
-                        if time.time() - last_report > 5.0 and 'one_env_step' in timing:
-                            timing_stats = dict(wait_actor=timing.wait_for_inference, step_actor=timing.one_env_step)
+                        if time.time() - last_report > 5.0 and 'env_step/simulation_avg' in timing:
+                            timing_stats = dict(wait_actor=timing.wait_for_inference.value, step_actor=getattr(timing, 'env_step/simulation_avg').value)
                             memory_mb = memory_consumption_mb()
                             stats = dict(memory_actor=memory_mb)
                             safe_put(self.report_queue, dict(timing=timing_stats, stats=stats), queue_name='report')

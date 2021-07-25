@@ -24,8 +24,6 @@ learner_config:
   "0":
     "0": 0
 ddp_init_method: tcp://10.0.4.16:6666
-policy_worker_gpu_ranks:
-  - 0
 num_policies: 1
 task_dispatcher_addr: tcp://10.0.4.16:8887
 num_tasks_per_node: 1
@@ -91,7 +89,7 @@ use_gae: true
 use_huber_loss: true
 use_linear_lr_decay: false
 use_max_grad_norm: true
-use_orthogonal: true
+use_orthogonal: false
 use_popart: true
 use_proper_time_limits: false
 use_ReLU: true

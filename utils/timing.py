@@ -14,6 +14,9 @@ class AvgTime:
         avg_time = sum(self.values) / max(1, len(self.values))
         return f'{avg_time:.4f}'
 
+    @property
+    def value(self):
+        return sum(self.values) / max(1, len(self.values))
 
 class TimingContext:
     def __init__(self, timer, key, additive=False, average=None):

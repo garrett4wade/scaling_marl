@@ -233,8 +233,6 @@ def get_config():
     parser.add_argument('--learner_num_threads', type=int, default=8)
     parser.add_argument('--broadcast_interval', default=1, type=int)
 
-    parser.add_argument('--policy_worker_gpu_ranks', type=int, nargs='+', default=[0])
-
     # env parameters
     parser.add_argument("--env_name", type=str, default='StarCraft2', help="specify the name of environment")
     parser.add_argument("--use_obs_instead_of_state",
