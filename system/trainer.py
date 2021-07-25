@@ -16,7 +16,6 @@ import datetime
 
 
 class Trainer:
-    """ Base class for training. """
     def __init__(self, global_rank, local_rank, gpu_rank, buffer, cfg, nodes_ready_events, **kwargs):
         # TODO: specify policy rank
         self.policy_rank = 0
@@ -39,8 +38,6 @@ class Trainer:
 
         self.nodes_ready_events = nodes_ready_events
 
-        # TODO: add eval
-        # self.eval_envs = kwargs['eval_envs_fn'](self.rank, self.cfg)
         self.num_agents = self.cfg.num_agents
 
         self.buffer = buffer
@@ -138,6 +135,7 @@ class Trainer:
 
         if self.global_rank == 0:
             # only one trainer manages logging & summary
+            # TODO: move summaries to task dispatcher
             if not self.cfg.no_summary:
                 self._init_summary()
 
@@ -160,7 +158,7 @@ class Trainer:
         os.environ['NCCL_DEBUG'] = 'info'
         os.environ['NCCL_SOCKET_IFNAME'] = 'eth0'
         os.environ['NCCL_IB_DISABLE'] = '1'
-        # TODO: nccl does not work in multi-learner setting, need to figure out why
+        # TODO: nccl with orthogonal initialization has a bug
         dist.init_process_group('nccl',
                                 rank=self.global_rank,
                                 world_size=self.cfg.num_trainers,
@@ -289,10 +287,6 @@ class Trainer:
                     # the first learner in each node broadcasts weights
                     self.pack_off_weights()
 
-                # TODO: add eval
-                # if episode % self.eval_interval == 0 and self.use_eval:
-                #     self.eval(consuemd_num_steps)
-
                 # self._experience_collection_rate_stats()
 
             except RuntimeError as exc:
@@ -313,10 +307,6 @@ class Trainer:
         self._terminate()
         time.sleep(0.1)
         log.info('GPU learner timing: %s', timing)
-
-    def eval(self):
-        # TODO: conduct evaluation using inference server rather than trainer
-        raise NotImplementedError
 
     def pack_off_weights(self):
         # remove prefix 'module.' of DDP models

@@ -29,8 +29,8 @@ class PolicyWorker:
                  policy_worker_ready_event):
         log.info('Initializing policy worker %d', worker_idx)
 
+        # TODO: the ranks of a policy worker includes: task id in this node, policy id and replicator_id
         self.worker_idx = worker_idx
-        # TODO: add local rank
         self.local_rank = 0
         assert len(cfg.policy_worker_gpu_ranks) == 1 or len(cfg.policy_worker_gpu_ranks) == cfg.num_policy_workers, (
             'policy worker gpu ranks must be a list of length 1 or '
@@ -49,7 +49,6 @@ class PolicyWorker:
         self.num_agents = cfg.num_agents
         self.envs_per_actor = cfg.envs_per_actor
         self.num_splits = cfg.num_splits
-        assert self.envs_per_actor % self.num_splits == 0
         self.envs_per_split = self.envs_per_actor // self.num_splits
 
         self.num_actor_groups = self.cfg.num_actors // self.cfg.actor_group_size
@@ -79,11 +78,9 @@ class PolicyWorker:
         self.initialized = False
         self.terminate = False
         self.initialized_event = multiprocessing.Event()
-        self.initialized_event.clear()
 
         self.buffer = buffer
         self.model_weights_registries = OrderedDict()
-        # TODO: stop experience collection signal
 
         self.latest_policy_version = -1
         self.num_policy_updates = 0
@@ -272,6 +269,8 @@ class PolicyWorker:
 
         psutil.Process().nice(min(self.cfg.default_niceness + 2, 20))
 
+        # we assume all gpus are available and no gpu is occupies by jobs of other users
+        # TODO: replace worker_idx with global worker idx
         cuda_envvars_for_policy(self.worker_idx, 'inference')
         torch.multiprocessing.set_sharing_strategy('file_system')
 

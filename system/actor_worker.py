@@ -71,7 +71,6 @@ class ActorWorker:
 
         self.env_runners = None
 
-        # TODO: policy queue -> policy queues, to support PBT
         self.policy_queue = policy_queue
         self.report_queue = report_queue
         self.task_queue = task_queue
