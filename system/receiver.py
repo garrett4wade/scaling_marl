@@ -70,7 +70,8 @@ class Receiver:
 
         socket_ident, summary_info = msg[-2:]
         summary_info = np.frombuffer(summary_info, dtype=np.float32)
-        worker_node_idx = int(socket_ident.decode('ascii')[-1])
+        assert socket_ident.decode('ascii')[-1] == str(self.cfg.learner_node_idx)
+        worker_node_idx = int(socket_ident.decode('ascii').split('-')[-1][0])
 
         tik = time.time()
         with timing.add_time('put_buffer'):

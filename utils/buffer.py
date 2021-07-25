@@ -100,7 +100,7 @@ class ReplayBuffer:
                 readable_slots = np.nonzero(self._is_readable)[0]
                 assert len(readable_slots) > 0, 'please increase qsize!'
                 # replace the oldest readable slot, in a FIFO pattern
-                slot_id = readable_slots[np.cfgort(self._time_stamp[readable_slots])[0]]
+                slot_id = readable_slots[np.argsort(self._time_stamp[readable_slots])[0]]
                 # readable -> busy
                 self._is_readable[slot_id] = 0
                 self._time_stamp[slot_id] = 0
@@ -247,7 +247,7 @@ class LearnerBuffer(ReplayBuffer):
         self._used_times = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
 
         # summary block
-        self.summary_block = torch.zeros((len(cfg.seg_addrs), len(self.summary_keys)),
+        self.summary_block = torch.zeros((len(cfg.seg_addrs[0]), len(self.summary_keys)),
                                          dtype=torch.float32).share_memory_().numpy()
 
         self._ptr_lock = mp.RLock()

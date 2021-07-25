@@ -33,6 +33,7 @@ model_weights_addrs:
   - tcp://10.0.4.16:8889
 seg_addrs:
   - - tcp://10.0.4.16:12346
+    - tcp://10.0.4.16:12347
 num_actors: 8
 actor_group_size: 1
 envs_per_actor: 2
@@ -90,7 +91,7 @@ use_gae: true
 use_huber_loss: true
 use_linear_lr_decay: false
 use_max_grad_norm: true
-use_orthogonal: false
+use_orthogonal: true
 use_popart: true
 use_proper_time_limits: false
 use_ReLU: true

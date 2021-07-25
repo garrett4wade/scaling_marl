@@ -476,7 +476,7 @@ class Trainer:
 
                 if recent_elapsed_episodes > 0:
                     winning_rate = recent_winning_episodes / recent_elapsed_episodes
-                    assert 0 <= winning_rate and winning_rate <= 1
+                    assert 0 <= winning_rate and winning_rate <= 1, winning_rate
                     avg_return = recent_episode_return / recent_elapsed_episodes
                     log.debug('Map: {}, Recent Winning Rate: {:.2%}, Avg. Return: {:.2f}.'.format(
                         self.cfg.map_name, winning_rate, avg_return))

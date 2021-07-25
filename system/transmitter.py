@@ -148,7 +148,7 @@ class Transmitter:
 
                         # TODO: get dst from buffer
                         num_worker_nodes = len(self.cfg.seg_addrs[0])
-                        worker_nodes_per_learner = self.num_learner_nodes // num_worker_nodes
+                        worker_nodes_per_learner = num_worker_nodes // self.num_learner_nodes
                         dst = self.cfg.worker_node_idx // worker_nodes_per_learner
 
                         if slot is not None:
