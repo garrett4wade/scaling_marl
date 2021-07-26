@@ -302,8 +302,10 @@ class WorkerNode:
     def print_stats(self, sample_throughputs):
         log.debug('Throughput: {:.2f} (10 sec), {:.2f} (1 min), {:.2f} (5 mins). Samples: {}.'.format(
             *sample_throughputs, self.samples_collected))
-        log.debug('Memory statistics: %s', ''.join(['{}: {:.2f} MB, '.format(k, v) for k, v in self.stats.items()])[:-2])
-        log.debug('Timing: %s', ''.join(['{}: {:.4f} s, '.format(k, sum(v) / len(v)) for k, v in self.avg_stats.items()])[:-2])
+        mem_stats = ''.join(['{}: {:.2f} MB, '.format(k, v) for k, v in self.stats.items()])[:-2]
+        log.debug('Memory statistics: %s', mem_stats)
+        timing_stats = ''.join(['{}: {:.4f} s, '.format(k, sum(v) / len(v)) for k, v in self.avg_stats.items()])[:-2]
+        log.debug('Timing: %s', timing_stats)
 
     def _should_terminate(self):
         end = self.total_train_seconds > self.cfg.train_for_seconds
