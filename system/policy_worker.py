@@ -23,7 +23,7 @@ def _t2n(x):
 
 class PolicyWorker:
     def __init__(self, cfg, policy_id, task_rank, replicate_rank, obs_space, share_obs_space, action_space, buffer,
-                 policy_queue, report_queue, act_shms, act_semaphores, envstep_output_shms, policy_worker_ready_event,
+                 policy_queue, report_queue, act_shms, act_semaphores, envstep_output_shms, rollout_policy_ready_event,
                  local_ps, param_lock, ps_policy_version, ps_ready_event):
         self.policy_id = policy_id
         self.task_rank = task_rank
@@ -55,7 +55,7 @@ class PolicyWorker:
 
         self.policy_queue = policy_queue
         self.report_queue = report_queue
-        self.policy_worker_ready_event = policy_worker_ready_event
+        self.rollout_policy_ready_event = rollout_policy_ready_event
 
         self.local_ps = local_ps
         self.param_lock = param_lock
@@ -109,20 +109,21 @@ class PolicyWorker:
                                          is_training=False)
             self.rollout_policy.eval_mode()
 
-            self.policy_worker_ready_event.set()
+            self.rollout_policy_ready_event.set()
 
             self.ps_ready_event.wait()
             self.maybe_update_weights(timing)
             log.info('Initialized model on the policy worker %d!', self.worker_idx)
 
-        log.info('Policy worker %d initialized', self.worker_idx)
-        self.initialized = True
-        self.initialized_event.set()
+            log.info('Policy worker %d initialized', self.worker_idx)
+            self.initialized = True
+            self.initialized_event.set()
 
-    def maybe_update_weights(self):
-        if self.local_policy_version < self.ps_policy_version:
-            with self.param_lock:
-                self.rollout_policy.load_state_dict(self.local_ps)
+    def maybe_update_weights(self, timing):
+        with self.param_lock.r_locked():
+            if self.local_policy_version < self.ps_policy_version:
+                with timing.time_avg('update_weights/load_state_dict_once'):
+                    self.rollout_policy.load_state_dict(self.local_ps)
 
     def _handle_policy_steps(self, timing):
         with torch.no_grad():

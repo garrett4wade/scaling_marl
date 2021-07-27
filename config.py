@@ -202,7 +202,6 @@ def get_config():
     parser.add_argument("--num_splits", type=int, default=2)
     parser.add_argument("--qsize", type=int, default=8)
     parser.add_argument("--stats_avg", type=int, default=100)
-    parser.add_argument("--num_transmitters", type=int, default=1)
 
     parser.add_argument("--force_envs_single_thread", default=True, action='store_false')
     parser.add_argument("--set_workers_cpu_affinity", default=True, action='store_false')

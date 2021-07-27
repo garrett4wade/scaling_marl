@@ -1,7 +1,5 @@
 import zmq
-import signal
 import itertools
-from queue import Empty
 import multiprocessing as mp
 import time
 from utils.utils import log, join_or_kill, TaskType
@@ -20,7 +18,6 @@ class TaskDispatcher:
 
         self.initialized = False
         self.terminate = False
-        self.termination_queue = mp.JoinableQueue(1)
 
         assert cfg.num_tasks_per_node == 1
         # TODO: add multiple tasks on each node
@@ -30,6 +27,10 @@ class TaskDispatcher:
 
         self.worker_socket_addrs = [None for _ in range(self.num_worker_tasks)]
         self.learner_socket_addrs = [None for _ in range(self.num_learner_tasks)]
+
+        self.consumed_num_steps = [0 for _ in range(self.cfg.num_policies)]
+        self.policy_version = [0 for _ in range(self.cfg.num_policies)]
+        self.training_tik = None
 
         self.process = mp.Process(target=self._run)
 
@@ -50,7 +51,7 @@ class TaskDispatcher:
 
             if 'learner' in ready_msg:
                 self.learner_socket_addrs[idx] = msg[0]
-            elif 'task' in ready_msg:
+            elif 'worker' in ready_msg:
                 self.worker_socket_addrs[idx] = msg[0]
             else:
                 raise NotImplementedError
@@ -63,24 +64,27 @@ class TaskDispatcher:
             self.socket.send_multipart(msg)
 
         self.initialized = True
+        self.training_tik = time.time()
+
+    def _should_end_training(self):
+        # TODO: use messages from workers and learners to update consumed_num_steps and policy_version
+        end = all([c_step > self.cfg.train_for_env_steps for c_step in self.consumed_num_steps])
+        end |= all([v > self.cfg.train_for_episodes for v in self.policy_version])
+        end |= (time.time() - self.training_tik) > self.train_for_seconds
+
+        # if self.cfg.benchmark:
+        #     end |= self.total_env_steps_since_resume >= int(2e6)
+        #     end |= sum(self.samples_collected) >= int(1e6)
+
+        return end
 
     def _run(self):
         log.info('Initializing Task Dispatcher...')
 
-        # should ignore Ctrl+C because the termination is handled in the event loop by a special msg
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-
         self._init()
-        while not self.terminate:
-            try:
-                try:
-                    _ = self.termination_queue.get_nowait()
-                    self.termination_queue.task_done()
-                    self.terminate = True
-                    break
-                except Empty:
-                    pass
 
+        try:
+            while not self._should_end_training():
                 if self.initialized:
                     try:
                         # we don't care what we receive from the head node
@@ -94,23 +98,26 @@ class TaskDispatcher:
                     except zmq.ZMQError:
                         pass
 
-            except RuntimeError:
-                log.warning('Error while distributing tasks on Task Dispatcher')
-                log.warning('Terminate process...')
-                self.terminate = True
-            except KeyboardInterrupt:
-                log.warning('Keyboard interrupt detected on Task Dispatcher')
-                self.terminate = True
-            except Exception:
-                log.exception('Unknown exception on Task Dispatcher')
-                self.terminate = True
+        except RuntimeError:
+            log.warning('Error while distributing tasks on Task Dispatcher')
+            log.warning('Terminate process...')
+            self.terminate = True
+        except KeyboardInterrupt:
+            log.warning('Keyboard interrupt detected on Task Dispatcher')
+            self.terminate = True
+        except Exception:
+            log.exception('Unknown exception on Task Dispatcher')
+            self.terminate = True
 
+        # send termination signal to all workers and learners
+        for addr in itertools.chain(self.learner_socket_addrs, self.worker_socket_addrs):
+            msg = [addr, b'', str(TaskType.TERMINATE).encode('ascii')]
+            self.socket.send_multipart(msg)
+
+        time.sleep(1)
         self.socket.close()
         time.sleep(0.2)
         log.info('Task Dispatcher terminated!')
-
-    def close(self):
-        self.termination_queue.put(TaskType.TERMINATE)
 
     def join(self):
         join_or_kill(self.process)

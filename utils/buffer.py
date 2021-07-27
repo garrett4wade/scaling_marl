@@ -244,6 +244,10 @@ class WorkerBuffer(ReplayBuffer):
         #     assert np.all(self._is_busy[old_slots]) and np.all(self._is_busy[new_slots])
         super()._mark_as_readable(old_slots)
 
+    def get(self, block=True, timeout=None, reduce_fn=lambda x: x[0]):
+        slot_id = super().get(block, timeout, reduce_fn)
+        return slot_id, (self._destination[slot_id, 0].item(), self._destination[slot_id, 1].item())
+
 
 class LearnerBuffer(ReplayBuffer):
     def __init__(self, cfg, policy_id, num_agents, obs_space, share_obs_space, act_space):

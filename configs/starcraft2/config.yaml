@@ -47,7 +47,6 @@ num_policy_workers: 1
 slots_per_update: 8
 qsize: 12
 num_splits: 2
-num_transmitters: 1
 data_chunk_length: 10
 episode_length: 400
 

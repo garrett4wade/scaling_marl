@@ -10,10 +10,10 @@ class NaiveMetaController(MetaController):
     def reset(self):
         task = []
         for _ in range(self.num_learner_tasks):
-            task.append((str(TaskType.TRAIN).encode('ascii'), b'0'))
+            task.append(str(TaskType.TRAIN).encode('ascii'))
 
         for _ in range(self.num_worker_tasks):
-            task.append((str(TaskType.ROLLOUT).encode('ascii'), b'0'))
+            task.append(str(TaskType.ROLLOUT).encode('ascii'))
 
         return task
 

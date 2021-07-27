@@ -86,6 +86,13 @@ def main():
         for k, v in cfg_dict.items():
             setattr(cfg, k, v)
 
+    num_worker_nodes = len(cfg.seg_addrs[0])
+    if num_worker_nodes * cfg.num_tasks_per_node % cfg.num_policies != 0:
+        from utils.utils import log
+        log.warning(
+            "All worker tasks can not be equally distributed for different policies! "
+            "Try to revise the configuration to make (num_worker_nodes * num_tasks_per_node % num_policies == 0)")
+
     if cfg.algorithm_name == "rmappo":
         cfg.use_recurrent_policy = True
     elif cfg.algorithm_name == 'mappo':

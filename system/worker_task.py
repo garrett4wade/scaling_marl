@@ -14,7 +14,7 @@ from system.policy_worker import PolicyWorker
 from system.actor_group_manager import ActorGroupManager
 from utils.buffer import SharedWorkerBuffer
 from utils.timing import Timing
-from utils.utils import (log, set_global_cuda_envvars, list_child_processes, kill_processes, get_obs_shapes_from_spaces,
+from utils.utils import (log, TaskType, SocketState, list_child_processes, kill_processes, get_obs_shapes_from_spaces,
                          get_shape_from_act_space, assert_same_obs_shape, assert_same_act_dim)
 
 if os.name == 'nt':
@@ -31,9 +31,8 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 
 
 class WorkerTask:
-    def __init__(self, cfg, task_rank, policy_id, env_fn, local_ps, param_locks, ps_policy_versions, ps_ready_events):
-        # we should not use CUDA in the main thread, only on the workers
-        set_global_cuda_envvars(cfg)
+    def __init__(self, cfg, task_rank, policy_id, env_fn, local_ps, param_locks, ps_policy_versions, ps_ready_events,
+                 task_finish_event):
         self.cfg = cfg
         self.policy_id = policy_id
         self.task_rank = task_rank
@@ -86,27 +85,26 @@ class WorkerTask:
         self.avg_stats = dict()
         self.stats = dict()  # regular (non-averaged) stats
 
-        self.policy_worker_ready_events = [[multiprocessing.Event() for _ in range(self.cfg.num_policies)]
-                                           for _ in range(self.cfg.num_policy_workers)]
+        self.rollout_policy_ready_events = [[multiprocessing.Event() for _ in range(self.cfg.num_policies)]
+                                            for _ in range(self.cfg.num_policy_workers)]
 
         # shared memory and synchronization primitives for communication between actor worker and policy worker
         self.act_shms, self.act_semaphores = None, None
         self.envstep_output_shms, self.envstep_output_semaphores = None, None
 
-        # ZeroMQ sockets to receive model parameters and tasks
+        # ZeroMQ sockets to receive tasks
         self._context = None
         self.task_socket = None
+        self.task_socket_state = None
 
-        # TODO: move model weights socket outside to worker NODE, instead of worker TASK
-        # self.model_weights_sockets = None
-        # shared-memory local parameter server for all policy ids
-        # self.shm_state_dicts = [None for _ in range(self.cfg.num_policies)]
-        # self.state_dict_locks = [multiprocessing.Lock() for _ in range(self.cfg.num_policies)]
+        self.task_finish_event = task_finish_event
 
-        # self.num_policy_updates = [0 for _ in range(self.cfg.num_policies)]
-        # self.latest_policy_version = [-1 for _ in range(self.cfg.num_policies)]
+        self.terminate = False
 
-        # self.model_weights_registries = [{} for _ in range(self.cfg.num_policies)]
+        self.process = multiprocessing.Process(target=self.run)
+
+    def start_process(self):
+        self.process.start()
 
     def init_sockets(self):
         self._context = zmq.Context()
@@ -114,63 +112,10 @@ class WorkerTask:
         self.task_socket = self._context.socket(zmq.REQ)
         self.task_socket.connect(self.cfg.task_dispatcher_addr)
         self.task_socket.send(
-            ('task-' + str(self.task_rank + self.cfg.num_tasks_per_node * self.cfg.worker_node_idx)).encode('ascii'))
+            ('workertask-' +
+             str(self.task_rank + self.cfg.num_tasks_per_node * self.cfg.worker_node_idx)).encode('ascii'))
 
-        # TODO: move this outside
-        # for i in range(self.cfg.num_policies):
-        #     socket = self._context.socket(zmq.SUB)
-        #     socket.connect(self.cfg.model_weights_addrs[i])
-        #     # TODO: maybe we don't need this prefix
-        #     socket.setsockopt(zmq.SUBSCRIBE, b'param')
-        #     self.model_weights_sockets.append(socket)
-
-    # TODO: move this outside
-    # def _update_weights(self, timing, policy_id, block=False):
-    #     socket = self.model_weights_sockets[policy_id]
-    #     model_weights_registry = self.model_weights_registries[policy_id]
-    #     shm_state_dict = self.shm_state_dicts[policy_id]
-    #     lock = self.state_dict_locks[policy_id]
-
-    #     msg = None
-
-    #     if block:
-    #         msg = socket.recv_multipart(flags=0)
-    #     else:
-    #         while True:
-    #             # receive the latest model parameters
-    #             try:
-    #                 msg = socket.recv_multipart(flags=zmq.NOBLOCK)
-    #             except zmq.ZMQError:
-    #                 break
-
-    #     if msg is None:
-    #         return
-
-    #     with timing.add_time('update_weights/processing_msg'):
-    #         # msg is multiple (key, tensor) pairs + policy version
-    #         assert len(msg) % 2 == 0
-    #         msg = msg[1:]
-    #         with lock:
-    #             for i in range(len(msg) // 2):
-    #                 key, value = msg[2 * i].decode('ascii'), msg[2 * i + 1]
-
-    #                 shape, dtype = model_weights_registry[key]
-    #                 tensor = torch.from_numpy(np.frombuffer(memoryview(value), dtype=dtype).reshape(*shape))
-
-    #                 shm_state_dict[key][:] = tensor
-
-    #             learner_policy_version = int(msg[-1].decode('ascii'))
-
-    #     self.latest_policy_version[policy_id] = learner_policy_version
-
-    #     if self.num_policy_updates[policy_id] % 10 == 0:
-    #         log.debug(
-    #             'Updated weights on worker %d, policy_version %d (%s)',
-    #             self.worker_idx,
-    #             self.latest_policy_version,
-    #             str(timing.load_state_dict),
-    #         )
-    #     self.num_policy_updates += 1
+        self.task_socket_state = SocketState.SEND
 
     def init_shm_primitives(self):
         envs_per_split = self.cfg.envs_per_actor // self.cfg.num_splits
@@ -368,10 +313,10 @@ class WorkerTask:
                     self.act_semaphores[policy_id],
                     {k: v[policy_id]
                      for k, v in self.envstep_output_shms.items()},
-                    self.policy_worker_ready_events[i][policy_id],
+                    self.rollout_policy_ready_events[i][policy_id],
                     self.local_ps[policy_id],
                     self.param_locks[policy_id],
-                    self.ps_policy_versions[policy_id: policy_id + 1],
+                    self.ps_policy_versions[policy_id:policy_id + 1],
                     self.ps_ready_events[policy_id],
                 )
                 policy_worker_tuple.append(policy_worker)
@@ -391,17 +336,6 @@ class WorkerTask:
         for i in range(0, self.num_actors, max_parallel_init):
             workers = self.init_subset(actor_indices[i:i + max_parallel_init], actor_queues)
             self.actor_workers.extend(workers)
-
-    # TODO: move outside
-    # def init_transmitters(self):
-    #     transmitter_queues = []
-    #     for i in range(self.cfg.num_transmitters):
-    #         transmitter_queues.append(TorchJoinableQueue())
-
-    #     for idx in range(self.cfg.num_transmitters):
-    #         t = Transmitter(self.cfg, idx, transmitter_queues[i], self.buffer, self.policy_worker_ready_events)
-    #         t.init()
-    #         self.transmitters.append(t)
 
     def finish_initialization(self):
         """Wait until policy workers are fully initialized."""
@@ -451,14 +385,14 @@ class WorkerTask:
         timing_stats = ''.join(['{}: {:.4f} s, '.format(k, sum(v) / len(v)) for k, v in self.avg_stats.items()])[:-2]
         log.debug('Timing: %s', timing_stats)
 
-    # TODO: the termination of task should listen to the task socket/worker node
-    def _should_terminate(self):
-        end = self.total_train_seconds > self.cfg.train_for_seconds
-
-        if self.cfg.benchmark:
-            end |= sum(self.samples_collected) >= int(1e6)
-
-        return end
+    def process_task(self, task):
+        if task == TaskType.ROLLOUT:
+            self.task_socket.send(b'ok')
+        elif task == TaskType.TERMINATE:
+            self.terminate = True
+            self.task_socket.send(b'ok')
+        else:
+            raise NotImplementedError
 
     def run(self):
         """
@@ -479,8 +413,23 @@ class WorkerTask:
         timing = Timing()
         with timing.timeit('experience'):
             try:
-                while not self._should_terminate():
-                    # TODO: termination should refer to task dispatcher through zmq socket
+                while not self.terminate:
+                    if self.task_socket_state == SocketState.SEND:
+                        try:
+                            msg = self.task_socket.recv_multipart(flags=zmq.NOBLOCK)
+                            self.task_socket_state = SocketState.RECV
+                            # TODO: process more complicated task types,
+                            # such as oracle rollout in PSRO (need to send sampling distribution)
+                            task = int(msg[0].decode('ascii'))
+                            self.process_task(task)
+                        except zmq.ZMQError:
+                            pass
+
+                    if self.task_socket_state == SocketState.RECV:
+                        # this should not happen in current implementation
+                        # TODO: modify this
+                        raise RuntimeError
+
                     try:
                         reports = self.report_queue.get_many(timeout=0.1)
                         for report in reports:
@@ -524,5 +473,7 @@ class WorkerTask:
 
         time.sleep(0.5)
         log.info('Done!')
+
+        self.task_finish_event.set()
 
         return status
