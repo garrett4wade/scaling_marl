@@ -211,6 +211,41 @@ def get_shape_from_act_space(act_space):
     return act_shape
 
 
+def get_obs_shapes_from_spaces(obs_space, share_obs_space):
+    obs_shape = get_shape_from_obs_space(obs_space)
+    share_obs_shape = get_shape_from_obs_space(share_obs_space)
+
+    if type(obs_shape[-1]) == list:
+        obs_shape = obs_shape[:1]
+
+    if type(share_obs_shape[-1]) == list:
+        share_obs_shape = share_obs_shape[:1]
+
+    return obs_shape, share_obs_shape
+
+
+def assert_same_obs_shape(controlled_agents, observation_space, share_observation_space):
+    obs_space = observation_space[controlled_agents[0]]
+    share_obs_space = share_observation_space[controlled_agents[0]]
+
+    obs_shape, share_obs_shape = get_obs_shapes_from_spaces(obs_space, share_obs_space)
+
+    for agent_id in controlled_agents[1:]:
+        cur_obs_shape, cur_share_obs_shape = get_obs_shapes_from_spaces(observation_space[agent_id],
+                                                                        share_observation_space[agent_id])
+
+        assert (cur_obs_shape == obs_shape and cur_share_obs_shape
+                == share_obs_space), 'agents controlled by the same policy must have same observation/action shapes!'
+
+
+def assert_same_act_dim(action_space):
+    act_dim = get_shape_from_act_space(action_space[0])
+
+    for cur_act_space in action_space[1:]:
+        cur_act_dim = get_shape_from_act_space(cur_act_space)
+        assert cur_act_dim == act_dim, 'all agents must have the same action space!'
+
+
 def tile_images(img_nhwc):
     """
     Tile N images into one big PxQ image

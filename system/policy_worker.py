@@ -13,9 +13,7 @@ from algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
 
 from utils.timing import Timing
 from utils.utils import log, join_or_kill, cuda_envvars_for_policy, memory_stats, TaskType
-from algorithms.storage_registries import to_numpy_type
-import zmq
-from collections import OrderedDict, deque
+from collections import deque
 
 
 def _t2n(x):
@@ -24,14 +22,18 @@ def _t2n(x):
 
 
 class PolicyWorker:
-    def __init__(self, worker_idx, cfg, obs_space, share_obs_space, action_space, buffer, policy_queue, report_queue,
-                 act_shms, act_semaphores, envstep_output_shms,
-                 policy_worker_ready_event):
-        log.info('Initializing policy worker %d', worker_idx)
+    def __init__(self, cfg, policy_id, task_rank, replicate_rank, obs_space, share_obs_space, action_space, buffer,
+                 policy_queue, report_queue, act_shms, act_semaphores, envstep_output_shms, policy_worker_ready_event,
+                 local_ps, param_lock, ps_policy_version, ps_ready_event):
+        self.policy_id = policy_id
+        self.task_rank = task_rank
+        self.replicate_rank = replicate_rank
 
-        # TODO: the ranks of a policy worker includes: task id in this node, policy id and replicator_id
-        self.worker_idx = worker_idx
-        self.local_rank = 0
+        # worker idx is the global rank on this worker node
+        self.worker_idx = (self.cfg.num_policy_workers * self.cfg.num_policies * self.task_rank +
+                           self.policy_id * self.cfg.num_policy_workers + self.replicate_rank)
+        log.info('Initializing policy worker %d', self.worker_idx)
+
         self.cfg = cfg
         self.tpdv = dict(device=torch.device(0), dtype=torch.float32)
 
@@ -39,24 +41,29 @@ class PolicyWorker:
         self.share_obs_space = share_obs_space
         self.action_space = action_space
 
-        self.num_agents = cfg.num_agents
+        self.num_agents = len(cfg.policy2agents[str(policy_id)])
+        self.agent_idx = cfg.policy2agents[str(policy_id)]
         self.envs_per_actor = cfg.envs_per_actor
         self.num_splits = cfg.num_splits
         self.envs_per_split = self.envs_per_actor // self.num_splits
 
-        self.num_actor_groups = self.cfg.num_actors // self.cfg.actor_group_size
+        self.num_actor_groups = self.cfg.num_actors // self.cfg.actor_group_size // self.cfg.num_tasks_per_node
         self.envs_per_group = self.cfg.actor_group_size * self.envs_per_split
 
         self.device = None
         self.actor_critic = None
 
-        self._context = None
-        self.model_weights_socket = None
-        self.task_socket = None
-
         self.policy_queue = policy_queue
         self.report_queue = report_queue
         self.policy_worker_ready_event = policy_worker_ready_event
+
+        self.local_ps = local_ps
+        self.param_lock = param_lock
+        self.ps_policy_version = ps_policy_version
+        assert self.ps_policy_version.is_shared()
+        self.ps_ready_event = ps_ready_event
+
+        self.local_policy_version = -1
 
         self.request_clients = []
 
@@ -73,10 +80,6 @@ class PolicyWorker:
         self.initialized_event = multiprocessing.Event()
 
         self.buffer = buffer
-        self.model_weights_registries = OrderedDict()
-
-        self.latest_policy_version = -1
-        self.num_policy_updates = 0
 
         self.total_num_samples = 0
         self.total_inference_steps = 0
@@ -106,38 +109,20 @@ class PolicyWorker:
                                          is_training=False)
             self.rollout_policy.eval_mode()
 
-            self._context = zmq.Context()
-            if self.worker_idx == 0:
-                self.task_socket = self._context.socket(zmq.REQ)
-                self.task_socket.connect(self.cfg.task_dispatcher_addr)
-                self.task_socket.send(
-                    ('workertask-' +
-                     str(self.local_rank + self.cfg.num_tasks_per_node * self.cfg.worker_node_idx)).encode('ascii'))
-
-            # TODO: model weights socket need to subscribe all learner nodes
-            # TODO: initialize model weights socket only when this is the first policy worker of a task
-            worker_nodes_per_learner = len(self.cfg.seg_addrs[0]) // len(self.cfg.model_weights_addrs)
-            learner_node_idx = self.cfg.worker_node_idx // worker_nodes_per_learner
-            self.model_weights_socket = self._context.socket(zmq.SUB)
-            self.model_weights_socket.connect(self.cfg.model_weights_addrs[learner_node_idx])
-            self.model_weights_socket.setsockopt(zmq.SUBSCRIBE, b'param')
-
-            for k, v in self.rollout_policy.state_dict().items():
-                self.model_weights_registries[k] = (v.shape, to_numpy_type(v.dtype))
-
-            if self.worker_idx == 0:
-                # TODO: deal with task information received from task dispatcher
-                task = self.task_socket.recv_multipart()
-                log.info('Receiving new task from task dispatcher, %s', task)
-
             self.policy_worker_ready_event.set()
-            # NOTE: comment the next line to run a single worker node to benchmark throughput
-            self._update_weights(timing, block=True)
+
+            self.ps_ready_event.wait()
+            self.maybe_update_weights(timing)
             log.info('Initialized model on the policy worker %d!', self.worker_idx)
 
         log.info('Policy worker %d initialized', self.worker_idx)
         self.initialized = True
         self.initialized_event.set()
+
+    def maybe_update_weights(self):
+        if self.local_policy_version < self.ps_policy_version:
+            with self.param_lock:
+                self.rollout_policy.load_state_dict(self.local_ps)
 
     def _handle_policy_steps(self, timing):
         with torch.no_grad():
@@ -194,7 +179,8 @@ class PolicyWorker:
                         global_actor_idx = self.cfg.actor_group_size * group_idx + local_actor_idx
                         env_slice = slice(local_actor_idx * self.envs_per_split,
                                           (local_actor_idx + 1) * self.envs_per_split)
-                        self.act_shms[global_actor_idx][split_idx][:] = policy_outputs['actions'][i, env_slice]
+                        self.act_shms[global_actor_idx][split_idx][:, self.agent_idx] = policy_outputs['actions'][
+                            i, env_slice]
                         self.act_semaphores[global_actor_idx][split_idx].release()
 
             with timing.add_time('inference/insert'):
@@ -204,57 +190,13 @@ class PolicyWorker:
                         for i, (split_idx, group_idx) in enumerate(organized_requests):
                             shm_pairs[group_idx][split_idx][:] = policy_outputs[k][i]
 
-                insert_data = {**envstep_outputs, **policy_outputs}
-                self.buffer.insert(timing, self.request_clients, **insert_data)
+                if self.buffer.policy_id == self.policy_id:
+                    insert_data = {**envstep_outputs, **policy_outputs}
+                    self.buffer.insert(timing, self.request_clients, **insert_data)
 
         self.request_clients = []
         self.total_num_samples += rollout_bs
         self.total_inference_steps += 1
-
-    def _update_weights(self, timing, block=False):
-        msg = None
-
-        if block:
-            msg = self.model_weights_socket.recv_multipart(flags=0)
-        else:
-            while True:
-                # receive the latest model parameters
-                try:
-                    msg = self.model_weights_socket.recv_multipart(flags=zmq.NOBLOCK)
-                except zmq.ZMQError:
-                    break
-
-        if msg is None:
-            return
-
-        with timing.add_time('update_weights/processing_msg'):
-            # msg is multiple (key, tensor) pairs + policy version
-            assert len(msg) % 2 == 0
-            msg = msg[1:]
-            state_dict = OrderedDict()
-            for i in range(len(msg) // 2):
-                key, value = msg[2 * i].decode('ascii'), msg[2 * i + 1]
-
-                shape, dtype = self.model_weights_registries[key]
-                tensor = torch.from_numpy(np.frombuffer(memoryview(value), dtype=dtype).reshape(*shape))
-
-                state_dict[key] = tensor
-
-            learner_policy_version = int(msg[-1].decode('ascii'))
-
-        with timing.time_avg('load_state_dict'), timing.add_time('update_weights/load_state_dict'):
-            self.rollout_policy.load_state_dict(state_dict)
-
-        self.latest_policy_version = learner_policy_version
-
-        if self.num_policy_updates % 10 == 0:
-            log.debug(
-                'Updated weights on worker %d, policy_version %d (%s)',
-                self.worker_idx,
-                self.latest_policy_version,
-                str(timing.load_state_dict),
-            )
-        self.num_policy_updates += 1
 
     # noinspection PyProtectedMember
     def _run(self):
@@ -264,7 +206,7 @@ class PolicyWorker:
         psutil.Process().nice(min(self.cfg.default_niceness + 2, 20))
 
         # we assume all gpus are available and no gpu is occupies by jobs of other users
-        # TODO: replace worker_idx with global worker idx
+        # allocate GPU for all policy workers in a Round-Robin pattern
         cuda_envvars_for_policy(self.worker_idx, 'inference')
         torch.multiprocessing.set_sharing_strategy('file_system')
 
@@ -294,8 +236,6 @@ class PolicyWorker:
 
         while not self.terminate:
             try:
-                # TODO: add stop experiment collection signal
-
                 waiting_started = time.time()
                 with timing.time_avg('waiting_avg'), timing.add_time('waiting'):
                     while len(self.request_clients
@@ -310,7 +250,7 @@ class PolicyWorker:
                     num_requests.append(len(self.request_clients))
 
                     with timing.add_time('update_weights'):
-                        self._update_weights(timing)
+                        self.maybe_update_weights(timing)
 
                     with timing.time_avg('inference_avg'), timing.add_time('inference'):
                         self._handle_policy_steps(timing)
@@ -329,7 +269,8 @@ class PolicyWorker:
 
                 with timing.add_time('report'):
                     if time.time() - last_report > 3.0 and 'inference_avg' in timing:
-                        timing_stats = dict(wait_policy=timing.waiting_avg.value, step_policy=timing.inference_avg.value)
+                        timing_stats = dict(wait_policy=timing.waiting_avg.value,
+                                            step_policy=timing.inference_avg.value)
                         samples_since_last_report = self.total_num_samples - last_report_samples
 
                         stats = memory_stats('policy_worker', self.device)

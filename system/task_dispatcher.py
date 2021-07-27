@@ -50,7 +50,7 @@ class TaskDispatcher:
 
             if 'learner' in ready_msg:
                 self.learner_socket_addrs[idx] = msg[0]
-            elif 'worker' in ready_msg:
+            elif 'task' in ready_msg:
                 self.worker_socket_addrs[idx] = msg[0]
             else:
                 raise NotImplementedError

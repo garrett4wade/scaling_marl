@@ -11,15 +11,24 @@ from utils.popart import PopArt
 
 
 class ReplayBuffer:
-    def __init__(self, cfg, obs_space, share_obs_space, act_space):
+    def __init__(self, cfg, policy_id, num_agents, obs_space, share_obs_space, act_space):
         self.cfg = cfg
+        self.policy_id = policy_id
+
+        self.num_trainers = 0
+        self.available_dsts = []
+        for node_idx, local_config in self.cfg.learner_cfg.items():
+            for gpu_idx, v in local_config.items():
+                if v == self.policy_id:
+                    self.num_trainers += 1
+                    self.available_dsts.append((int(node_idx), int(gpu_idx)))
 
         self.obs_space = obs_space
         self.share_obs_space = share_obs_space
         self.act_space = act_space
 
         # system configuration
-        self.num_actors = cfg.num_actors
+        self.num_actors = cfg.num_actors // cfg.num_tasks_per_node
         self.num_actor_groups = self.num_actors // self.cfg.actor_group_size
         self.num_splits = cfg.num_splits
         self.qsize = cfg.qsize
@@ -28,11 +37,12 @@ class ReplayBuffer:
         self.envs_per_split = cfg.envs_per_actor // cfg.num_splits
         self.data_chunk_length = cfg.data_chunk_length
 
+        assert cfg.num_actors % cfg.num_tasks_per_node == 0
         assert cfg.envs_per_actor % self.num_splits == 0
         assert self.num_actors % self.cfg.actor_group_size == 0
 
         # storage shape configuration
-        self.num_agents = cfg.num_agents
+        self.num_agents = num_agents
         self.episode_length = cfg.episode_length
 
         # TODO: support n-step bootstrap
@@ -171,10 +181,10 @@ class ReplayBuffer:
 
 
 class WorkerBuffer(ReplayBuffer):
-    def __init__(self, cfg, obs_space, share_obs_space, act_space):
+    def __init__(self, cfg, policy_id, num_agents, obs_space, share_obs_space, act_space):
         # NOTE: value target computation is deferred to centralized trainer in consistent with off-policy correction
         # e.g. V-trace and Retrace
-        super().__init__(cfg, obs_space, share_obs_space, act_space)
+        super().__init__(cfg, policy_id, num_agents, obs_space, share_obs_space, act_space)
         self.target_num_slots = 1
         self.num_consumers_to_notify = 1
 
@@ -197,12 +207,19 @@ class WorkerBuffer(ReplayBuffer):
         # which causes confusion on ep_step and slot_id. One solution is adding a multiprocessing lock.
         self._insertion_idx_lock = mp.Lock()
 
+        # destination buffer id of each slots
+        self._destination = ((-1) * torch.ones((self.num_slots, 2), dtype=torch.int32)).share_memory_().numpy()
+        self._cur_dst_idx = np.random.randint(len(self.available_dsts))
+
         # summary block
-        self.summary_block = torch.zeros((cfg.num_splits, self.envs_per_split * cfg.num_actors, len(self.summary_keys)),
-                                         dtype=torch.float32).share_memory_().numpy()
+        self.summary_block = torch.zeros(
+            (self.num_splits, self.envs_per_split * self.num_actors, len(self.summary_keys)),
+            dtype=torch.float32).share_memory_().numpy()
 
     def _allocate(self, identity):
         slot_id = super()._allocate()
+        self._destination[slot_id] = self.available_dsts[self._cur_dst_idx]
+        self._cur_dst_idx = (self._cur_dst_idx + 1) % len(self.available_dsts)
 
         if self._slot_indices[identity] != -1:
             # if this is not the very first allocation
@@ -229,11 +246,13 @@ class WorkerBuffer(ReplayBuffer):
 
 
 class LearnerBuffer(ReplayBuffer):
-    def __init__(self, cfg, obs_space, share_obs_space, act_space):
-        super().__init__(cfg, obs_space, share_obs_space, act_space)
+    def __init__(self, cfg, policy_id, num_agents, obs_space, share_obs_space, act_space):
+        super().__init__(cfg, policy_id, num_agents, obs_space, share_obs_space, act_space)
 
-        self.target_num_slots = self.num_consumers_to_notify = cfg.num_trainers
+        # each trainer has its own buffer
+        self.target_num_slots = self.num_consumers_to_notify = 1
         self.num_slots = cfg.qsize
+
         # concatenate several slots from workers into a single batch,
         # which will be then sent to GPU for optimziation
         self.envs_per_seg = self.cfg.actor_group_size * self.envs_per_split
@@ -248,6 +267,7 @@ class LearnerBuffer(ReplayBuffer):
         self._used_times = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
 
         # summary block
+        # TODO: move this summary block to task dispatcher
         self.summary_block = torch.zeros((len(cfg.seg_addrs[0]), len(self.summary_keys)),
                                          dtype=torch.float32).share_memory_().numpy()
 
@@ -260,7 +280,7 @@ class LearnerBuffer(ReplayBuffer):
         # popart
         self._use_popart = cfg.use_popart
         if self._use_popart:
-            self.value_normalizer = PopArt((1, ), self.cfg.num_trainers)
+            self.value_normalizer = PopArt((1, ), self.num_trainers)
         else:
             self.value_normalizer = None
 

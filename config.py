@@ -157,6 +157,7 @@ def get_config():
     parser.add_argument('--task_dispatcher_addr', type=str, help='address of meta controller to distributed tasks')
     parser.add_argument('--learner_config', help='learner gpu configuration')
     parser.add_argument('--num_policies', type=int, default=1, help='number of policies to be trained')
+    parser.add_argument('--policy2agents', help='dict illustrating subsets of agent ids controlled by each policy')
 
     parser.add_argument('--config', type=str)
     parser.add_argument('--project_name', type=str, default='test')
@@ -214,7 +215,7 @@ def get_config():
     parser.add_argument("--default_niceness", default=0, type=int)
     parser.add_argument("--actor_worker_gpus", default=0, type=int)
 
-    parser.add_argument("--num_policy_workers", type=int, default=1)
+    parser.add_argument("--num_policy_workers", type=int, default=1, help='number of policy workers per task')
 
     parser.add_argument("--slots_per_update", type=int, default=1)
     parser.add_argument("--min_num_requests", type=int, default=-1)

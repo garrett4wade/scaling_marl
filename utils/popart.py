@@ -20,6 +20,7 @@ class PopArt:
         self.running_mean_sq = self._running_mean_sq.numpy()
         self.debiasing_term = self._debiasing_term.numpy()
 
+        # TODO: use pytorch ddp to synchronize multiple trainers
         self.barrier = mp.Barrier(num_trainers)
 
     def reset_parameters(self):

@@ -105,14 +105,16 @@ def main():
     np.random.seed(cfg.seed)
 
     example_env = make_example_env(cfg)
-    cfg.share_observation_space = example_env.share_observation_space[
-        0] if cfg.use_centralized_V else example_env.observation_space[0]
-    cfg.observation_space = example_env.observation_space[0]
-    cfg.action_space = example_env.action_space[0]
+    cfg.share_observation_space = (example_env.share_observation_space
+                                   if cfg.use_centralized_V else example_env.observation_space)
+    cfg.observation_space = example_env.observation_space
+    cfg.action_space = example_env.action_space
     example_env.close()
     del example_env
 
     cfg.num_agents = get_map_params(cfg.map_name)["n_agents"]
+    assert len(cfg.policy2agents) == cfg.num_policies
+    assert sum([len(v) for v in cfg.policy_agents.values]) == cfg.num_agents
 
     node = WorkerNode(cfg, build_actor_env)
     node.run()

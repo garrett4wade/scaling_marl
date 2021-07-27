@@ -35,12 +35,12 @@ class ActorWorker:
     def __init__(
         self,
         cfg,
+        task_rank,
+        local_rank,
         env_fn,
-        num_agents,
-        worker_idx,
         buffer,
         task_queue,
-        policy_queue,
+        policy_queues,
         report_queue,
         act_shm,
         act_semaphore,
@@ -49,9 +49,15 @@ class ActorWorker:
     ):
         self.cfg = cfg
         self.env_fn = env_fn
-        self.num_agents = num_agents
+        self.policy2agents = self.cfg.policy2agents
+        self.agent_ids = [controlled_agents for controlled_agents in self.policy2agents.values()]
+        self.agent_numbers = [len(controlled_agents) for controlled_agents in self.policy2agents.values()]
+        self.num_agents = sum(self.agent_numbers)
 
-        self.worker_idx = worker_idx
+        self.task_rank = task_rank
+        self.local_rank = local_rank
+        self.num_actors = self.cfg.num_actors // self.cfg.num_tasks_per_node
+        self.worker_idx = self.num_actors * self.task_rank + self.local_rank
 
         self.envs_per_actor = cfg.envs_per_actor
         self.num_splits = cfg.num_splits
@@ -60,23 +66,24 @@ class ActorWorker:
 
         self.buffer = buffer
         self.summary_keys = self.buffer.summary_keys
-        self.summary_offset = self.worker_idx * self.envs_per_split
+        self.summary_offset = self.local_rank * self.envs_per_split
 
         self.initialized = False
         self.terminate = False
 
-        self.group_local_idx = self.worker_idx % self.cfg.actor_group_size
+        self.group_local_idx = self.local_rank % self.cfg.actor_group_size
         self.env_slice = slice(self.group_local_idx * self.envs_per_split,
                                (self.group_local_idx + 1) * self.envs_per_split)
 
         self.env_runners = None
 
-        self.policy_queue = policy_queue
+        self.policy_queues = policy_queues
         self.report_queue = report_queue
         self.task_queue = task_queue
 
         self.act_shm = act_shm
         self.act_semaphore = act_semaphore
+        self.is_policy_act_semaphores_ready = np.zeros(self.cfg.num_policies, dtype=np.bool)
 
         self.envstep_output_shm = envstep_output_shm
         self.envstep_output_semaphore = envstep_output_semaphore
@@ -103,7 +110,6 @@ class ActorWorker:
             set_process_cpu_affinity(self.worker_idx, self.cfg.num_actors)
         psutil.Process().nice(min(self.cfg.default_niceness + 10, 20))
 
-        self.client_ids = [i + self.num_splits * self.worker_idx for i in range(self.num_splits)]
         self.env_runners = []
         for i in range(self.num_splits):
             self.env_runners.append(
@@ -111,7 +117,7 @@ class ActorWorker:
                     lambda: self.env_fn(self.worker_idx * self.envs_per_actor + i * self.envs_per_split + j, self.cfg)
                     for j in range(self.envs_per_split)
                 ]))
-            safe_put(self.report_queue, dict(initialized_env=(self.worker_idx, i)), queue_name='report')
+            safe_put(self.report_queue, dict(initialized_env=(self.local_rank, i)), queue_name='report')
 
         self.initialized = True
 
@@ -131,19 +137,21 @@ class ActorWorker:
             policy_inputs['rewards'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
             policy_inputs['dones'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
             policy_inputs['fct_masks'] = np.ones((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
-            for k, v in self.envstep_output_shm.items():
+            for k, shms in self.envstep_output_shm.items():
+                # new rnn states is updated after each inference step
                 if 'rnn_states' not in k:
-                    v[split_idx][self.env_slice] = policy_inputs[k]
+                    for policy_shm, agent_idx in zip(shms, self.agent_ids):
+                        policy_shm[split_idx][self.env_slice, agent_idx] = policy_inputs[k][:, agent_idx]
 
         for split_idx in range(len(self.env_runners)):
             self.envstep_output_semaphore[split_idx].release()
             if self.cfg.actor_group_size == 1:
                 # when #actors == #groups
-                self.policy_queue.put(split_idx * self.cfg.num_actors + self.worker_idx)
+                for policy_queue in self.policy_queues:
+                    policy_queue.put(split_idx * self.num_actors + self.local_rank)
 
         log.info('Finished reset for worker %d', self.worker_idx)
-        # TODO: figure out what report queue is doing
-        safe_put(self.report_queue, dict(finished_reset=self.worker_idx), queue_name='report')
+        safe_put(self.report_queue, dict(finished_reset=self.local_rank), queue_name='report')
 
     def _advance_rollouts(self, split_idx, timing):
         """
@@ -166,14 +174,16 @@ class ActorWorker:
             force_terminations = np.array([[[agent_info.get('force_termination', 0)] for agent_info in info]
                                            for info in infos])
             envstep_outputs['fct_masks'] = 1 - force_terminations
-            for k, v in self.envstep_output_shm.items():
+            for k, shms in self.envstep_output_shm.items():
                 if 'rnn_states' not in k:
-                    v[split_idx][self.env_slice] = envstep_outputs[k]
+                    for policy_shm, agent_idx in zip(shms, self.agent_ids):
+                        policy_shm[split_idx][self.env_slice, agent_idx] = envstep_outputs[k][:, agent_idx]
             self.envstep_output_semaphore[split_idx].release()
 
             if self.cfg.actor_group_size == 1:
                 # when #actors == #groups
-                self.policy_queue.put(split_idx * self.cfg.num_actors + self.worker_idx)
+                for policy_queue in self.policy_queues:
+                    policy_queue.put(split_idx * self.num_actors + self.local_rank)
 
         with timing.add_time('env_step/summary'):
             dones = envstep_outputs['dones']
@@ -218,12 +228,16 @@ class ActorWorker:
                 try:
                     if self.initialized:
                         with timing.add_time('waiting'), timing.time_avg('wait_for_inference'):
-                            ready = self.act_semaphore[cur_split].acquire(timeout=0.1)
+                            for i, policy_act_semaphore in enumerate(self.act_semaphore):
+                                if not self.is_policy_act_semaphores_ready[i]:
+                                    cur_ready = policy_act_semaphore[cur_split].acquire(timeout=0.05)
+                                    self.is_policy_act_semaphores_ready[i] = cur_ready
 
                         with timing.add_time('env_step'):
-                            if ready:
+                            if np.all(self.is_policy_act_semaphores_ready):
                                 self._advance_rollouts(cur_split, timing)
                                 cur_split = (cur_split + 1) % self.num_splits
+                                self.is_policy_act_semaphores_ready[:] = 0
 
                     with timing.add_time('get_tasks'):
                         try:
@@ -251,7 +265,8 @@ class ActorWorker:
 
                     with timing.add_time('report'):
                         if time.time() - last_report > 5.0 and 'env_step/simulation_avg' in timing:
-                            timing_stats = dict(wait_actor=timing.wait_for_inference.value, step_actor=getattr(timing, 'env_step/simulation_avg').value)
+                            timing_stats = dict(wait_actor=timing.wait_for_inference.value,
+                                                step_actor=getattr(timing, 'env_step/simulation_avg').value)
                             memory_mb = memory_consumption_mb()
                             stats = dict(memory_actor=memory_mb)
                             safe_put(self.report_queue, dict(timing=timing_stats, stats=stats), queue_name='report')
