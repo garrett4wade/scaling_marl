@@ -212,6 +212,7 @@ class WorkerBuffer(ReplayBuffer):
         self._cur_dst_idx = np.random.randint(len(self.available_dsts))
 
         # summary block
+        # TODO: when task changes, we also need to reset summary block
         self.summary_block = torch.zeros(
             (self.num_splits, self.envs_per_split * self.num_actors, len(self.summary_keys)),
             dtype=torch.float32).share_memory_().numpy()

@@ -18,12 +18,14 @@ num_env_steps: 10000000
 train_for_env_steps: 10000000000
 train_for_seconds: 500
 model_dir: null
+save_dir: './models'
 
 # system parameters
 learner_config:
   "0":
     "0": 0
-ddp_init_method: tcp://10.0.4.16:6666
+ddp_init_methods:
+  - tcp://10.0.4.16:6666
 num_policies: 1
 policy2agents:
   "0":

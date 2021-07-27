@@ -229,7 +229,7 @@ def get_config():
                         type=int,
                         help='Stop training after this many seconds')
     parser.add_argument('--train_in_background', action='store_true')
-    parser.add_argument('--ddp_init_method', type=str, default='file:///dev/shm/ddp_marl')
+    parser.add_argument('--ddp_init_methods', type=str, nargs='+')
     parser.add_argument('--learner_num_threads', type=int, default=8)
     parser.add_argument('--broadcast_interval', default=1, type=int)
 
@@ -385,5 +385,9 @@ def get_config():
                         type=str,
                         default=None,
                         help="by default None. set the path to pretrained model.")
+    parser.add_argument("--save_dir",
+                        type=str,
+                        default=None,
+                        help="The base directory to save model, by default None.")
 
     return parser

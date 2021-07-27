@@ -86,6 +86,7 @@ def main():
         for k, v in cfg_dict.items():
             setattr(cfg, k, v)
 
+    assert len(cfg.ddp_init_methods) == cfg.num_policies
     num_worker_nodes = len(cfg.seg_addrs[0])
     if num_worker_nodes * cfg.num_tasks_per_node % cfg.num_policies != 0:
         from utils.utils import log

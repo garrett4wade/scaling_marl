@@ -388,9 +388,11 @@ class WorkerTask:
     def process_task(self, task):
         if task == TaskType.ROLLOUT:
             self.task_socket.send(b'ok')
+            self.task_socket_state = SocketState.SEND
         elif task == TaskType.TERMINATE:
             self.terminate = True
             self.task_socket.send(b'ok')
+            self.task_socket_state = SocketState.SEND
         else:
             raise NotImplementedError
 

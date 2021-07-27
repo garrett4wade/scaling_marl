@@ -32,6 +32,18 @@ class TaskDispatcher:
         self.policy_version = [0 for _ in range(self.cfg.num_policies)]
         self.training_tik = None
 
+        self.train_for_env_steps = self.cfg.train_for_env_steps
+        self.train_for_seconds = self.cfg.train_for_seconds
+        self.transitions_per_batch = (self.episode_length * self.cfg.actor_group_size * self.envs_per_split *
+                                      self.slots_per_update)
+
+        num_all_trainers = 0
+        for _, local_config in self.cfg.learner_config.items():
+            num_all_trainers += len(local_config)
+        # just a estimation, it is incorrect if different policies occpy different number of GPUs
+        self.train_for_episodes = self.train_for_env_steps // self.transitions_per_batch // (num_all_trainers //
+                                                                                             self.cfg.num_policies)
+
         self.process = mp.Process(target=self._run)
 
     def start_process(self):
@@ -68,8 +80,8 @@ class TaskDispatcher:
 
     def _should_end_training(self):
         # TODO: use messages from workers and learners to update consumed_num_steps and policy_version
-        end = all([c_step > self.cfg.train_for_env_steps for c_step in self.consumed_num_steps])
-        end |= all([v > self.cfg.train_for_episodes for v in self.policy_version])
+        end = all([c_step > self.train_for_env_steps for c_step in self.consumed_num_steps])
+        end |= all([v > self.train_for_episodes for v in self.policy_version])
         end |= (time.time() - self.training_tik) > self.train_for_seconds
 
         # if self.cfg.benchmark:
