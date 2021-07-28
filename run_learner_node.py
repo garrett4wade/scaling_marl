@@ -1,8 +1,6 @@
 #!/usr/bin/env python
-import os
 import sys
 import numpy as np
-import pathlib
 import yaml
 import torch
 import multiprocessing as mp
@@ -10,9 +8,7 @@ from config import get_config
 from envs.starcraft2.StarCraft2_Env import StarCraft2Env
 from envs.env_wrappers import ShareDummyVecEnv, ShareSubprocVecEnv
 from envs.starcraft2.smac_maps import get_map_params
-from utils.buffer import LearnerBuffer
 from system.receiver import Receiver
-from torch.multiprocessing import JoinableQueue as TorchJoinableQueue
 from system.trainer import Trainer
 from utils.utils import log
 """Train script for SMAC."""
@@ -80,30 +76,11 @@ def main():
             cfg_dict = yaml.load(f, Loader=yaml.FullLoader)
         for k, v in cfg_dict.items():
             setattr(cfg, k, v)
-    # TODO: we need to have some assertion about trainer indices and num_trainer_nodes
-
-    # learner config has the following strucuture:
-    # {learner_node_idx: {gpu_idx: policy_learner_idx, ...}, ...}
-    task_rank_offsets, task_rank_cnts, task_gpu_ranks = {}, {}, {}
-    local_learner_config = cfg.learner_config[str(cfg.learner_node_idx)]
-    for gpu_rank, v in local_learner_config.items():
-        task_rank_offsets[v] = 0
-        if v not in task_rank_cnts:
-            task_rank_cnts[v] = 1
-        else:
-            task_rank_cnts[v] += 1
-        if v not in task_gpu_ranks:
-            task_gpu_ranks[v] = [int(gpu_rank)]
-        else:
-            task_gpu_ranks[v].append(int(gpu_rank))
 
     all_policy_learner_idxes = []
     for node_idx, local_config in cfg.learner_config.items():
         for _, v in local_config.items():
             all_policy_learner_idxes.append(v)
-            for task_v in task_rank_offsets.keys():
-                if int(node_idx) < cfg.learner_node_idx and v == task_v:
-                    task_rank_offsets[task_v] += 1
     # sanity checks
     assert cfg.learner_node_idx < len(cfg.learner_config)
     assert list(range(cfg.num_policies)) == list(np.unique(sorted(all_policy_learner_idxes)))
@@ -121,30 +98,21 @@ def main():
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
 
-    run_dir = pathlib.Path('./log') / cfg.env_name
-    if cfg.env_name == 'StarCraft2':
-        run_dir /= cfg.map_name
-    run_dir = run_dir / cfg.algorithm_name / cfg.experiment_name
-    if not run_dir.exists():
-        os.makedirs(str(run_dir))
-
     # seed
     torch.manual_seed(cfg.seed)
     torch.cuda.manual_seed_all(cfg.seed)
     np.random.seed(cfg.seed)
 
     example_env = make_example_env(cfg)
-    cfg.share_observation_space = example_env.share_observation_space[
-        0] if cfg.use_centralized_V else example_env.observation_space[0]
-    cfg.observation_space = example_env.observation_space[0]
-    cfg.action_space = example_env.action_space[0]
+    cfg.share_observation_space = (example_env.share_observation_space
+                                   if cfg.use_centralized_V else example_env.observation_space)
+    cfg.observation_space = example_env.observation_space
+    cfg.action_space = example_env.action_space
 
     example_env.close()
     del example_env
 
     cfg.num_agents = get_map_params(cfg.map_name)["n_agents"]
-    # TODO: num_trainers is different for different buffers
-    cfg.num_trainers = len(local_learner_config)
 
     if cfg.learner_node_idx == 0:
         from system.task_dispatcher import TaskDispatcher
@@ -152,36 +120,24 @@ def main():
         task_dispatcher = TaskDispatcher(cfg, NaiveMetaController(cfg))
         task_dispatcher.start_process()
 
-    # TODO: currently we only support training a single policy (policy sharing)
-    assert cfg.num_policies == 1
-    buffer = LearnerBuffer(cfg, cfg.observation_space, cfg.share_observation_space,
-                           cfg.action_space)
-
+    local_learner_config = cfg.learner_config[str(cfg.learner_node_idx)]
     num_worker_nodes = len(cfg.seg_addrs[0])
     nodes_ready_events = [mp.Event() for _ in range(num_worker_nodes)]
+    trainer_buffer_ready_events = [mp.Event() for _ in range(len(local_learner_config))]
 
-    # (num_worker_nodes * num_learner_nodes) receivers in total, (num_worker_nodes) receivers for each learner node
+    trainers = []
+    for i, gpu_idx in enumerate(local_learner_config.keys()):
+        tn = Trainer(cfg, int(gpu_idx), nodes_ready_events, trainer_buffer_ready_events[i])
+        tn.start_process()
+        trainers.append(tn)
+
     recievers = [
-        Receiver(cfg, num_worker_nodes * cfg.learner_node_idx + i, TorchJoinableQueue(), buffer,
-                 nodes_ready_events[i]) for i in range(num_worker_nodes)
+        Receiver(cfg, i, trainers, trainer_buffer_ready_events, nodes_ready_events[i]) for i in range(num_worker_nodes)
     ]
     for r in recievers:
-        r.init()
+        r.start_proess()
 
-    all_trainers = []
-    # NOTE: gpu_rank may not necessarily be the same as local_rank
-    for policy_id, offset in task_rank_offsets.items():
-        cur_num_trainers = task_rank_cnts[policy_id]
-        for local_rank, gpu_rank in zip(range(cur_num_trainers), task_gpu_ranks[policy_id]):
-            global_rank = local_rank + offset
-
-            # TODO: some logic about ranks in trainer may be not correct, check them
-            trainer = Trainer(global_rank, local_rank, gpu_rank, buffer, cfg, nodes_ready_events, run_dir=run_dir)
-            trainer.process.start()
-
-            all_trainers.append(trainer)
-
-    for trainer in all_trainers:
+    for trainer in trainers:
         trainer.process.join()
     log.info('Trainers joined!')
 

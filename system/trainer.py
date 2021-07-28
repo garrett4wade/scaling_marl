@@ -1,11 +1,11 @@
-import wandb
 import os
 import torch
 import zmq
 import psutil
 import pathlib
 import numpy as np
-from utils.utils import log, TaskType, SocketState
+from queue import Queue, Empty
+from utils.utils import log, TaskType
 from utils.buffer import LearnerBuffer
 from utils.timing import Timing
 import time
@@ -15,7 +15,7 @@ import torch.distributed as dist
 
 
 class Trainer:
-    def __init__(self, cfg, gpu_rank, nodes_ready_events):
+    def __init__(self, cfg, gpu_rank, nodes_ready_events, trainer_buffer_ready_event):
         self.cfg = cfg
         self.gpu_rank = gpu_rank
         self.node_idx = self.cfg.learner_node_idx
@@ -51,9 +51,10 @@ class Trainer:
         self.buffer = LearnerBuffer(self.cfg, self.policy_id, self.num_agents, self.obs_space, self.share_obs_space,
                                     self.act_space)
 
+        trainer_buffer_ready_event.set()
+
         # TODO: support CPU
-        self.device = torch.device(gpu_rank)
-        self.tpdv = dict(device=self.device, dtype=torch.float32)
+        self.tpdv = dict(device=torch.device(gpu_rank), dtype=torch.float32)
 
         self.nodes_ready_events = nodes_ready_events
 
@@ -79,15 +80,13 @@ class Trainer:
         self.episode_length = self.cfg.episode_length
         self.slots_per_update = self.cfg.slots_per_update
         # interval
-        self.use_eval = self.cfg.use_eval
         self.save_interval = self.cfg.save_interval
-        self.eval_interval = self.cfg.eval_interval
         self.log_interval = self.cfg.log_interval
         # dir
         self.model_dir = self.cfg.model_dir
+        self.save_dir = self.cfg.save_dir
         # summay & render
-        self.no_summary = self.cfg.no_summary
-        self.use_wandb = self.cfg.use_wandb
+        # TODO: write a render script
         self.use_render = self.cfg.use_render
 
         self.train_for_env_steps = self.cfg.train_for_env_steps
@@ -105,7 +104,7 @@ class Trainer:
 
         self.stop_experience_collection = False
 
-        self.save_dir = self.cfg.save_dir
+        # initialize save dir
         if self.save_dir is None:
             self.save_dir = pathlib.Path('./models')
         else:
@@ -113,7 +112,7 @@ class Trainer:
         self.save_dir /= self.cfg.env_name
         if self.cfg.env_name == 'StarCraft2':
             self.save_dir /= self.cfg.map_name
-        self.save_dir = self.save_dir / cfg.algorithm_name / cfg.experiment_name
+        self.save_dir = self.save_dir / cfg.algorithm_name / cfg.experiment_name / ('policy_' + str(self.policy_id))
         if not self.save_dir.exists():
             os.makedirs(str(self.save_dir))
 
@@ -139,9 +138,17 @@ class Trainer:
         self._context = None
         self.model_weights_socket = None
         self.task_socket = None
-        self.task_socket_state = None
+        self.task_result_socket = None
+
+        self.socket_identity = ('learner-' + str(self.policy_id)).encode('ascii')
+        # TODO: modify this when processing tasks
+        self.is_executing_task = False
+        self.task_queue = Queue(8)
 
         self.process = mp.Process(target=self._run)
+
+    def start_process(self):
+        self.process.start()
 
     def _init(self):
         if self.task_rank == 0:
@@ -152,31 +159,12 @@ class Trainer:
             model_port = self.cfg.model_weights_addrs[self.policy_id].split(':')[-1]
             self.model_weights_socket.bind('tcp://*:' + model_port)
 
-            self.task_socket = self._context.socket(zmq.REQ)
+            self.task_socket = self._context.socket(zmq.SUB)
             self.task_socket.connect(self.cfg.task_dispatcher_addr)
-            self.task_socket.send(('learner-' + str(self.policy_id)).encode('ascii'))
-            self.task_socket_state = SocketState.SEND
+            self.task_socket.setsockopt(zmq.SUBSCRIBE, self.socket_identity)
 
-            # TODO: move summaries to task dispatcher
-            # if not self.cfg.no_summary:
-            #     self._init_summary()
-
-            # the first trainer of each policy_id will handle model saving
-            # if not self.cfg.no_summary and self.use_wandb:
-            #     self.save_dir = str(wandb.run.dir)
-            #     self.run_dir = str(wandb.run.dir)
-            # else:
-            #     self.log_dir = str(self.run_dir / 'logs')
-            #     if not os.path.exists(self.log_dir):
-            #         os.makedirs(self.log_dir)
-            #     self.writter = SummaryWriter(self.log_dir)
-            #     self.save_dir = str(self.run_dir / 'models')
-            #     if not os.path.exists(self.save_dir):
-            #         os.makedirs(self.save_dir)
-
-            #     config_file = open(os.path.join(self.save_dir, 'config.yaml'), 'w')
-            #     yaml.dump(vars(self.cfg), config_file)
-            #     config_file.close()
+            self.task_result_socket = self._context.socket(zmq.PUSH)
+            self.task_result_socket.send(self.socket_identity)
 
         os.environ['NCCL_DEBUG'] = 'info'
         os.environ['NCCL_SOCKET_IFNAME'] = 'eth0'
@@ -186,7 +174,7 @@ class Trainer:
                                 rank=self.task_rank,
                                 world_size=self.num_trainers,
                                 init_method=self.cfg.ddp_init_methods[self.policy_id])
-        log.debug('Learner {} ucessfully initialized process group!'.format(self.trainer_idx))
+        log.debug('Trainer {} sucessfully initialized process group!'.format(self.trainer_idx))
         assert self.cfg.cuda and torch.cuda.is_available(), 'cpu training currently not supported'
         torch.cuda.set_device(self.gpu_rank)
 
@@ -208,44 +196,21 @@ class Trainer:
         for i, e in enumerate(self.nodes_ready_events):
             e.wait()
             if self.task_rank == 0:
-                # the first learner in each node outputs debug info
+                # the first trainer in each node outputs debug info
                 log.debug('Waiting for all nodes ready... {}/{} have already finished initialization...'.format(
                     i + 1, len(self.nodes_ready_events)))
 
         if self.task_rank == 0:
             self.pack_off_weights()
         self.initialized = True
-        log.debug('Sucessfully initializing Learner %d!', self.trainer_idx)
-
-    # TODO: move to task dispatcher
-    # def _init_summary(self):
-    #     algo = self.cfg.algorithm_name
-    #     network_cls = 'rnn' if algo == 'rmappo' else 'mlp' if algo == 'mappo' else None
-    #     postfix = 'r{}_'.format(str(self.cfg.sample_reuse)) + network_cls
-    #     exp_name = str(self.cfg.experiment_name) + "_seed" + str(self.cfg.seed)
-    #     if self.cfg.use_wandb:
-    #         self.run = wandb.init(config=self.cfg,
-    #                               project=self.cfg.project_name,
-    #                               entity=self.cfg.user_name,
-    #                               name=exp_name,
-    #                               group=self.cfg.group_name,
-    #                               dir=str(self.run_dir),
-    #                               job_type="training",
-    #                               reinit=True)
-    #     else:
-    #         curr_run = exp_name + postfix + '_' + str(datetime.datetime.now()).replace(' ', '_')
-    #         self.run_dir /= curr_run
-    #         if not self.run_dir.exists():
-    #             os.makedirs(str(self.run_dir))
+        log.debug('Sucessfully initializing Trainer %d!', self.trainer_idx)
 
     def process_task(self, task):
-        if task == TaskType.ROLLOUT:
-            self.task_socket.send(b'ok')
-            self.task_socket_state = SocketState.SEND
+        # TODO: modify self.is_executing_tasks when processing tasks
+        if task == TaskType.TRAIN:
+            pass
         elif task == TaskType.TERMINATE:
             self.terminate = True
-            self.task_socket.send(b'ok')
-            self.task_socket_state = SocketState.SEND
         else:
             raise NotImplementedError
 
@@ -255,10 +220,6 @@ class Trainer:
             self.task_socket.close()
 
         dist.destroy_process_group()
-
-    def _accumulated_too_much_experience(self):
-        # TODO: add stop experience collection signal
-        return False
 
     def _run(self):
         psutil.Process().nice(self.cfg.default_niceness)
@@ -277,48 +238,39 @@ class Trainer:
 
         try:
             while not self.terminate:
-                if self.task_socket_state == SocketState.SEND:
+                try:
+                    msg = self.task_socket.recv_multipart(flags=zmq.NOBLOCK)
+                    self.task_queue.put(msg)
+                except zmq.ZMQError:
+                    pass
+
+                if not self.is_executing_task:
                     try:
-                        msg = self.task_socket.recv_multipart(flags=zmq.NOBLOCK)
-                        self.task_socket_state = SocketState.RECV
-                        # TODO: process more complicated task types,
-                        # such as oracle rollout in PSRO (need to send sampling distribution)
-                        task = int(msg[0].decode('ascii'))
+                        # TODO: here we don't process task except for TERMINATE
+                        msg = self.task_queue.get()
+                        task = int(msg[1].decode('ascii'))
                         self.process_task(task)
                         if self.terminate:
                             break
-                    except zmq.ZMQError:
+                    except Empty:
+                        log.warning('Trainer %d is not executing tasks and there are no tasks distributed to it!',
+                                    self.trainer_idx)
                         pass
-
-                if self.task_socket_state == SocketState.RECV:
-                    # this should not happen in current implementation
-                    # TODO: modify this
-                    raise RuntimeError
-
-                if self._accumulated_too_much_experience():
-                    # TODO: add stop experience collection signal
-                    pass
-
-                elif self.stop_experience_collection:
-                    # TODO: add resume experience collection signal
-                    pass
 
                 if not self.train_in_background:
                     train_infos = self.training_step(timing)
-                    self.report(train_infos)
 
                     self.maybe_save()
 
                     log_infos = self.maybe_log()
-                    self.report(log_infos)
+
+                    self.report({**log_infos, **train_infos})
 
                     dist.barrier()
 
                 if self.policy_version % self.cfg.broadcast_interval == 0 and self.task_rank == 0:
-                    # the first learner in each node broadcasts weights
+                    # the first trainer in each node broadcasts weights
                     self.pack_off_weights()
-
-                # self._experience_collection_rate_stats()
 
         except RuntimeError as exc:
             log.warning('Error in Trainer: %d, exception: %s', self.trainer_idx, exc)
@@ -337,12 +289,12 @@ class Trainer:
 
         self._terminate()
         time.sleep(0.1)
-        log.info('GPU learner timing: %s', timing)
+        log.info('GPU Trainer timing: %s', timing)
 
     def pack_off_weights(self):
         # remove prefix 'module.' of DDP models
         numpy_state_dict = {k.replace('module.', ''): v.cpu().numpy() for k, v in self.policy.state_dict().items()}
-        msg = [b'param']
+        msg = []
         for k, v in numpy_state_dict.items():
             msg.extend([k.encode('ascii'), v])
         msg.append(str(self.policy_version).encode('ascii'))
@@ -395,7 +347,6 @@ class Trainer:
 
         for sample in data_generator:
             with timing.add_time('training_step/to_device'):
-                # TODO: currently DDP training using gloo/nccl backend will be stuck here, need to resolve it
                 for k, v in sample.items():
                     sample[k] = torch.from_numpy(v).to(**self.tpdv)
 
@@ -472,7 +423,8 @@ class Trainer:
                 'rollout_FPS': recent_rollout_fps,
                 'learning_FPS': recent_learning_fps,
                 'sample_reuse': recent_sample_reuse,
-                'received_num_steps': self.received_num_steps
+                'received_num_steps': self.received_num_steps,
+                'consumed_num_steps': self.consumed_num_steps,
             }
 
             self.logging_tik = time.time()
@@ -514,15 +466,13 @@ class Trainer:
         self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model.pt'))
 
     def report(self, infos):
-        # TODO: in this function, send summary data to task dispatcher (add policy_id)
         if infos is None or self.global_rank != 0:
             return
 
         if not self.no_summary:
-            for k, v in infos.items():
-                if self.use_wandb:
-                    wandb.log({k: v}, step=self.consumed_num_steps)
-                else:
-                    self.writter.add_scalars(k, {k: v}, self.consumed_num_steps)
-        else:
-            log.info(infos)
+            data = np.zeros(len(infos), dtype=np.float32)
+            data[:] = list(infos.values())
+            msg = [self.socket_identity, str(self.policy_id).encode('ascii')
+                   ] + [k.encode('ascii') for k in infos.keys()] + [data]
+
+            self.task_result_socket.send_multipart(msg)

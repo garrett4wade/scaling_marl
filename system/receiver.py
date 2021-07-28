@@ -1,4 +1,3 @@
-import signal
 import time
 from queue import Empty
 
@@ -14,15 +13,16 @@ import numpy as np
 
 
 class Receiver:
-    def __init__(self, cfg, idx, task_queue, buffer, nodes_ready_event):
+    def __init__(self, cfg, rank, trainers, nodes_ready_event, trainer_buffer_ready_events):
         self.cfg = cfg
-        # NOTE: receiver idx is the same as the learner idx, i.e., receivers and learners have one-to-one relation
-        self.receiver_idx = idx
-        num_worker_nodes = len(self.cfg.seg_addrs[0])
-        self.local_idx = self.receiver_idx % num_worker_nodes
-        self.buffer = buffer
+        self.rank = rank
 
-        self.task_queue = task_queue
+        for e in trainer_buffer_ready_events:
+            e.wait()
+
+        self.buffers = [trainer.buffer for trainer in trainers]
+
+        self.termination_queue = mp.JoinableQueue(1)
 
         self.socket = None
         # learner must broadcast model weights after all worker nodes have finished env.reset,
@@ -37,28 +37,29 @@ class Receiver:
 
         self.terminate = False
 
-        self.initialized = False
+        self.process = mp.Process(target=self._run, daemon=True)
 
-        self.process = mp.Process(target=self._run)
+    def start_proess(self):
         self.process.start()
 
     def _init(self):
         self.socket = zmq.Context().socket(zmq.ROUTER)
-        seg_port = self.cfg.seg_addrs[self.cfg.learner_node_idx][self.local_idx].split(':')[-1]
+        seg_port = self.cfg.seg_addrs[self.cfg.learner_node_idx][self.rank].split(':')[-1]
         self.socket.bind('tcp://*:' + seg_port)
 
-        self.initialized = True
-        log.info('Reiceiver %d is ready!', self.local_idx)
+        log.info('Reiceiver %d is ready!', self.rank)
 
     def _unpack_msg(self, timing, msg):
         msg = msg[2:]
-        assert len(msg) % 2 == 0
+        assert len(msg) % 2 == 1
+        buffer_id = int(msg[-1].decode('ascii'))
+        buffer = self.buffers[buffer_id]
 
         seg_dict = {}
         decompression_time = 0
         for i in range(len(msg) // 2 - 1):
             k, v = msg[2 * i].decode('ascii'), msg[2 * i + 1]
-            shape, dtype = self.buffer.shapes_and_dtypes[k]
+            shape, dtype = buffer.shapes_and_dtypes[k]
 
             tik = time.time()
             with timing.add_time('decompression'):
@@ -68,91 +69,83 @@ class Receiver:
             array = np.frombuffer(decompressed, dtype=np.float32).reshape(*shape)
             seg_dict[k] = array
 
-        socket_ident, summary_info = msg[-2:]
+        socket_ident, summary_info = msg[-3:-1]
         summary_info = np.frombuffer(summary_info, dtype=np.float32)
+
         assert socket_ident.decode('ascii')[-1] == str(self.cfg.learner_node_idx)
         worker_node_idx = int(socket_ident.decode('ascii').split('-')[-1][0])
 
         tik = time.time()
         with timing.add_time('put_buffer'):
-            self.buffer.put(seg_dict)
+            buffer.put(seg_dict)
 
-            with self.buffer.summary_lock:
-                self.buffer.summary_block[worker_node_idx] = summary_info
+            with buffer.summary_lock:
+                buffer.summary_block[worker_node_idx] = summary_info
         buffer_put_time = time.time() - tik
 
         log.info('Receiver {} decompression time: {:.2f}, buffer put time: {:.2f}'.format(
-            self.local_idx, decompression_time, buffer_put_time))
+            self.rank, decompression_time, buffer_put_time))
 
     def _run(self):
-        log.info('Initializing Receiver %d...', self.local_idx)
-
-        # should ignore Ctrl+C because the termination is handled in the event loop by a special msg
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        log.info('Initializing Receiver %d...', self.rank)
 
         torch.multiprocessing.set_sharing_strategy('file_system')
 
         timing = Timing()
 
-        while not self.terminate:
-            try:
-                # receive INIT and TERMINATE signal from the main process
+        self._init()
+        try:
+            while not self.terminate:
+                # receive TERMINATE signal from the main process
                 try:
-                    task_type = self.task_queue.get_nowait()
+                    task_type = self.termination_queue.get_nowait()
 
-                    # task from the task_queue
-                    if task_type == TaskType.INIT:
-                        self._init()
-                    elif task_type == TaskType.TERMINATE:
+                    if task_type == TaskType.TERMINATE:
                         self.terminate = True
                         break
 
-                    self.task_queue.task_done()
+                    self.termination_queue.task_done()
                 except Empty:
                     pass
 
-                if self.initialized:
-                    try:
-                        # we don't care what we receive from the head node
-                        msg = self.socket.recv_multipart(flags=zmq.NOBLOCK)
+                try:
+                    # we don't care what we receive from the head node
+                    msg = self.socket.recv_multipart(flags=zmq.NOBLOCK)
 
-                        self.socket.send_multipart([msg[0], msg[1], b'ok'])
+                    self.socket.send_multipart([msg[0], msg[1], b'ok'])
 
-                        if len(msg) > 3:
-                            # this is a data message
-                            if self.last_recv_time:
-                                self.receiving_intervals.append(time.time() - self.last_recv_time)
-                            self.last_recv_time = time.time()
+                    if len(msg) > 3:
+                        # this is a data message
+                        if self.last_recv_time:
+                            self.receiving_intervals.append(time.time() - self.last_recv_time)
+                        self.last_recv_time = time.time()
 
-                            self._unpack_msg(timing, msg)
-                            log.info('Receiver %d receives data from worker node %s...', self.local_idx, msg[-2])
-                        else:
-                            # this is a ready indicator
-                            self.nodes_ready_event.set()
+                        self._unpack_msg(timing, msg)
+                        log.info('Receiver %d receives data from worker node %s...', self.rank, msg[-2])
+                    else:
+                        # this is a ready indicator
+                        self.nodes_ready_event.set()
 
-                    except zmq.ZMQError:
-                        pass
+                except zmq.ZMQError:
+                    pass
 
-            except RuntimeError as exc:
-                log.warning('Error while receiving data Receiver: %d, exception: %s', self.local_idx, exc)
-                log.warning('Terminate process...')
-                self.terminate = True
-            except KeyboardInterrupt:
-                log.warning('Keyboard interrupt detected on Receiver %d', self.local_idx)
-                self.terminate = True
-            except Exception:
-                log.exception('Unknown exception in Receiver')
-                self.terminate = True
+        except RuntimeError as exc:
+            log.warning('Error while receiving data Receiver: %d, exception: %s', self.rank, exc)
+            log.warning('Terminate process...')
+            self.terminate = True
+        except KeyboardInterrupt:
+            log.warning('Keyboard interrupt detected on Receiver %d', self.rank)
+            self.terminate = True
+        except Exception:
+            log.exception('Unknown exception in Receiver')
+            self.terminate = True
 
         self.socket.close()
         time.sleep(0.2)
         log.info('Receiver avg. receiving interval: %.2f, timing: %s', np.mean(self.receiving_intervals), timing)
 
-    def init(self):
-        self.task_queue.put(TaskType.INIT)
-
     def close(self):
-        self.task_queue.put(TaskType.TERMINATE)
+        self.termination_queue.put(TaskType.TERMINATE)
 
     def join(self):
         join_or_kill(self.process)

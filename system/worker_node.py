@@ -43,8 +43,7 @@ class WorkerNode:
         for i in range(self.cfg.num_policies):
             socket = self._context.socket(zmq.SUB)
             socket.connect(self.cfg.model_weights_addrs[i])
-            # TODO: maybe we don't need this prefix
-            socket.setsockopt(zmq.SUBSCRIBE, b'param')
+            socket.setsockopt(zmq.SUBSCRIBE, b'')
             self.model_weights_sockets[i] = socket
 
     def _update_weights(self, timing, policy_id, block=False):
@@ -69,8 +68,7 @@ class WorkerNode:
             return
 
         # msg is multiple (key, tensor) pairs + policy version
-        assert len(msg) % 2 == 0
-        msg = msg[1:]
+        assert len(msg) % 2 == 1
         with lock.w_locked():
             for i in range(len(msg) // 2):
                 key, value = msg[2 * i].decode('ascii'), msg[2 * i + 1]

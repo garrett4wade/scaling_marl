@@ -1,4 +1,3 @@
-import signal
 import time
 from queue import Empty
 
@@ -40,7 +39,7 @@ class Transmitter:
 
         self.remaining_segs = 0
 
-        self.process = mp.Process(target=self._run)
+        self.process = mp.Process(target=self._run, daemon=True)
 
     def start_process(self):
         self.process.start()
@@ -60,7 +59,7 @@ class Transmitter:
         self.initialized = True
 
     def _pack_msg(self, buffer_id, slot, dst):
-        learner_node_idx, gpu_idx = dst
+        learner_node_idx, local_trainer_idx = dst
 
         msg = []
         mem_data = {}
@@ -72,10 +71,9 @@ class Transmitter:
             total_mem += mem
             msg.extend([k.encode('ascii'), compressed])
 
-        # TODO: send summry information to task dispatcher
         with self.buffers[buffer_id].summary_lock:
             summary_info = self.buffers[buffer_id].summary_block.sum(0).sum(0)
-        msg.extend([self.sockets[learner_node_idx].identity, summary_info, str(gpu_idx).encode('ascii')])
+        msg.extend([self.sockets[learner_node_idx].identity, summary_info, str(local_trainer_idx).encode('ascii')])
 
         log.info('seg size:  {} (MB), total {:.2f} MB'.format(mem_data, total_mem))
         self.sockets[learner_node_idx].send_multipart(msg)
@@ -89,9 +87,6 @@ class Transmitter:
 
     def _run(self):
         log.info('Initializing Transmitter...')
-
-        # should ignore Ctrl+C because the termination is handled in the event loop by a special msg
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
 
         torch.multiprocessing.set_sharing_strategy('file_system')
 
@@ -127,13 +122,13 @@ class Transmitter:
 
                     if self.initialized and self.socket_states[i] == SocketState.RECV:
                         try:
-                            buffer_id, slot, gpu_dst = self.seg_queues[i].get(block=False)
+                            buffer_id, slot, local_trainer_dst = self.seg_queues[i].get(block=False)
                         except Empty:
-                            buffer_id, slot, gpu_dst = None, None, None
+                            buffer_id, slot, local_trainer_dst = None, None, None
 
                         if slot is not None:
                             with timing.add_time('pack_seg'):
-                                self._pack_msg(buffer_id, slot, (i, gpu_dst))
+                                self._pack_msg(buffer_id, slot, (i, local_trainer_dst))
 
                             with timing.add_time('after_sending'):
                                 self.buffers[buffer_id].close_out(slot)
@@ -142,10 +137,10 @@ class Transmitter:
                 with timing.add_time('waiting_and_prefetching'):
                     if self.remaining_segs <= min_num_segs:
                         for buffer_id, buffer in enumerate(self.buffers):
-                            slot, (learner_node_idx, gpu_dst) = buffer.get(timeout=0.02)
+                            slot, (learner_node_idx, local_trainer_dst) = buffer.get(timeout=0.02)
 
                             if slot is not None:
-                                self.seg_queues[learner_node_idx].put((buffer_id, slot, gpu_dst))
+                                self.seg_queues[learner_node_idx].put((buffer_id, slot, local_trainer_dst))
                                 self.remaining_segs += 1
 
             except RuntimeError as exc:

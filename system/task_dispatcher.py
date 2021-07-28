@@ -2,6 +2,13 @@ import zmq
 import itertools
 import multiprocessing as mp
 import time
+import os
+import datetime
+import pathlib
+import wandb
+import yaml
+import numpy as np
+from tensorboardx import SummaryWriter
 from utils.utils import log, join_or_kill, TaskType
 
 
@@ -11,22 +18,39 @@ class TaskDispatcher:
 
         self.socket = None
 
+        # initialize save dir
+        self.summary_dir = self.cfg.summary_dir
+        if self.summary_dir is None:
+            self.summary_dir = pathlib.Path('./logs')
+        else:
+            self.summary_dir = pathlib.Path(self.summary_dir)
+        self.summary_dir /= self.cfg.env_name
+        if self.cfg.env_name == 'StarCraft2':
+            self.summary_dir /= self.cfg.map_name
+        self.summary_dir = self.summary_dir / cfg.algorithm_name / cfg.experiment_name
+        if not self.summary_dir.exists():
+            os.makedirs(str(self.summary_dir))
+
+        self.no_summary = self.cfg.no_summary
+        self.use_wandb = self.cfg.use_wandb
+
+        # TODO: add eval task
+        self.use_eval = self.cfg.use_eval
+        self.eval_interval = self.cfg.eval_interval
+
         # TODO: finish meta controller
         from meta_controllers.naive import NaiveMetaController
         self.meta_controller = meta_controller
         assert isinstance(self.meta_controller, NaiveMetaController)
 
-        self.initialized = False
         self.terminate = False
 
-        assert cfg.num_tasks_per_node == 1
-        # TODO: add multiple tasks on each node
         self.num_learner_tasks = cfg.num_policies
         self.num_worker_tasks = len(cfg.seg_addrs[0]) * cfg.num_tasks_per_node
-        self.ready_tasks = 0
 
-        self.worker_socket_addrs = [None for _ in range(self.num_worker_tasks)]
-        self.learner_socket_addrs = [None for _ in range(self.num_learner_tasks)]
+        self.worker_socket_ident = [None for _ in range(self.num_worker_tasks)]
+        self.learner_socket_ident = [None for _ in range(self.num_learner_tasks)]
+        self.ready_tasks = 0
 
         self.consumed_num_steps = [0 for _ in range(self.cfg.num_policies)]
         self.policy_version = [0 for _ in range(self.cfg.num_policies)]
@@ -44,42 +68,81 @@ class TaskDispatcher:
         self.train_for_episodes = self.train_for_env_steps // self.transitions_per_batch // (num_all_trainers //
                                                                                              self.cfg.num_policies)
 
+        self._context = None
+        self.task_socket = None
+        self.result_socket = None
+
+        self.accumulated_too_much_experience = [False for _ in range(self.cfg.num_policies)]
+        self.stop_experience_collection = [False for _ in range(self.cfg.num_policies)]
+
         self.process = mp.Process(target=self._run)
+
+    def _init_summary(self):
+        algo = self.cfg.algorithm_name
+        network_cls = 'rnn' if algo == 'rmappo' else 'mlp' if algo == 'mappo' else None
+        postfix = 'r{}_'.format(str(self.cfg.sample_reuse)) + network_cls
+        exp_name = str(self.cfg.experiment_name) + "_seed" + str(self.cfg.seed)
+        if self.cfg.use_wandb:
+            self.run = wandb.init(config=self.cfg,
+                                  project=self.cfg.project_name,
+                                  entity=self.cfg.user_name,
+                                  name=exp_name,
+                                  group=self.cfg.group_name,
+                                  dir=str(self.summary_dir),
+                                  job_type="training",
+                                  reinit=True)
+        else:
+            curr_run = exp_name + postfix + '_' + str(datetime.datetime.now()).replace(' ', '_')
+            self.summary_dir /= curr_run
+            if not self.summary_dir.exists():
+                os.makedirs(str(self.summary_dir))
+            self.writter = SummaryWriter(self.summary_dir)
 
     def start_process(self):
         self.process.start()
 
     def _init(self):
-        self.socket = zmq.Context().socket(zmq.ROUTER)
+        self._context = zmq.Context()
 
+        self.task_socket = self._context.socket(zmq.PUB)
         task_dispatcher_port = self.cfg.task_dispatcher_addr.split(':')[-1]
-        self.socket.bind('tcp://*:' + task_dispatcher_port)
+        self.task_socket.bind('tcp://*:' + task_dispatcher_port)
+
+        self.result_socket = self._context.socket(zmq.PULL)
+        result_port = self.cfg.task_result_addr.split(':')[-1]
+        self.result_socket.bind('tcp://*:' + result_port)
 
         while self.ready_tasks < self.num_learner_tasks + self.num_worker_tasks:
-            msg = self.socket.recv_multipart()
-            assert len(msg) == 3 and msg[1] == b''
-            ready_msg = msg[2].decode('ascii')
-            idx = int(ready_msg.split('-')[-1])
+            msg = self.result_socket.recv()
+            idx = int(msg.decode('ascii').split('-')[-1])
 
-            if 'learner' in ready_msg:
-                self.learner_socket_addrs[idx] = msg[0]
-            elif 'worker' in ready_msg:
-                self.worker_socket_addrs[idx] = msg[0]
+            if 'learner' in msg.decode('ascii'):
+                self.learner_socket_ident[idx] = msg
+            elif 'worker' in msg.decode('ascii'):
+                self.worker_socket_ident[idx] = msg
             else:
                 raise NotImplementedError
 
             self.ready_tasks += 1
 
+        assert all(self.worker_socket_ident) and all(self.learner_socket_ident), (self.worker_socket_ident,
+                                                                                  self.learner_socket_ident)
+
+        if not self.cfg.no_summary:
+            self._init_summary()
+
+        config_file = open(os.path.join(str(self.summary_dir), 'config.yaml'), 'w')
+        yaml.dump(vars(self.cfg), config_file)
+        config_file.close()
+
         tasks = self.meta_controller.reset()
-        for task, addr in zip(tasks, itertools.chain(self.learner_socket_addrs, self.worker_socket_addrs)):
-            msg = [addr, b''] + list(task)
+        for task, ident in zip(tasks, itertools.chain(self.learner_socket_ident, self.worker_socket_ident)):
+            msg = [ident] + list(task)
             self.socket.send_multipart(msg)
 
-        self.initialized = True
         self.training_tik = time.time()
 
     def _should_end_training(self):
-        # TODO: use messages from workers and learners to update consumed_num_steps and policy_version
         end = all([c_step > self.train_for_env_steps for c_step in self.consumed_num_steps])
         end |= all([v > self.train_for_episodes for v in self.policy_version])
         end |= (time.time() - self.training_tik) > self.train_for_seconds
@@ -90,6 +153,30 @@ class TaskDispatcher:
 
         return end
 
+    def report(self, msg):
+        policy_id = int(msg[1].decode('ascii'))
+        data = np.frombuffer(memoryview(msg[-1]), dtype=np.float32)
+        infos = {}
+        for i, key in enumerate(msg[2:-1]):
+            infos[key.decode('ascii')] = data[i]
+        assert len(data) == len(msg[2:-1])
+
+        policy_version = infos['iteration']
+        consumed_num_steps = policy_version * self.transitions_per_batch
+
+        if 'learner' in msg[0].decode('ascii'):
+            self.policy_version[policy_id] = policy_version
+            self.consumed_num_steps[policy_id] = consumed_num_steps
+            # TODO: send PAUSE task and set stop_experience_collection=True if accumulated too much experience
+            self.accumulated_too_much_experience[policy_id] = infos['buffer_util'] > 0.8
+
+        if not self.no_summary:
+            if self.use_wandb:
+                infos = {'policy_' + str(policy_id) + '/' + k: v for k, v in infos.items()}
+                wandb.log(infos, step=consumed_num_steps)
+            else:
+                self.writter.add_scalars('policy_' + str(policy_id), infos, step=consumed_num_steps)
+
     def _run(self):
         log.info('Initializing Task Dispatcher...')
 
@@ -97,18 +184,17 @@ class TaskDispatcher:
 
         try:
             while not self._should_end_training():
-                if self.initialized:
-                    try:
-                        # we don't care what we receive from the head node
-                        msg = self.socket.recv_multipart(flags=zmq.NOBLOCK)
+                try:
+                    msg = self.result_socket.recv_multipart(flags=zmq.NOBLOCK)
+                    self.report(msg)
 
-                        # TODO: deal with messages from workers and learners
-                        new_tasks = self.meta_controller.step(msg)
-                        for new_task in new_tasks:
-                            pass
-
-                    except zmq.ZMQError:
+                    # TODO: publish tasks of the next step according to the message received
+                    new_tasks = self.meta_controller.step(msg)
+                    for new_task in new_tasks:
                         pass
+
+                except zmq.ZMQError:
+                    pass
 
         except RuntimeError:
             log.warning('Error while distributing tasks on Task Dispatcher')
@@ -122,8 +208,8 @@ class TaskDispatcher:
             self.terminate = True
 
         # send termination signal to all workers and learners
-        for addr in itertools.chain(self.learner_socket_addrs, self.worker_socket_addrs):
-            msg = [addr, b'', str(TaskType.TERMINATE).encode('ascii')]
+        for ident in itertools.chain(self.learner_socket_ident, self.worker_socket_ident):
+            msg = [ident, str(TaskType.TERMINATE).encode('ascii')]
             self.socket.send_multipart(msg)
 
         time.sleep(1)

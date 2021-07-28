@@ -154,7 +154,8 @@ def get_config():
     parser.add_argument('--worker_node_idx', type=int, help='index of worker nodes')
     parser.add_argument('--learner_node_idx', type=int, help='index of learner nodes')
     parser.add_argument('--num_tasks_per_node', type=int, default=1, help='how many tasks a worker node will manage')
-    parser.add_argument('--task_dispatcher_addr', type=str, help='address of meta controller to distributed tasks')
+    parser.add_argument('--task_dispatcher_addr', type=str, help='address of task dispatcher to distributed tasks')
+    parser.add_argument('--task_result_addr', type=str, help='address to receive results from all workers and learners')
     parser.add_argument('--learner_config', help='learner gpu configuration')
     parser.add_argument('--num_policies', type=int, default=1, help='number of policies to be trained')
     parser.add_argument('--policy2agents', help='dict illustrating subsets of agent ids controlled by each policy')
@@ -389,5 +390,9 @@ def get_config():
                         type=str,
                         default=None,
                         help="The base directory to save model, by default None.")
+    parser.add_argument("--summary_dir",
+                        type=str,
+                        default=None,
+                        help="The base directory to write summary, by default None.")
 
     return parser

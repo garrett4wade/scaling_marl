@@ -8,7 +8,7 @@ import torch
 from config import get_config
 from envs.starcraft2.StarCraft2_Env import StarCraft2Env
 from envs.env_wrappers import ShareDummyVecEnv, ShareSubprocVecEnv
-from system.worker_task import WorkerTask
+from system.worker_node import WorkerNode
 from envs.starcraft2.smac_maps import get_map_params
 """Train script for SMAC."""
 
@@ -124,7 +124,7 @@ def main():
     assert len(cfg.policy2agents) == cfg.num_policies
     assert sum([len(v) for v in cfg.policy_agents.values]) == cfg.num_agents
 
-    node = WorkerTask(cfg, build_actor_env)
+    node = WorkerNode(cfg, build_actor_env)
     node.run()
 
 

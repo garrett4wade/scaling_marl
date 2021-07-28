@@ -3,7 +3,7 @@ import multiprocessing
 import os
 import time
 from collections import deque
-from queue import Empty
+from queue import Empty, Queue
 
 import torch
 import zmq
@@ -14,7 +14,7 @@ from system.policy_worker import PolicyWorker
 from system.actor_group_manager import ActorGroupManager
 from utils.buffer import SharedWorkerBuffer
 from utils.timing import Timing
-from utils.utils import (log, TaskType, SocketState, list_child_processes, kill_processes, get_obs_shapes_from_spaces,
+from utils.utils import (log, TaskType, list_child_processes, kill_processes, get_obs_shapes_from_spaces,
                          get_shape_from_act_space, assert_same_obs_shape, assert_same_act_dim)
 
 if os.name == 'nt':
@@ -95,7 +95,14 @@ class WorkerTask:
         # ZeroMQ sockets to receive tasks
         self._context = None
         self.task_socket = None
-        self.task_socket_state = None
+        self.task_result_socket = None
+
+        self.socket_identity = (
+            'workertask-' +
+            str(self.task_rank + self.cfg.num_tasks_per_node * self.cfg.worker_node_idx)).encode('ascii')
+        # TODO: modify this when processing tasks
+        self.is_executing_task = False
+        self.task_queue = Queue(8)
 
         self.task_finish_event = task_finish_event
 
@@ -109,13 +116,13 @@ class WorkerTask:
     def init_sockets(self):
         self._context = zmq.Context()
 
-        self.task_socket = self._context.socket(zmq.REQ)
+        self.task_socket = self._context.socket(zmq.SUB)
         self.task_socket.connect(self.cfg.task_dispatcher_addr)
-        self.task_socket.send(
-            ('workertask-' +
-             str(self.task_rank + self.cfg.num_tasks_per_node * self.cfg.worker_node_idx)).encode('ascii'))
+        self.task_socket.setsockopt(zmq.SUBSCRIBE, self.socket_identity)
 
-        self.task_socket_state = SocketState.SEND
+        self.task_result_socket = self._context.socket(zmq.PUSH)
+        self.task_result_socket.connect(self.cfg.task_result_addr)
+        self.task_result_socket.send(self.socket_identity)
 
     def init_shm_primitives(self):
         envs_per_split = self.cfg.envs_per_actor // self.cfg.num_splits
@@ -360,6 +367,7 @@ class WorkerTask:
             self.stats.update(report['stats'])
 
     def report(self):
+        # TODO: send summary info to task_result_socket during evaluation
         """
         Called periodically (every X seconds, see report_interval).
         Print experiment stats (FPS, avg rewards) to console and dump TF summaries collected from workers to disk.
@@ -386,13 +394,11 @@ class WorkerTask:
         log.debug('Timing: %s', timing_stats)
 
     def process_task(self, task):
+        # TODO: modify self.is_executing_tasks when processing tasks
         if task == TaskType.ROLLOUT:
-            self.task_socket.send(b'ok')
-            self.task_socket_state = SocketState.SEND
+            pass
         elif task == TaskType.TERMINATE:
             self.terminate = True
-            self.task_socket.send(b'ok')
-            self.task_socket_state = SocketState.SEND
         else:
             raise NotImplementedError
 
@@ -416,21 +422,24 @@ class WorkerTask:
         with timing.timeit('experience'):
             try:
                 while not self.terminate:
-                    if self.task_socket_state == SocketState.SEND:
-                        try:
-                            msg = self.task_socket.recv_multipart(flags=zmq.NOBLOCK)
-                            self.task_socket_state = SocketState.RECV
-                            # TODO: process more complicated task types,
-                            # such as oracle rollout in PSRO (need to send sampling distribution)
-                            task = int(msg[0].decode('ascii'))
-                            self.process_task(task)
-                        except zmq.ZMQError:
-                            pass
+                    try:
+                        msg = self.task_socket.recv_multipart(flags=zmq.NOBLOCK)
+                        self.task_queue.put(msg)
+                    except zmq.ZMQError:
+                        pass
 
-                    if self.task_socket_state == SocketState.RECV:
-                        # this should not happen in current implementation
-                        # TODO: modify this
-                        raise RuntimeError
+                    if not self.is_executing_task:
+                        try:
+                            # TODO: here we don't process task except for TERMINATE
+                            msg = self.task_queue.get()
+                            task = int(msg[1].decode('ascii'))
+                            self.process_task(task)
+                            if self.terminate:
+                                break
+                        except Empty:
+                            log.warning('Trainer %d is not executing tasks and there are no tasks distributed to it!',
+                                        self.trainer_idx)
+                            pass
 
                     try:
                         reports = self.report_queue.get_many(timeout=0.1)

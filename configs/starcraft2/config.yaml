@@ -19,6 +19,7 @@ train_for_env_steps: 10000000000
 train_for_seconds: 500
 model_dir: null
 save_dir: './models'
+summary_dir: './logs'
 
 # system parameters
 learner_config:
@@ -35,6 +36,7 @@ policy2agents:
   "2":
     - 2
 task_dispatcher_addr: tcp://10.0.4.16:8887
+task_result_addr: tcp://10.0.4.16:8886
 num_tasks_per_node: 1
 model_weights_addrs:  # every learner has a model_weights_addr and len(model_weights_adddrs) == num_policies == num_leraners
   - tcp://10.0.4.16:8889

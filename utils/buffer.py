@@ -18,10 +18,10 @@ class ReplayBuffer:
         self.num_trainers = 0
         self.available_dsts = []
         for node_idx, local_config in self.cfg.learner_cfg.items():
-            for gpu_idx, v in local_config.items():
+            for i, (_, v) in enumerate(local_config.items()):
                 if v == self.policy_id:
                     self.num_trainers += 1
-                    self.available_dsts.append((int(node_idx), int(gpu_idx)))
+                    self.available_dsts.append((int(node_idx), i))
 
         self.obs_space = obs_space
         self.share_obs_space = share_obs_space
