@@ -14,8 +14,8 @@ use_wandb: true
 use_eval: false
 use_render: false
 
-num_env_steps: 10000000
-train_for_env_steps: 10000000000
+num_env_steps: 100000000
+train_for_env_steps: 100000000
 train_for_seconds: 500
 model_dir: null
 save_dir: './models'

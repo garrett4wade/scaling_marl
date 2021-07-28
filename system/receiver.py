@@ -37,6 +37,8 @@ class Receiver:
 
         self.terminate = False
 
+        self.recv_cnt = 0
+
         self.process = mp.Process(target=self._run, daemon=True)
 
     def start_proess(self):
@@ -83,8 +85,11 @@ class Receiver:
                 buffer.summary_block[worker_node_idx] = summary_info
         buffer_put_time = time.time() - tik
 
-        log.info('Receiver {} decompression time: {:.2f}, buffer put time: {:.2f}'.format(
-            self.rank, decompression_time, buffer_put_time))
+        self.recv_cnt += 1
+
+        if self.recv_cnt % 100 == 0:
+            log.info('Receiver {} decompression time: {:.2f}, buffer put time: {:.2f}'.format(
+                self.rank, decompression_time, buffer_put_time))
 
     def _run(self):
         log.info('Initializing Receiver %d...', self.rank)
@@ -121,7 +126,7 @@ class Receiver:
                         self.last_recv_time = time.time()
 
                         self._unpack_msg(timing, msg)
-                        log.info('Receiver %d receives data from worker node %s...', self.rank, msg[-2])
+                        # log.info('Receiver %d receives data from worker node %s...', self.rank, msg[-2])
                     else:
                         # this is a ready indicator
                         self.nodes_ready_event.set()

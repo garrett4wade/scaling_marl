@@ -75,15 +75,15 @@ class Transmitter:
             summary_info = self.buffers[buffer_id].summary_block.sum(0).sum(0)
         msg.extend([self.sockets[learner_node_idx].identity, summary_info, str(local_trainer_idx).encode('ascii')])
 
-        log.info('seg size:  {} (MB), total {:.2f} MB'.format(mem_data, total_mem))
+        # log.info('seg size:  {} (MB), total {:.2f} MB'.format(mem_data, total_mem))
         self.sockets[learner_node_idx].send_multipart(msg)
 
         self.last_send_time[learner_node_idx] = time.time()
         self.sending_intervals.append(self.last_send_time[learner_node_idx] - self.last_recv_time[learner_node_idx])
         self.socket_states[learner_node_idx] = SocketState.SEND
 
-        log.info('Successfully sending data to head node on Transmitter...')
-        log.info('Remaining segs in queue: %d', self.remaining_segs)
+        # log.info('Successfully sending data to head node on Transmitter...')
+        # log.info('Remaining segs in queue: %d', self.remaining_segs)
 
     def _run(self):
         log.info('Initializing Transmitter...')
@@ -116,7 +116,7 @@ class Transmitter:
                             if self.last_send_time[i] is not None:
                                 self.sending_delays.append(self.last_recv_time[i] - self.last_send_time[i])
                             self.socket_states[i] = SocketState.RECV
-                            log.info('Receiving data request from head node on Transmitter...')
+                            # log.info('Receiving data request from head node on Transmitter...')
                         except zmq.ZMQError:
                             pass
 

@@ -5,7 +5,7 @@ import torch
 import queue
 import psutil
 from contextlib import contextmanager
-from multiprocessing import Lock
+import multiprocessing as mp
 import logging
 import os
 from collections import OrderedDict
@@ -59,64 +59,59 @@ class AttrDict(dict):
             return super().__getattribute__(item)
 
 
-class RWLock(object):
-    """ RWLock class; this is meant to allow an object to be read from by
-        multiple threads, but only written to by a single thread at a time. See:
-        https://en.wikipedia.org/wiki/Readers%E2%80%93writer_lock
-        Usage:
-            from rwlock import RWLock
-            my_obj_rwlock = RWLock()
-            # When reading from my_obj:
-            with my_obj_rwlock.r_locked():
-                do_read_only_things_with(my_obj)
-            # When writing to my_obj:
-            with my_obj_rwlock.w_locked():
-                mutate(my_obj)
-    """
+class RWLock:
+    """ A lock object that allows many simultaneous "read locks", but
+    only one "write lock." """
+
     def __init__(self):
+        self._read_ready = mp.Condition(mp.Lock())
+        self._readers = 0
 
-        self.w_lock = Lock()
-        self.num_r_lock = Lock()
-        self.num_r = 0
+    def acquire_read(self):
+        """ Acquire a read lock. Blocks only if a thread has
+        acquired the write lock. """
+        self._read_ready.acquire()
+        try:
+            self._readers += 1
+        finally:
+            self._read_ready.release()
 
-    def r_acquire(self):
-        self.num_r_lock.acquire()
-        self.num_r += 1
-        if self.num_r == 1:
-            self.w_lock.acquire()
-        self.num_r_lock.release()
+    def release_read(self):
+        """ Release a read lock. """
+        self._read_ready.acquire()
+        try:
+            self._readers -= 1
+            if not self._readers:
+                self._read_ready.notify(1)
+        finally:
+            self._read_ready.release()
 
-    def r_release(self):
-        assert self.num_r > 0
-        self.num_r_lock.acquire()
-        self.num_r -= 1
-        if self.num_r == 0:
-            self.w_lock.release()
-        self.num_r_lock.release()
+    def acquire_write(self):
+        """ Acquire a write lock. Blocks until there are no
+        acquired read or write locks. """
+        self._read_ready.acquire()
+        while self._readers > 0:
+            self._read_ready.wait()
+
+    def release_write(self):
+        """ Release a write lock. """
+        self._read_ready.release()
 
     @contextmanager
     def r_locked(self):
-        """ This method is designed to be used via the `with` statement. """
         try:
-            self.r_acquire()
+            self.acquire_read()
             yield
         finally:
-            self.r_release()
-
-    def w_acquire(self):
-        self.w_lock.acquire()
-
-    def w_release(self):
-        self.w_lock.release()
-
+            self.release_read()
+    
     @contextmanager
     def w_locked(self):
-        """ This method is designed to be used via the `with` statement. """
         try:
-            self.w_acquire()
+            self.acquire_write()
             yield
         finally:
-            self.w_release()
+            self.release_write()
 
 
 def drain_queue(queue_obj, n_sentinel=0, guard_sentinel=False):

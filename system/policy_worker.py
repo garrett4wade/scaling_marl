@@ -110,7 +110,6 @@ class PolicyWorker:
             self.rollout_policy.eval_mode()
 
             self.ps_ready_event.wait()
-            # print('######################################################### after policy worker ps ready')
             self.maybe_update_weights(timing)
             log.info('Initialized model on the policy worker %d!', self.worker_idx)
 
@@ -119,13 +118,14 @@ class PolicyWorker:
             self.initialized_event.set()
 
     def maybe_update_weights(self, timing):
-        # print('#################################################### into update weights', self.worker_idx)
-        # with self.param_lock.r_locked():
-        # print('#################################################### locked', self.worker_idx)
         if self.local_policy_version < self.ps_policy_version:
-            with timing.time_avg('update_weights/load_state_dict_once'):
-                self.rollout_policy.load_state_dict(self.local_ps)
-                # print('#################################################### finish loading state dict', self.worker_idx)
+            with self.param_lock.r_locked():
+                with timing.time_avg('update_weights/load_state_dict_once'):
+                    self.rollout_policy.load_state_dict(self.local_ps)
+                    self.local_policy_version = self.ps_policy_version.item()
+
+            if self.local_policy_version % 20 == 0:
+                log.debug('Update policy %d to version %d', self.policy_id, self.local_policy_version)
 
     def _handle_policy_steps(self, timing):
         with torch.no_grad():

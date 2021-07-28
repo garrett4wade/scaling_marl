@@ -248,14 +248,14 @@ class Trainer:
                 if not self.is_executing_task:
                     try:
                         # TODO: here we don't process task except for TERMINATE
-                        msg = self.task_queue.get()
+                        msg = self.task_queue.get_nowait()
                         task = int(msg[1].decode('ascii'))
                         self.process_task(task)
                         if self.terminate:
                             break
                     except Empty:
-                        log.warning('Trainer %d is not executing tasks and there are no tasks distributed to it!',
-                                    self.trainer_idx)
+                        # log.warning('Trainer %d is not executing tasks and there are no tasks distributed to it!',
+                        #             self.trainer_idx)
                         pass
 
                 if not self.train_in_background:
@@ -306,8 +306,9 @@ class Trainer:
 
     def training_step(self, timing):
         buffer_util = self.buffer.utilization
-        log.info('buffer utilization before training step: {}/{}'.format(round(buffer_util * self.buffer.num_slots),
-                                                                         self.buffer.num_slots))
+        if self.policy_version % 10 == 0:
+            log.info('buffer utilization before training step: {}/{}'.format(round(buffer_util * self.buffer.num_slots),
+                                                                            self.buffer.num_slots))
 
         if self.use_linear_lr_decay:
             self.policy.lr_decay(self.policy_version, self.train_for_episodes)
