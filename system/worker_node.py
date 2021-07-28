@@ -11,6 +11,9 @@ from system.worker_task import WorkerTask
 from utils.timing import Timing
 from utils.utils import log, set_global_cuda_envvars, RWLock
 
+# TODO: import other type of policies for other algorithms
+from algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
+
 
 class WorkerNode:
     def __init__(self, cfg, env_fn):
@@ -52,39 +55,41 @@ class WorkerNode:
         ps = self.local_ps[policy_id]
         lock = self.param_locks[policy_id]
 
-        msg = None
+        with timing.add_time('update_weights'), timing.time_avg('update_weights_once'):
+            msg = None
 
-        if block:
-            msg = socket.recv_multipart(flags=0)
-        else:
-            while True:
-                # receive the latest model parameters
-                try:
-                    msg = socket.recv_multipart(flags=zmq.NOBLOCK)
-                except zmq.ZMQError:
-                    break
+            if block:
+                msg = socket.recv_multipart(flags=0)
+            else:
+                while True:
+                    # receive the latest model parameters
+                    try:
+                        msg = socket.recv_multipart(flags=zmq.NOBLOCK)
+                    except zmq.ZMQError:
+                        break
 
-        if msg is None:
-            return
+            if msg is None:
+                return
 
-        # msg is multiple (key, tensor) pairs + policy version
-        assert len(msg) % 2 == 1
-        with lock.w_locked():
-            for i in range(len(msg) // 2):
-                key, value = msg[2 * i].decode('ascii'), msg[2 * i + 1]
+            # msg is multiple (key, tensor) pairs + policy version
+            assert len(msg) % 2 == 1
+            with lock.w_locked():
+                for i in range(len(msg) // 2):
+                    key, value = msg[2 * i].decode('ascii'), msg[2 * i + 1]
 
-                shape, dtype = model_weights_registry[key]
-                tensor = torch.from_numpy(np.frombuffer(memoryview(value), dtype=dtype).reshape(*shape))
+                    shape, dtype = model_weights_registry[key]
+                    tensor = torch.from_numpy(np.frombuffer(memoryview(value), dtype=dtype).reshape(*shape))
 
-                ps[key][:] = tensor
+                    ps[key][:] = tensor
 
-            learner_policy_version = int(msg[-1].decode('ascii'))
+                learner_policy_version = int(msg[-1].decode('ascii'))
 
-            self.ps_policy_versions[policy_id] = learner_policy_version
+                self.ps_policy_versions[policy_id] = learner_policy_version
 
         if self.num_policy_updates[policy_id] % 10 == 0:
             log.debug(
-                'Updated weights on node %d, policy_version %d (%s)',
+                'Updated Policy %d on node %d, policy_version %d (%s)',
+                policy_id,
                 self.cfg.worker_node_idx,
                 learner_policy_version,
                 str(timing.update_weights_once),
@@ -93,6 +98,19 @@ class WorkerNode:
 
     def _init(self, timing):
         with timing.add_time('init'):
+            for policy_id in range(self.cfg.num_policies):
+                example_agent = self.cfg.policy2agents[str(policy_id)][0]
+
+                example_policy = Policy(torch.device('cpu'), self.cfg, self.cfg.observation_space[example_agent], self.cfg.share_observation_space[example_agent], self.cfg.action_space[example_agent], False)
+                self.local_ps[policy_id] = {k: v.detach().share_memory_() for k, v in example_policy.state_dict().items()}
+
+                for k, v in self.local_ps[policy_id].items():
+                    self.model_weights_registries[policy_id][k] = (v.numpy().shape, v.numpy().dtype)
+
+                del example_policy
+
+            self.init_sockets()
+
             for task_rank in range(self.cfg.num_tasks_per_node):
                 global_task_rank = self.cfg.worker_node_idx * self.cfg.num_tasks_per_node + task_rank
                 policy_id = global_task_rank % self.cfg.num_policies
@@ -101,24 +119,12 @@ class WorkerNode:
                 task.start_process()
                 self.worker_tasks.append(task)
 
-            for task in self.worker_tasks:
-                for e in itertools.chain(*task.rollout_policy_ready_events):
-                    e.wait()
-
-            example_policy_worker_tuple = self.worker_tasks[0].policy_workers[0]
-            for policy_id, w in enumerate(example_policy_worker_tuple):
-                self.local_ps[policy_id] = {
-                    k: v.cpu().detach().share_memory_()
-                    for k, v in w.rollout_policy.state_dict().items()
-                }
-
             self.transmitter = Transmitter(self.cfg, [worker_task.buffer for worker_task in self.worker_tasks])
             self.transmitter.start_process()
-
-        with timing.add_time('update_weights'), timing.time_avg('update_weights_once'):
-            for policy_id in range(self.cfg.num_policies):
-                self._update_weights(timing, policy_id, block=True)
-                self.ps_ready_events[policy_id].set()
+        
+        for policy_id in range(self.cfg.num_policies):
+            self._update_weights(timing, policy_id, block=True)
+            self.ps_ready_events[policy_id].set()
 
     def run(self):
         torch.multiprocessing.set_sharing_strategy('file_system')
@@ -129,9 +135,8 @@ class WorkerNode:
 
         try:
             while not all([e.is_set() for e in self.task_finish_events]):
-                with timing.add_time('update_weights'), timing.time_avg('update_weights_once'):
-                    for policy_id in range(self.cfg.num_policies):
-                        self._update_weights(timing, policy_id)
+                for policy_id in range(self.cfg.num_policies):
+                    self._update_weights(timing, policy_id)
 
                 time.sleep(0.02)
 

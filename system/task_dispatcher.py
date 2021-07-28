@@ -16,7 +16,7 @@ class TaskDispatcher:
     def __init__(self, cfg, meta_controller):
         self.cfg = cfg
 
-        self.socket = None
+        self.task_socket = None
 
         # initialize save dir
         self.summary_dir = self.cfg.summary_dir
@@ -137,8 +137,7 @@ class TaskDispatcher:
 
         tasks = self.meta_controller.reset()
         for task, ident in zip(tasks, itertools.chain(self.learner_socket_ident, self.worker_socket_ident)):
-            msg = [ident] + list(task)
-            self.socket.send_multipart(msg)
+            self.task_socket.send_multipart([ident, task])
 
         self.training_tik = time.time()
 
@@ -210,10 +209,10 @@ class TaskDispatcher:
         # send termination signal to all workers and learners
         for ident in itertools.chain(self.learner_socket_ident, self.worker_socket_ident):
             msg = [ident, str(TaskType.TERMINATE).encode('ascii')]
-            self.socket.send_multipart(msg)
+            self.task_socket.send_multipart(msg)
 
         time.sleep(1)
-        self.socket.close()
+        self.task_socket.close()
         time.sleep(0.2)
         log.info('Task Dispatcher terminated!')
 

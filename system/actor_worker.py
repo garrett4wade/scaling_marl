@@ -141,7 +141,7 @@ class ActorWorker:
                 # new rnn states is updated after each inference step
                 if 'rnn_states' not in k:
                     for policy_shm, agent_idx in zip(shms, self.agent_ids):
-                        policy_shm[split_idx][self.env_slice, agent_idx] = policy_inputs[k][:, agent_idx]
+                        policy_shm[split_idx][self.env_slice] = policy_inputs[k][:, agent_idx]
 
         for split_idx in range(len(self.env_runners)):
             self.envstep_output_semaphore[split_idx].release()
@@ -177,7 +177,7 @@ class ActorWorker:
             for k, shms in self.envstep_output_shm.items():
                 if 'rnn_states' not in k:
                     for policy_shm, agent_idx in zip(shms, self.agent_ids):
-                        policy_shm[split_idx][self.env_slice, agent_idx] = envstep_outputs[k][:, agent_idx]
+                        policy_shm[split_idx][self.env_slice] = envstep_outputs[k][:, agent_idx]
             self.envstep_output_semaphore[split_idx].release()
 
             if self.cfg.actor_group_size == 1:

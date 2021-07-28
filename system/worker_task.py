@@ -85,9 +85,6 @@ class WorkerTask:
         self.avg_stats = dict()
         self.stats = dict()  # regular (non-averaged) stats
 
-        self.rollout_policy_ready_events = [[multiprocessing.Event() for _ in range(self.cfg.num_policies)]
-                                            for _ in range(self.cfg.num_policy_workers)]
-
         # shared memory and synchronization primitives for communication between actor worker and policy worker
         self.act_shms, self.act_semaphores = None, None
         self.envstep_output_shms, self.envstep_output_semaphores = None, None
@@ -320,7 +317,6 @@ class WorkerTask:
                     self.act_semaphores[policy_id],
                     {k: v[policy_id]
                      for k, v in self.envstep_output_shms.items()},
-                    self.rollout_policy_ready_events[i][policy_id],
                     self.local_ps[policy_id],
                     self.param_locks[policy_id],
                     self.ps_policy_versions[policy_id:policy_id + 1],
@@ -411,6 +407,7 @@ class WorkerTask:
 
         status = ExperimentStatus.SUCCESS
 
+        self.init_sockets()
         self.init_shm_primitives()
         self.init_workers()
 
@@ -431,14 +428,14 @@ class WorkerTask:
                     if not self.is_executing_task:
                         try:
                             # TODO: here we don't process task except for TERMINATE
-                            msg = self.task_queue.get()
+                            msg = self.task_queue.get_nowait()
                             task = int(msg[1].decode('ascii'))
                             self.process_task(task)
                             if self.terminate:
                                 break
                         except Empty:
-                            log.warning('Trainer %d is not executing tasks and there are no tasks distributed to it!',
-                                        self.trainer_idx)
+                            # log.warning('Worker Task %d is not executing tasks and there are no tasks distributed to it!',
+                            #             self.task_rank)
                             pass
 
                     try:

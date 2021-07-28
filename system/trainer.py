@@ -164,9 +164,10 @@ class Trainer:
             self.task_socket.setsockopt(zmq.SUBSCRIBE, self.socket_identity)
 
             self.task_result_socket = self._context.socket(zmq.PUSH)
+            self.task_result_socket.connect(self.cfg.task_result_addr)
             self.task_result_socket.send(self.socket_identity)
 
-        os.environ['NCCL_DEBUG'] = 'info'
+        # os.environ['NCCL_DEBUG'] = 'info'
         os.environ['NCCL_SOCKET_IFNAME'] = 'eth0'
         os.environ['NCCL_IB_DISABLE'] = '1'
         # TODO: nccl with orthogonal initialization has a bug
@@ -225,7 +226,7 @@ class Trainer:
         psutil.Process().nice(self.cfg.default_niceness)
 
         torch.multiprocessing.set_sharing_strategy('file_system')
-        torch.set_num_threads(self.cfg.learner_num_threads)
+        torch.set_num_threads(self.cfg.n_training_threads)
 
         timing = Timing()
 
@@ -386,7 +387,7 @@ class Trainer:
             self.save()
 
     def maybe_log(self):
-        log_infos = None
+        log_infos = {}
         # log information
         if self.task_rank == 0 and self.policy_version % self.log_interval == 0:
             self.last_received_num_steps = self.received_num_steps
@@ -466,10 +467,10 @@ class Trainer:
         self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model.pt'))
 
     def report(self, infos):
-        if infos is None or self.global_rank != 0:
+        if infos is None or self.task_rank != 0:
             return
 
-        if not self.no_summary:
+        if not self.cfg.no_summary:
             data = np.zeros(len(infos), dtype=np.float32)
             data[:] = list(infos.values())
             msg = [self.socket_identity, str(self.policy_id).encode('ascii')

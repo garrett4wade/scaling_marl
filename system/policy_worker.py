@@ -23,7 +23,7 @@ def _t2n(x):
 
 class PolicyWorker:
     def __init__(self, cfg, policy_id, task_rank, replicate_rank, obs_space, share_obs_space, action_space, buffer,
-                 policy_queue, report_queue, act_shms, act_semaphores, envstep_output_shms, rollout_policy_ready_event,
+                 policy_queue, report_queue, act_shms, act_semaphores, envstep_output_shms,
                  local_ps, param_lock, ps_policy_version, ps_ready_event):
         self.cfg = cfg
 
@@ -56,7 +56,6 @@ class PolicyWorker:
 
         self.policy_queue = policy_queue
         self.report_queue = report_queue
-        self.rollout_policy_ready_event = rollout_policy_ready_event
 
         self.local_ps = local_ps
         self.param_lock = param_lock
@@ -110,9 +109,8 @@ class PolicyWorker:
                                          is_training=False)
             self.rollout_policy.eval_mode()
 
-            self.rollout_policy_ready_event.set()
-
             self.ps_ready_event.wait()
+            # print('######################################################### after policy worker ps ready')
             self.maybe_update_weights(timing)
             log.info('Initialized model on the policy worker %d!', self.worker_idx)
 
@@ -121,10 +119,13 @@ class PolicyWorker:
             self.initialized_event.set()
 
     def maybe_update_weights(self, timing):
-        with self.param_lock.r_locked():
-            if self.local_policy_version < self.ps_policy_version:
-                with timing.time_avg('update_weights/load_state_dict_once'):
-                    self.rollout_policy.load_state_dict(self.local_ps)
+        # print('#################################################### into update weights', self.worker_idx)
+        # with self.param_lock.r_locked():
+        # print('#################################################### locked', self.worker_idx)
+        if self.local_policy_version < self.ps_policy_version:
+            with timing.time_avg('update_weights/load_state_dict_once'):
+                self.rollout_policy.load_state_dict(self.local_ps)
+                # print('#################################################### finish loading state dict', self.worker_idx)
 
     def _handle_policy_steps(self, timing):
         with torch.no_grad():
@@ -299,7 +300,6 @@ class PolicyWorker:
                 log.exception('Unknown exception on policy worker')
                 self.terminate = True
 
-        self.model_weights_socket.close()
         time.sleep(0.2)
         log.info('Policy worker avg requests: %.2f, total num sample: %d, total inference steps: %d, timing: %s',
                  np.mean(num_requests), self.total_num_samples, self.total_inference_steps, timing)

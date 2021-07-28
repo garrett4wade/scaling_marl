@@ -247,7 +247,10 @@ class WorkerBuffer(ReplayBuffer):
 
     def get(self, block=True, timeout=None, reduce_fn=lambda x: x[0]):
         slot_id = super().get(block, timeout, reduce_fn)
-        return slot_id, (self._destination[slot_id, 0].item(), self._destination[slot_id, 1].item())
+        if slot_id is None:
+            return None, (None, None)
+        else:
+            return slot_id, (self._destination[slot_id, 0].item(), self._destination[slot_id, 1].item())
 
 
 class LearnerBuffer(ReplayBuffer):
