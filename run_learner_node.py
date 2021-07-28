@@ -132,7 +132,7 @@ def main():
         trainers.append(tn)
 
     recievers = [
-        Receiver(cfg, i, trainers, trainer_buffer_ready_events, nodes_ready_events[i]) for i in range(num_worker_nodes)
+        Receiver(cfg, i, trainers, nodes_ready_events[i], trainer_buffer_ready_events) for i in range(num_worker_nodes)
     ]
     for r in recievers:
         r.start_proess()

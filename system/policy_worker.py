@@ -25,6 +25,8 @@ class PolicyWorker:
     def __init__(self, cfg, policy_id, task_rank, replicate_rank, obs_space, share_obs_space, action_space, buffer,
                  policy_queue, report_queue, act_shms, act_semaphores, envstep_output_shms, rollout_policy_ready_event,
                  local_ps, param_lock, ps_policy_version, ps_ready_event):
+        self.cfg = cfg
+
         self.policy_id = policy_id
         self.task_rank = task_rank
         self.replicate_rank = replicate_rank
@@ -34,7 +36,6 @@ class PolicyWorker:
                            self.policy_id * self.cfg.num_policy_workers + self.replicate_rank)
         log.info('Initializing policy worker %d', self.worker_idx)
 
-        self.cfg = cfg
         self.tpdv = dict(device=torch.device(0), dtype=torch.float32)
 
         self.obs_space = obs_space

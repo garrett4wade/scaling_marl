@@ -1,6 +1,6 @@
 import gym
 import torch
-from utils.utils import get_shapes_from_spaces
+from utils.utils import get_obs_shapes_from_spaces, get_shape_from_act_space
 from collections import namedtuple
 
 
@@ -12,7 +12,8 @@ StorageSpec = namedtuple('StorageSpec', ['name', 'shape', 'dtype', 'bootstrap', 
 
 
 def get_ppo_storage_specs(args, obs_space, share_obs_space, act_space):
-    obs_shape, share_obs_shape, act_dim = get_shapes_from_spaces(obs_space, share_obs_space, act_space)
+    obs_shape, share_obs_shape = get_obs_shapes_from_spaces(obs_space, share_obs_space)
+    act_dim = get_shape_from_act_space(act_space)
 
     ppo_storage_specs = [
         StorageSpec('obs', obs_shape, torch.float32, True, 0),

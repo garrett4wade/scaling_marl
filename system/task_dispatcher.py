@@ -8,7 +8,7 @@ import pathlib
 import wandb
 import yaml
 import numpy as np
-from tensorboardx import SummaryWriter
+from tensorboardX import SummaryWriter
 from utils.utils import log, join_or_kill, TaskType
 
 
@@ -58,8 +58,8 @@ class TaskDispatcher:
 
         self.train_for_env_steps = self.cfg.train_for_env_steps
         self.train_for_seconds = self.cfg.train_for_seconds
-        self.transitions_per_batch = (self.episode_length * self.cfg.actor_group_size * self.envs_per_split *
-                                      self.slots_per_update)
+        self.transitions_per_batch = (self.cfg.episode_length * self.cfg.actor_group_size * self.cfg.envs_per_actor *
+                                      self.cfg.slots_per_update // self.cfg.num_splits)
 
         num_all_trainers = 0
         for _, local_config in self.cfg.learner_config.items():

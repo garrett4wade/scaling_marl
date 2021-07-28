@@ -17,7 +17,7 @@ class ReplayBuffer:
 
         self.num_trainers = 0
         self.available_dsts = []
-        for node_idx, local_config in self.cfg.learner_cfg.items():
+        for node_idx, local_config in self.cfg.learner_config.items():
             for i, (_, v) in enumerate(local_config.items()):
                 if v == self.policy_id:
                     self.num_trainers += 1

@@ -44,7 +44,7 @@ class Trainer:
         self.num_agents = len(self.cfg.policy2agents[str(self.policy_id)])
         example_agent = self.cfg.policy2agents[str(self.policy_id)][0]
 
-        self.obs_space = self.cfg.obseravtion_space[example_agent]
+        self.obs_space = self.cfg.observation_space[example_agent]
         self.share_obs_space = self.cfg.share_observation_space[example_agent]
         self.act_space = self.cfg.action_space[example_agent]
 

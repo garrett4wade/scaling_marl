@@ -122,7 +122,7 @@ def main():
 
     cfg.num_agents = get_map_params(cfg.map_name)["n_agents"]
     assert len(cfg.policy2agents) == cfg.num_policies
-    assert sum([len(v) for v in cfg.policy_agents.values]) == cfg.num_agents
+    assert sum([len(v) for v in cfg.policy2agents.values()]) == cfg.num_agents
 
     node = WorkerNode(cfg, build_actor_env)
     node.run()

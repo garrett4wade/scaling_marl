@@ -5,7 +5,6 @@ from meta_controllers.meta_controller import MetaController
 class NaiveMetaController(MetaController):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        assert self.cfg.num_policies == 1
 
     def reset(self):
         task = []
