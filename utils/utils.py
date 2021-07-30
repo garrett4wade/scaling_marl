@@ -62,7 +62,6 @@ class AttrDict(dict):
 class RWLock:
     """ A lock object that allows many simultaneous "read locks", but
     only one "write lock." """
-
     def __init__(self):
         self._read_ready = mp.Condition(mp.Lock())
         self._readers = 0
@@ -104,7 +103,7 @@ class RWLock:
             yield
         finally:
             self.release_read()
-    
+
     @contextmanager
     def w_locked(self):
         try:
