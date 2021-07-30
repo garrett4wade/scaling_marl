@@ -146,7 +146,7 @@ def main():
     log.info('Receivers joined!')
 
     if cfg.learner_node_idx == 0:
-        task_dispatcher.close()
+        task_dispatcher.process.join()
         log.info('Task Dispatcher joined!')
 
     log.info('Done!')

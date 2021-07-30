@@ -270,7 +270,7 @@ class WorkerTask:
         # so we parallelize initialization as hard as we can.
         # If this is required for your environment, perhaps a better solution would be to use global locks,
         # like FileLock (see doom_gym.py)
-        max_parallel_init = int(1e9)  # might be useful to limit this for some envs
+        max_parallel_init = 32  # might be useful to limit this for some envs
         actor_indices = list(range(self.num_actors))
         for i in range(0, self.num_actors, max_parallel_init):
             workers = self.init_subset(actor_indices[i:i + max_parallel_init], actor_queues)
