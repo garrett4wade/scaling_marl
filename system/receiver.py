@@ -2,7 +2,7 @@ import time
 from queue import Empty
 
 import torch
-import multiprocessing as mp
+import torch.multiprocessing as mp
 
 from utils.timing import Timing
 from utils.utils import log, join_or_kill, TaskType

@@ -1,5 +1,5 @@
 import math
-import multiprocessing
+import torch.multiprocessing as mp
 import os
 import time
 from collections import deque
@@ -107,7 +107,7 @@ class WorkerTask:
 
         self.print_stats_cnt = 0
 
-        self.process = multiprocessing.Process(target=self.run)
+        self.process = mp.Process(target=self.run)
 
     def start_process(self):
         self.process.start()
@@ -135,7 +135,7 @@ class WorkerTask:
 
         # actor workers consume actions and produce envstep_outputs in one shot (in env.step),
         # thus action_shms and envstep_output_semaphores only have one copy (not seperated for different policy_ids)
-        self.envstep_output_semaphores = [[multiprocessing.Semaphore(0) for _ in range(self.cfg.num_splits)]
+        self.envstep_output_semaphores = [[mp.Semaphore(0) for _ in range(self.cfg.num_splits)]
                                           for _ in range(self.num_actors)]
 
         assert_same_act_dim(self.cfg.action_space)
@@ -155,7 +155,7 @@ class WorkerTask:
         self.envstep_output_shms['dones'] = []
 
         for controlled_agents in self.cfg.policy2agents.values():
-            self.act_semaphores.append([[multiprocessing.Semaphore(0) for _ in range(self.cfg.num_splits)]
+            self.act_semaphores.append([[mp.Semaphore(0) for _ in range(self.cfg.num_splits)]
                                         for _ in range(self.num_actors)])
 
             assert_same_obs_shape(controlled_agents, self.cfg.observation_space, self.cfg.share_observation_space)
@@ -390,7 +390,8 @@ class WorkerTask:
         if self.print_stats_cnt % 10 == 0:
             mem_stats = ''.join(['{}: {:.2f} MB, '.format(k, v) for k, v in self.stats.items()])[:-2]
             log.debug('Memory statistics: %s', mem_stats)
-            timing_stats = ''.join(['{}: {:.4f} s, '.format(k, sum(v) / len(v)) for k, v in self.avg_stats.items()])[:-2]
+            timing_stats = ''.join(['{}: {:.4f} s, '.format(k,
+                                                            sum(v) / len(v)) for k, v in self.avg_stats.items()])[:-2]
             log.debug('Timing: %s', timing_stats)
 
     def process_task(self, task):
@@ -438,8 +439,8 @@ class WorkerTask:
                             if self.terminate:
                                 break
                         except Empty:
-                            # log.warning('Worker Task %d is not executing tasks and there are no tasks distributed to it!',
-                            #             self.task_rank)
+                            log.warning(('Worker Task %d is not executing tasks and ' +
+                                         'there are no tasks distributed to it!'), self.task_rank)
                             pass
 
                     try:

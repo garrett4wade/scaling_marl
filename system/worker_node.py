@@ -1,9 +1,8 @@
-import multiprocessing
+import torch.multiprocessing as mp
 import time
 
 import torch
 import zmq
-import itertools
 
 import numpy as np
 from system.transmitter import Transmitter
@@ -29,9 +28,9 @@ class WorkerNode:
         self.local_ps = [None for _ in range(self.cfg.num_policies)]
         self.param_locks = [RWLock() for _ in range(self.cfg.num_policies)]
         self.ps_policy_versions = ((-1) * torch.ones(self.cfg.num_policies, dtype=torch.int64)).share_memory_()
-        self.ps_ready_events = [multiprocessing.Event() for _ in range(self.cfg.num_policies)]
+        self.ps_ready_events = [mp.Event() for _ in range(self.cfg.num_policies)]
 
-        self.task_finish_events = [multiprocessing.Event() for _ in range(self.cfg.num_tasks_per_node)]
+        self.task_finish_events = [mp.Event() for _ in range(self.cfg.num_tasks_per_node)]
 
         # ZeroMQ sockets to receive model parameters
         self._context = None
@@ -101,8 +100,13 @@ class WorkerNode:
             for policy_id in range(self.cfg.num_policies):
                 example_agent = self.cfg.policy2agents[str(policy_id)][0]
 
-                example_policy = Policy(torch.device('cpu'), self.cfg, self.cfg.observation_space[example_agent], self.cfg.share_observation_space[example_agent], self.cfg.action_space[example_agent], False)
-                self.local_ps[policy_id] = {k: v.detach().share_memory_() for k, v in example_policy.state_dict().items()}
+                example_policy = Policy(torch.device('cpu'), self.cfg, self.cfg.observation_space[example_agent],
+                                        self.cfg.share_observation_space[example_agent],
+                                        self.cfg.action_space[example_agent], False)
+                self.local_ps[policy_id] = {
+                    k: v.detach().share_memory_()
+                    for k, v in example_policy.state_dict().items()
+                }
 
                 for k, v in self.local_ps[policy_id].items():
                     self.model_weights_registries[policy_id][k] = (v.numpy().shape, v.numpy().dtype)
@@ -121,7 +125,7 @@ class WorkerNode:
 
             self.transmitter = Transmitter(self.cfg, [worker_task.buffer for worker_task in self.worker_tasks])
             self.transmitter.start_process()
-        
+
         for policy_id in range(self.cfg.num_policies):
             self._update_weights(timing, policy_id, block=True)
             self.ps_ready_events[policy_id].set()

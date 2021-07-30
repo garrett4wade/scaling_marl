@@ -1,4 +1,3 @@
-import multiprocessing
 import signal
 import time
 from queue import Empty
@@ -7,6 +6,7 @@ from algorithms.utils.util import check
 import numpy as np
 import psutil
 import torch
+import torch.multiprocessing as mp
 from torch.multiprocessing import Process as TorchProcess
 
 from algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
@@ -73,11 +73,11 @@ class PolicyWorker:
         self.envstep_output_shms = envstep_output_shms
 
         # queue other components use to talk to this particular worker
-        self.termination_queue = torch.multiprocessing.JoinableQueue(1)
+        self.termination_queue = mp.JoinableQueue(1)
 
         self.initialized = False
         self.terminate = False
-        self.initialized_event = multiprocessing.Event()
+        self.initialized_event = mp.Event()
 
         self.buffer = buffer
 

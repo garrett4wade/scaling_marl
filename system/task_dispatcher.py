@@ -1,6 +1,6 @@
 import zmq
 import itertools
-import multiprocessing as mp
+import torch.multiprocessing as mp
 import time
 import os
 import datetime

@@ -308,7 +308,7 @@ class Trainer:
         buffer_util = self.buffer.utilization
         if self.policy_version % 10 == 0:
             log.info('buffer utilization before training step: {}/{}'.format(round(buffer_util * self.buffer.num_slots),
-                                                                            self.buffer.num_slots))
+                                                                             self.buffer.num_slots))
 
         if self.use_linear_lr_decay:
             self.policy.lr_decay(self.policy_version, self.train_for_episodes)
