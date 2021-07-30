@@ -347,7 +347,6 @@ class WorkerTask:
         status = ExperimentStatus.SUCCESS
 
         self.init_sockets()
-        self.init_shm_primitives()
         self.init_workers()
 
         self.finish_initialization()
@@ -373,8 +372,8 @@ class WorkerTask:
                             if self.terminate:
                                 break
                         except Empty:
-                            log.warning(('Worker Task %d is not executing tasks and ' +
-                                         'there are no tasks distributed to it!'), self.task_rank)
+                            # log.warning(('Worker Task %d is not executing tasks and ' +
+                            #              'there are no tasks distributed to it!'), self.task_rank)
                             pass
 
                     try:
