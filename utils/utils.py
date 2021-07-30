@@ -230,7 +230,7 @@ def assert_same_obs_shape(controlled_agents, observation_space, share_observatio
                                                                         share_observation_space[agent_id])
 
         assert (cur_obs_shape == obs_shape and cur_share_obs_shape
-                == share_obs_space), 'agents controlled by the same policy must have same observation/action shapes!'
+                == share_obs_shape), 'agents controlled by the same policy must have same observation/action shapes!'
 
 
 def assert_same_act_dim(action_space):
