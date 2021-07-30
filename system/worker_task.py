@@ -12,10 +12,8 @@ import itertools
 from system.actor_worker import ActorWorker
 from system.policy_worker import PolicyWorker
 from system.actor_group_manager import ActorGroupManager
-from utils.buffer import SharedWorkerBuffer
 from utils.timing import Timing
-from utils.utils import (log, TaskType, list_child_processes, kill_processes, get_obs_shapes_from_spaces,
-                         get_shape_from_act_space, assert_same_obs_shape, assert_same_act_dim)
+from utils.utils import log, TaskType, list_child_processes, kill_processes
 
 if os.name == 'nt':
     from sample_factory.utils import Queue as MpQueue
@@ -31,7 +29,8 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 
 
 class WorkerTask:
-    def __init__(self, cfg, task_rank, policy_id, env_fn, local_ps, param_locks, ps_policy_versions, ps_ready_events,
+    def __init__(self, cfg, task_rank, policy_id, env_fn, buffer, act_shms, act_semaphores, envstep_output_shms,
+                 envstep_output_semaphores, local_ps, param_locks, ps_policy_versions, ps_ready_events,
                  task_finish_event):
         self.cfg = cfg
         self.policy_id = policy_id
@@ -57,9 +56,7 @@ class WorkerTask:
         # multiprocessing event indicating whether ps is ready
         self.ps_ready_events = ps_ready_events
 
-        # shared memory allocation
-        self.buffer = SharedWorkerBuffer(self.cfg, self.policy_id, self.num_agents, self.obs_space,
-                                         self.share_obs_space, self.action_space)
+        self.buffer = buffer
 
         self.actor_workers = []
         self.policy_workers = []
@@ -86,8 +83,8 @@ class WorkerTask:
         self.stats = dict()  # regular (non-averaged) stats
 
         # shared memory and synchronization primitives for communication between actor worker and policy worker
-        self.act_shms, self.act_semaphores = None, None
-        self.envstep_output_shms, self.envstep_output_semaphores = None, None
+        self.act_shms, self.act_semaphores = act_shms, act_semaphores
+        self.envstep_output_shms, self.envstep_output_semaphores = envstep_output_shms, envstep_output_semaphores
 
         # ZeroMQ sockets to receive tasks
         self._context = None
@@ -122,69 +119,6 @@ class WorkerTask:
         self.task_result_socket = self._context.socket(zmq.PUSH)
         self.task_result_socket.connect(self.cfg.task_result_addr)
         self.task_result_socket.send(self.socket_identity)
-
-    def init_shm_primitives(self):
-        envs_per_split = self.cfg.envs_per_actor // self.cfg.num_splits
-
-        # initialize action/observation shared memories for communication between actors and policy workers
-        # TODO: initialize env step outputs using config
-        # following is just the case of StarCraft2 (policy-sharing environments)
-        envstep_output_keys = [
-            'obs', 'share_obs', 'rewards', 'available_actions', 'fct_masks', 'rnn_states', 'rnn_states_critic'
-        ]
-
-        # actor workers consume actions and produce envstep_outputs in one shot (in env.step),
-        # thus action_shms and envstep_output_semaphores only have one copy (not seperated for different policy_ids)
-        self.envstep_output_semaphores = [[mp.Semaphore(0) for _ in range(self.cfg.num_splits)]
-                                          for _ in range(self.num_actors)]
-
-        assert_same_act_dim(self.cfg.action_space)
-        act_dim = get_shape_from_act_space(self.cfg.action_space[0])
-        self.act_shms = [[
-            torch.zeros((envs_per_split, self.cfg.num_agents, act_dim), dtype=torch.float32).share_memory_().numpy()
-            for _ in range(self.cfg.num_splits)
-        ] for _ in range(self.num_actors)]
-
-        # in the opposite side, different policy workers with different policy ids consume different subsets of
-        # envstep_outputs and produce different subsets of actions asynchronously, thus act_semaphores and
-        # envstep_output_shms have different copies for different policy ids
-        self.act_semaphores = []
-        self.envstep_output_shms = {}
-        for k in envstep_output_keys:
-            self.envstep_output_shms[k] = []
-        self.envstep_output_shms['dones'] = []
-
-        for controlled_agents in self.cfg.policy2agents.values():
-            self.act_semaphores.append([[mp.Semaphore(0) for _ in range(self.cfg.num_splits)]
-                                        for _ in range(self.num_actors)])
-
-            assert_same_obs_shape(controlled_agents, self.cfg.observation_space, self.cfg.share_observation_space)
-            obs_shape, share_obs_shape = get_obs_shapes_from_spaces(
-                self.cfg.observation_space[controlled_agents[0]],
-                self.cfg.share_observation_space[controlled_agents[0]])
-            num_agents = len(controlled_agents)
-
-            for k in envstep_output_keys:
-                if not hasattr(self.buffer, k):
-                    continue
-
-                if k == 'obs':
-                    shape = obs_shape
-                elif k == 'share_obs':
-                    shape = share_obs_shape
-                else:
-                    shape = getattr(self.buffer, k).shape[4:]
-                shape = (envs_per_split * self.cfg.actor_group_size, num_agents, *shape)
-
-                self.envstep_output_shms[k].append([[
-                    torch.zeros(shape, dtype=torch.float32).share_memory_().numpy() for _ in range(self.cfg.num_splits)
-                ] for _ in range(self.num_actor_groups)])
-
-            dones_shape = (envs_per_split * self.cfg.actor_group_size, num_agents, 1)
-            self.envstep_output_shms['dones'].append([[
-                torch.zeros(dones_shape, dtype=torch.float32).share_memory_().numpy()
-                for _ in range(self.cfg.num_splits)
-            ] for _ in range(self.num_actor_groups)])
 
     def create_actor_worker(self, idx, actor_queue):
         group_idx = idx // self.cfg.actor_group_size
