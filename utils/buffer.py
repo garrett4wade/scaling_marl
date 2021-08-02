@@ -22,6 +22,7 @@ class ReplayBuffer:
                 if v == self.policy_id:
                     self.num_trainers += 1
                     self.available_dsts.append((int(node_idx), i))
+        self.available_dsts = np.array(self.available_dsts, dtype=np.int32)
 
         self.obs_space = obs_space
         self.share_obs_space = share_obs_space
@@ -512,6 +513,8 @@ class SharedPolicyMixin(PolicyMixin):
                fct_masks=None,
                available_actions=None,
                **policy_outputs):
+        client_ids = np.array(client_ids, dtype=np.int32)
+
         with timing.add_time('inference/insert/acquire_lock'), timing.time_avg('inference/insert/acquire_lock_once'):
             self._insertion_idx_lock.acquire()
 
@@ -530,7 +533,8 @@ class SharedPolicyMixin(PolicyMixin):
 
             # fill in the bootstrap step of a previous slot
             closure_choose = np.logical_and(ep_steps == 0, prev_slot_ids != -1)
-            closure_slot_ids = slot_ids[closure_choose], old_closure_slot_ids = prev_slot_ids[closure_choose]
+            closure_slot_ids = slot_ids[closure_choose]
+            old_closure_slot_ids = prev_slot_ids[closure_choose]
 
             # if a slot is full except for the bootstrap step, allocate a new slot for the corresponding client
             opening_choose = ep_steps == self.episode_length - 1

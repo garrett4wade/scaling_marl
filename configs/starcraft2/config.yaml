@@ -57,13 +57,13 @@ policy2agents:
     - 25
     - 26
 ddp_init_methods:
-  - tcp://10.0.4.30:6666
-task_dispatcher_addr: tcp://10.0.4.30:8887
-task_result_addr: tcp://10.0.4.30:8886
+  - tcp://10.0.4.14:6666
+task_dispatcher_addr: tcp://10.0.4.14:8887
+task_result_addr: tcp://10.0.4.14:8886
 model_weights_addrs:  # every learner has a model_weights_addr and len(model_weights_adddrs) == num_policies == num_leraners
-  - tcp://10.0.4.30:8889
+  - tcp://10.0.4.14:8889
 seg_addrs:  # every worker node has seg_addrs connecting to all learners
-  - - tcp://10.0.4.30:12346
+  - - tcp://10.0.4.14:12346
 num_actors: 128
 actor_group_size: 1
 envs_per_actor: 2
