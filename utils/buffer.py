@@ -118,6 +118,28 @@ class ReplayBuffer:
             assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
         return slot_id
 
+    def _allocate_many(self, num_slots_to_allocate):
+        slot_ids = []
+        with self._read_ready:
+            writable_slots = np.nonzero(self._is_writable)[0]
+            if len(writable_slots) > 0:
+                slot_ids.extend(writable_slots[:num_slots_to_allocate])
+                # writable -> busy
+                self._is_writable[slot_ids] = 0
+            if len(slot_ids) < num_slots_to_allocate:
+                res = num_slots_to_allocate - len(slot_ids)
+                readable_slots = np.nonzero(self._is_readable)[0]
+                assert len(readable_slots) > res, 'please increase qsize!'
+                # replace the oldest readable slot, in a FIFO pattern
+                res_slots = readable_slots[np.argsort(self._time_stamp[readable_slots])[:res]]
+                # readable -> busy
+                self._is_readable[res_slots] = 0
+                self._time_stamp[res_slots] = 0
+                slot_ids.extend(res_slots)
+            self._is_busy[slot_ids] = 1
+            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
+        return slot_ids
+
     def _mark_as_readable(self, slots):
         with self._read_ready:
             # update indicator of current slot
@@ -222,11 +244,17 @@ class WorkerBuffer(ReplayBuffer):
         self._destination[slot_id] = self.available_dsts[self._cur_dst_idx]
         self._cur_dst_idx = (self._cur_dst_idx + 1) % len(self.available_dsts)
 
-        if self._slot_indices[identity] != -1:
-            # if this is not the very first allocation
-            self._prev_slot_indices[identity] = self._slot_indices[identity]
-
+        self._prev_slot_indices[identity] = self._slot_indices[identity]
         self._slot_indices[identity] = slot_id
+
+    def _allocate_many(self, identities):
+        slot_ids = super()._allocate_many(len(identities))
+        self._destination[slot_ids] = self.available_dsts[np.arange(
+            self._cur_dst_idx, self._cur_dst_idx + len(identities)) % len(self.available_dsts)]
+        self._cur_dst_idx = (self._cur_dst_idx + len(identities)) % len(self.available_dsts)
+
+        self._prev_slot_indices[identities] = self._slot_indices[identities]
+        self._slot_indices[identities] = slot_ids
 
     def _slot_closure(self, old_slots, new_slots):
         # when filling the first timestep of a new slot, copy data into the previous slot as bootstrap values
@@ -484,11 +512,6 @@ class SharedPolicyMixin(PolicyMixin):
                fct_masks=None,
                available_actions=None,
                **policy_outputs):
-        # fill in the bootstrap step of a previous slot
-        closure_slot_ids, old_closure_slot_ids = [], []
-        # if a slot is full except for the bootstrap step, allocate a new slot for the corresponding client
-        opening_slot_ids, opening_new_slot_ids = [], []
-
         with timing.add_time('inference/insert/acquire_lock'), timing.time_avg('inference/insert/acquire_lock_once'):
             self._insertion_idx_lock.acquire()
 
@@ -498,21 +521,23 @@ class SharedPolicyMixin(PolicyMixin):
                     self._allocate(client_id)
             slot_ids = self._slot_indices[client_ids]
             ep_steps = self._ep_step[slot_ids]
+            prev_slot_ids = self._prev_slot_indices[client_ids]
 
         with timing.add_time('inference/insert/process_marginal'), timing.time_avg(
                 'inference/insert/process_marginal_once'):
             # advance 1 timestep
             self._ep_step[slot_ids] += 1
 
-            for ep_step, slot_id, client_id in zip(ep_steps, slot_ids, client_ids):
-                if ep_step == 0 and self._prev_slot_indices[client_id] != -1:
-                    closure_slot_ids.append(slot_id)
-                    old_closure_slot_ids.append(self._prev_slot_indices[client_id])
+            # fill in the bootstrap step of a previous slot
+            closure_choose = np.logical_and(ep_steps == 0, prev_slot_ids != -1)
+            closure_slot_ids = slot_ids[closure_choose], old_closure_slot_ids = prev_slot_ids[closure_choose]
 
-                if ep_step == self.episode_length - 1:
-                    opening_slot_ids.append(slot_id)
-                    self._allocate(client_id)
-                    opening_new_slot_ids.append(self._slot_indices[client_id])
+            # if a slot is full except for the bootstrap step, allocate a new slot for the corresponding client
+            opening_choose = ep_steps == self.episode_length - 1
+            opening_slot_ids = slot_ids[opening_choose]
+            opening_clients = client_ids[opening_choose]
+            self._allocate_many(opening_clients)
+            opening_new_slot_ids = self._slot_indices[opening_clients]
 
             self._ep_step[opening_slot_ids] = 0
             self._insertion_idx_lock.release()
