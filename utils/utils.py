@@ -337,7 +337,7 @@ def set_global_cuda_envvars(cfg):
     if not cfg.cuda:
         available_gpus = ''
     else:
-        available_gpus = get_gpus_without_triggering_pytorch_cuda_initialization(os.environ)
+        available_gpus = get_gpus_without_triggering_pytorch_cuda_initialization(cfg.cwd, os.environ)
 
     if 'CUDA_VISIBLE_DEVICES' not in os.environ:
         os.environ['CUDA_VISIBLE_DEVICES'] = available_gpus

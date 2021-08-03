@@ -144,8 +144,6 @@ class PolicyWorker:
                 # masks/dones has shape (num_requests, envs_per_split, num_agents, 1)
                 policy_inputs['masks'][:] = 1 - np.all(envstep_outputs['dones'], axis=2, keepdims=True)
 
-                input_rnn_states = {k: v for k, v in policy_inputs.items() if 'rnn_states' in k}
-
             with timing.add_time('inference/preprosessing'):
                 shared = policy_inputs['obs'].shape[:3] == (len(organized_requests), self.envs_per_group,
                                                             self.num_agents)
@@ -189,16 +187,15 @@ class PolicyWorker:
                         self.act_semaphores[global_actor_idx][split_idx].release()
 
             with timing.add_time('inference/insert'):
+                if self.buffer.policy_id == self.policy_id:
+                    insert_data = {k: v for k, v in policy_outputs.items() if 'rnn_states' not in k}
+                    self.buffer.insert(timing, self.request_clients, **envstep_outputs, **insert_data)
+
                 # copy rnn states into small shared memory block
                 for k, shm_pairs in self.envstep_output_shms.items():
                     if 'rnn_states' in k:
                         for i, (split_idx, group_idx) in enumerate(organized_requests):
                             shm_pairs[group_idx][split_idx][:] = policy_outputs[k][i]
-
-                if self.buffer.policy_id == self.policy_id:
-                    insert_data = {k: v for k, v in policy_outputs.items() if 'rnn_states' not in k}
-                    self.buffer.insert(timing, self.request_clients, **envstep_outputs, **input_rnn_states,
-                                       **insert_data)
 
         self.request_clients = []
         self.total_num_samples += rollout_bs
