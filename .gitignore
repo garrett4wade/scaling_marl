@@ -4,3 +4,7 @@ core.*
 *log*
 *wandb*
 models/*
+*.pyc
+note
+*.sh
+*.png

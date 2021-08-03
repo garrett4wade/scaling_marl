@@ -361,6 +361,7 @@ class WorkerTask:
                         msg = self.task_socket.recv_multipart(flags=zmq.NOBLOCK)
                         self.task_queue.put(msg)
                     except zmq.ZMQError:
+                        #log.warning(('ZMQ Error on Worker Task %d'), self.task_rank)
                         pass
 
                     if not self.is_executing_task:

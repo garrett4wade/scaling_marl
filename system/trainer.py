@@ -167,6 +167,8 @@ class Trainer:
             self.task_result_socket.connect(self.cfg.task_result_addr)
             self.task_result_socket.send(self.socket_identity)
 
+        log.debug('Trainer {} initializing process group!'.format(self.trainer_idx))
+
         # os.environ['NCCL_DEBUG'] = 'info'
         os.environ['NCCL_SOCKET_IFNAME'] = 'eth0'
         os.environ['NCCL_IB_DISABLE'] = '1'
