@@ -2,15 +2,17 @@ import argparse
 import yaml
 from monitor.monitor import Monitor
 
+
 def get_config():
     parser = argparse.ArgumentParser(description='monitor', formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--is_head", action = "store_true")
-    parser.add_argument("--name", type = str, default = "learner0")
-    parser.add_argument("--config", type = str, default = "configs/starcraft2/config.yaml")
-    
+    parser.add_argument("--is_head", action="store_true")
+    parser.add_argument("--name", type=str, default="learner0")
+    parser.add_argument("--config", type=str, default="configs/starcraft2/config.yaml")
+
     return parser.parse_args()
 
-if __name__ == '__main__':    
+
+if __name__ == '__main__':
     cfg = get_config()
     if cfg.config is not None:
         with open(cfg.config) as f:
