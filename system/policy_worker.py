@@ -190,8 +190,10 @@ class PolicyWorker:
                 if self.buffer.policy_id == self.policy_id:
                     insert_data = {k: v for k, v in policy_outputs.items() if 'rnn_states' not in k}
                     insert_data = {**insert_data, **envstep_outputs}
-                    slot_ids, ep_steps = self.buffer.advance_indices(timing, self.request_clients, **insert_data)
-                    self.buffer.insert(timing, slot_ids, ep_steps, **insert_data)
+                    slot_ids, ep_steps, masks, active_masks = self.buffer.advance_indices(timing, self.request_clients, **insert_data)
+
+                    insert_data.pop('dones')
+                    self.buffer.insert(timing, slot_ids, ep_steps, masks=masks, active_masks=active_masks, **insert_data)
 
                 # copy rnn states into small shared memory block
                 for k, shm_pairs in self.envstep_output_shms.items():

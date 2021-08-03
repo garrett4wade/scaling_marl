@@ -537,6 +537,17 @@ class SharedPolicyMixin(PolicyMixin):
             self._insertion_idx_lock.release()
 
         with timing.add_time('inference/insert/closure'):
+            dones = insert_data['dones']
+            masks = 1 - np.all(dones, axis=2, keepdims=True)
+
+            if hasattr(self, 'active_masks'):
+                dones_cp = dones.copy()
+                # deal with the auto-reset
+                dones_cp[np.all(dones, axis=2).squeeze(-1)] = 0
+                active_masks = 1 - dones_cp
+            else:
+                active_masks = None
+
             if len(old_closure_slot_ids) > 0:
                 # when filling the first timestep of a new slot, copy data into the previous slot as bootstrap values
                 # specifially, copied data includes all data needs to be bootstrapped
@@ -545,16 +556,19 @@ class SharedPolicyMixin(PolicyMixin):
                 for storage_spec in self.storage_specs:
                     name, _, _, bootstrap, _ = storage_spec
                     if bootstrap:
-                        self.storage[name][old_closure_slot_ids, -1] = insert_data[name]
+                        if name in insert_data.keys():
+                            self.storage[name][old_closure_slot_ids, -1] = insert_data[name][closure_choose]
+                        else:
+                            self.storage[name][old_closure_slot_ids, -1] = locals()[name][closure_choose]
 
-                self.rewards[old_closure_slot_ids, -1] = insert_data['rewards']
+                self.rewards[old_closure_slot_ids, -1] = insert_data['rewards'][closure_choose]
 
                 # NOTE: following 2 lines for debug only
                 # with self._read_ready:
                 #     assert np.all(self._is_busy[old_slots]) and np.all(self._is_busy[new_slots])
-                super()._mark_as_readable(old_closure_slot_ids)
+                self._mark_as_readable(old_closure_slot_ids)
 
-        return slot_ids, ep_steps
+        return slot_ids, ep_steps, masks, active_masks
 
     def insert(self,
                timing,
@@ -563,7 +577,8 @@ class SharedPolicyMixin(PolicyMixin):
                obs,
                share_obs,
                rewards,
-               dones,
+               masks,
+               active_masks=None,
                fct_masks=None,
                available_actions=None,
                **policy_outputs_and_input_rnn_states):
@@ -572,17 +587,13 @@ class SharedPolicyMixin(PolicyMixin):
             self.share_obs[slot_ids, ep_steps] = share_obs
             self.obs[slot_ids, ep_steps] = obs
             self.rewards[slot_ids[ep_steps >= 1], ep_steps[ep_steps >= 1] - 1] = rewards[ep_steps >= 1]
-            masks = 1 - np.all(dones, axis=2, keepdims=True)
             self.masks[slot_ids, ep_steps] = masks
 
             if hasattr(self, 'available_actions') and available_actions is not None:
                 self.available_actions[slot_ids, ep_steps] = available_actions
 
             if hasattr(self, 'active_masks'):
-                dones_cp = dones.copy()
-                # deal with the auto-reset
-                dones_cp[np.all(dones, axis=2).squeeze(-1)] = 0
-                self.active_masks[slot_ids, ep_steps] = 1 - dones_cp
+                self.active_masks[slot_ids, ep_steps] = active_masks
 
             if hasattr(self, 'fct_masks') and fct_masks is not None:
                 self.fct_masks[slot_ids, ep_steps] = fct_masks
