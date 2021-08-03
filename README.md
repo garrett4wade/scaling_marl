@@ -33,3 +33,5 @@ and just run a worker node as normal.
 Specify node numbers (for ssh), container names and learner/worker names in config, and run `python run.py` in this directory (run this outside of container with python2). Notice that `update.sh` update your code before running, you can write your own `update.sh` and uncomment code in `run.py` to auto update before run.
 
 The monitor processes run on every container. The head monitor try to gather system information (RX, TX, cpu utilization) from other monitors every `interval` seconds, and print them out to log. If you want a graph for these information after a run, uncomment `m.summary()` line in `run.py`.
+
+You can modify `monitor/script.py` and `run.py` for your own preference.

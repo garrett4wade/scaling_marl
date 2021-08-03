@@ -56,18 +56,7 @@ def worker_block(workerdir, configdir, worker_logdir, workers, container_name):
     cmds = [ssh_("node$i", docker_(container_name, worker_cmd)), "((j=j+1))", "sleep 0.5"]
     worker_block += loop_block(cmds, ("i", "\"${arr[@]}\""))
     return worker_block
-
-# def monitor_block(monitordir, configdir, monitor_logdir, allnodes, container_name):
-#     monitor_block = "arr=( "
-#     allnodes = allnodes.split(",")
-#     for n in allnodes:
-#         monitor_block += str(n) + " "
-#     monitor_block += ")\n"
-#     monitor_cmd = cmd_(monitordir, configdir, monitor_logdir, "monitor", None)
-#     cmds = [ssh_("node$i", docker_(container_name, monitor_cmd))]
-#     monitor_block += loop_block(cmds, ("i", "\"${arr[@]}\""))
-#     return monitor_block
-
+    
 def monitor_block(monitordir, configdir, monitor_logdir, names, container_name, allnodes):
     block = ""
     names = names.split(",")

@@ -1,4 +1,0 @@
-Traceback (most recent call last):
-  File "pairserver.py", line 1, in <module>
-    import zmq
-ImportError: No module named zmq
