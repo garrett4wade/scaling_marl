@@ -351,6 +351,9 @@ class WorkerTask:
 
         self.finish_initialization()
 
+        # TODO: call this function every time a ROLLOUT task is received
+        self.buffer.prepare_rollout()
+
         log.info('Collecting experience...')
 
         timing = Timing()

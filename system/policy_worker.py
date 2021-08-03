@@ -84,6 +84,8 @@ class PolicyWorker:
         self.total_num_samples = 0
         self.total_inference_steps = 0
 
+        self.stop_experience_collection = False
+
         self.process = TorchProcess(target=self._run, daemon=True)
 
     def _init(self, timing):
@@ -176,8 +178,18 @@ class PolicyWorker:
                         policy_outputs[k] = _t2n(v).reshape(len(self.request_clients), self.envs_per_group,
                                                             *v.shape[1:])
 
+            with timing.add_time('inference/advance_buffer_indices'):
+                if self.buffer.policy_id == self.policy_id:
+                    insert_data = {k: v for k, v in policy_outputs.items() if 'rnn_states' not in k}
+                    insert_data = {**insert_data, **envstep_outputs}
+                    slot_ids, ep_steps, masks, active_masks, valid_choose = self.buffer.advance_indices(timing, self.request_clients, pause=self.stop_experience_collection, **insert_data)
+                    insert_data.pop('dones')
+
             with timing.add_time('inference/copy_actions'):
                 for i, (split_idx, group_idx) in enumerate(organized_requests):
+                    if self.buffer.policy_id == self.policy_id and self.stop_experience_collection and not valid_choose[i]:
+                        continue
+
                     for local_actor_idx in range(self.cfg.actor_group_size):
                         global_actor_idx = self.cfg.actor_group_size * group_idx + local_actor_idx
                         env_slice = slice(local_actor_idx * self.envs_per_split,
@@ -188,12 +200,7 @@ class PolicyWorker:
 
             with timing.add_time('inference/insert'):
                 if self.buffer.policy_id == self.policy_id:
-                    insert_data = {k: v for k, v in policy_outputs.items() if 'rnn_states' not in k}
-                    insert_data = {**insert_data, **envstep_outputs}
-                    slot_ids, ep_steps, masks, active_masks = self.buffer.advance_indices(timing, self.request_clients, **insert_data)
-
-                    insert_data.pop('dones')
-                    self.buffer.insert(timing, slot_ids, ep_steps, masks=masks, active_masks=active_masks, **insert_data)
+                    self.buffer.insert(timing, slot_ids, ep_steps, valid_choose, masks=masks, active_masks=active_masks, **insert_data)
 
                 # copy rnn states into small shared memory block
                 for k, shm_pairs in self.envstep_output_shms.items():

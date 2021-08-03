@@ -504,17 +504,16 @@ class PolicyMixin:
 
 
 class SharedPolicyMixin(PolicyMixin):
+    def prepare_rollout(self):
+        self._allocate_many(np.arange(self.num_actor_groups * self.num_splits))
+
     def advance_indices(self, timing, client_ids, pause=False, **insert_data):
-        # TODO: deal with pause
         client_ids = np.array(client_ids, dtype=np.int32)
 
         with timing.add_time('inference/insert/acquire_lock'), timing.time_avg('inference/insert/acquire_lock_once'):
             self._insertion_idx_lock.acquire()
 
         with timing.add_time('inference/insert/get_indices'), timing.time_avg('inference/insert/get_indices_once'):
-            for i, client_id in enumerate(client_ids):
-                if self._slot_indices[client_id] == self.num_slots:
-                    self._allocate(client_id)
             slot_ids = self._slot_indices[client_ids]
             ep_steps = self._ep_step[client_ids]
             prev_slot_ids = self._prev_slot_indices[client_ids]
@@ -531,9 +530,17 @@ class SharedPolicyMixin(PolicyMixin):
             # if a slot is full except for the bootstrap step, allocate a new slot for the corresponding client
             opening_choose = ep_steps == self.episode_length - 1
             opening_clients = client_ids[opening_choose]
-            self._allocate_many(opening_clients)
 
-            self._ep_step[opening_clients] = 0
+            if len(opening_clients) > 0:
+                if not pause:
+                    self._allocate_many(opening_clients)
+                else:
+                    # reset slot_indices and destinations if ready to pause
+                    self._destination[slot_ids] = -1
+                    self._prev_slot_indices[opening_clients] = self._slot_indices[opening_clients]
+                    self._slot_indices[opening_clients] = self.num_slots
+
+                self._ep_step[opening_clients] = 0
             self._insertion_idx_lock.release()
 
         with timing.add_time('inference/insert/closure'):
@@ -568,12 +575,20 @@ class SharedPolicyMixin(PolicyMixin):
                 #     assert np.all(self._is_busy[old_slots]) and np.all(self._is_busy[new_slots])
                 self._mark_as_readable(old_closure_slot_ids)
 
-        return slot_ids, ep_steps, masks, active_masks
+                if pause:
+                    # reset prev slot indices if ready to pause
+                    closure_clients = client_ids[closure_choose]
+                    self._prev_slot_indices[closure_clients] = self.num_slots
+            
+            valid_choose = np.logical_not(closure_choose)
+
+        return slot_ids[valid_choose], ep_steps[valid_choose], masks, active_masks, valid_choose
 
     def insert(self,
                timing,
                slot_ids,
                ep_steps,
+               valid_choose,
                obs,
                share_obs,
                rewards,
@@ -584,19 +599,19 @@ class SharedPolicyMixin(PolicyMixin):
                **policy_outputs_and_input_rnn_states):
         with timing.add_time('inference/insert/copy_data'), timing.time_avg('inference/insert/copy_data_once'):
             # env step returns
-            self.share_obs[slot_ids, ep_steps] = share_obs
-            self.obs[slot_ids, ep_steps] = obs
-            self.rewards[slot_ids[ep_steps >= 1], ep_steps[ep_steps >= 1] - 1] = rewards[ep_steps >= 1]
-            self.masks[slot_ids, ep_steps] = masks
+            self.share_obs[slot_ids, ep_steps] = share_obs[valid_choose]
+            self.obs[slot_ids, ep_steps] = obs[valid_choose]
+            self.rewards[slot_ids[ep_steps >= 1], ep_steps[ep_steps >= 1] - 1] = rewards[valid_choose][ep_steps >= 1]
+            self.masks[slot_ids, ep_steps] = masks[valid_choose]
 
             if hasattr(self, 'available_actions') and available_actions is not None:
-                self.available_actions[slot_ids, ep_steps] = available_actions
+                self.available_actions[slot_ids, ep_steps] = available_actions[valid_choose]
 
             if hasattr(self, 'active_masks'):
-                self.active_masks[slot_ids, ep_steps] = active_masks
+                self.active_masks[slot_ids, ep_steps] = active_masks[valid_choose]
 
             if hasattr(self, 'fct_masks') and fct_masks is not None:
-                self.fct_masks[slot_ids, ep_steps] = fct_masks
+                self.fct_masks[slot_ids, ep_steps] = fct_masks[valid_choose]
 
             # model inference returns
             # we don't need to mask rnn states here because they will be masked when fed into wrapped RNN
@@ -606,11 +621,11 @@ class SharedPolicyMixin(PolicyMixin):
                                                   ep_steps < self.episode_length)
                     if np.any(selected_idx):
                         self.storage[k][slot_ids[selected_idx], ep_steps[selected_idx] //
-                                        self.data_chunk_length] = policy_outputs_and_input_rnn_states[k][selected_idx]
+                                        self.data_chunk_length] = policy_outputs_and_input_rnn_states[k][valid_choose][selected_idx]
                 else:
-                    self.storage[k][slot_ids, ep_steps] = policy_outputs_and_input_rnn_states[k]
+                    self.storage[k][slot_ids, ep_steps] = policy_outputs_and_input_rnn_states[k][valid_choose]
 
-        self.total_timesteps += self.obs.shape[2]
+        self.total_timesteps += len(slot_ids)
 
 
 class SharedWorkerBuffer(WorkerBuffer, SharedPolicyMixin):
