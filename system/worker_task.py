@@ -64,6 +64,7 @@ class WorkerTask:
         # faster_fifo queue is initialized using BYTES!
         self.report_queue = MpQueue(40 * 1000 * 1000)  # 40 MB
         self.policy_queues = [MpQueue(40 * 1000) for _ in range(self.cfg.num_policies)]  # 40 KB
+        self.policy_worker_queues = [[mp.JoinableQueue(40 * 1000) for _ in range(self.cfg.num_policy_workers)] for _ in range(self.cfg.num_policies)]
 
         self.num_actor_groups = self.num_actors // self.cfg.actor_group_size
 
@@ -247,6 +248,7 @@ class WorkerTask:
                     self.cfg.share_observation_space[policy_id],
                     self.cfg.action_space[policy_id],
                     self.buffer,
+                    self.policy_worker_queues[policy_id][i],
                     self.policy_queues[policy_id],
                     self.report_queue,
                     self.act_shms,
@@ -261,6 +263,9 @@ class WorkerTask:
                 policy_worker_tuple.append(policy_worker)
                 policy_worker.start_process()
             self.policy_workers.append(tuple(policy_worker_tuple))
+        
+        # TODO: call this function every time a ROLLOUT task is received
+        self.buffer.prepare_rollout()
 
         log.info('Initializing actors...')
 
@@ -350,9 +355,6 @@ class WorkerTask:
         self.init_workers()
 
         self.finish_initialization()
-
-        # TODO: call this function every time a ROLLOUT task is received
-        self.buffer.prepare_rollout()
 
         log.info('Collecting experience...')
 

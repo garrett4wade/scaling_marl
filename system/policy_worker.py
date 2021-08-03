@@ -23,7 +23,7 @@ def _t2n(x):
 
 class PolicyWorker:
     def __init__(self, cfg, policy_id, task_rank, replicate_rank, obs_space, share_obs_space, action_space, buffer,
-                 policy_queue, report_queue, act_shms, act_semaphores, envstep_output_shms, local_ps, param_lock,
+                 task_queue, policy_queue, report_queue, act_shms, act_semaphores, envstep_output_shms, local_ps, param_lock,
                  ps_policy_version, ps_ready_event):
         self.cfg = cfg
 
@@ -73,7 +73,7 @@ class PolicyWorker:
         self.envstep_output_shms = envstep_output_shms
 
         # queue other components use to talk to this particular worker
-        self.termination_queue = mp.JoinableQueue(1)
+        self.task_queue = task_queue
 
         self.initialized = False
         self.terminate = False
@@ -271,13 +271,13 @@ class PolicyWorker:
 
                 with timing.add_time('get_tasks'):
                     try:
-                        task_type = self.termination_queue.get_nowait()
+                        task_type = self.task_queue.get_nowait()
 
                         if task_type == TaskType.TERMINATE:
                             self.terminate = True
                             break
 
-                        self.termination_queue.task_done()
+                        self.task_queue.task_done()
                     except Empty:
                         pass
 
@@ -319,7 +319,7 @@ class PolicyWorker:
         self.process.start()
 
     def close(self):
-        self.termination_queue.put(TaskType.TERMINATE)
+        self.task_queue.put(TaskType.TERMINATE)
 
     def join(self):
         join_or_kill(self.process)
