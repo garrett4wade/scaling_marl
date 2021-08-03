@@ -2,7 +2,7 @@ project_name: scaling
 group_name: wandb_test
 algorithm_name: rmappo
 env_name: StarCraft2
-map_name: 27m_vs_30m
+map_name: 3m
 user_name: garrett4wade
 experiment_name: test
 benchmark: false
@@ -16,7 +16,7 @@ use_render: false
 
 num_env_steps: 100000000
 train_for_env_steps: 100000000
-train_for_seconds: 5000 
+train_for_seconds: 500
 model_dir: null
 save_dir: './models'
 summary_dir: './logs'
@@ -31,40 +31,17 @@ policy2agents:
   "0":
     - 0
     - 1
-    - 2
-    - 3
-    - 4
-    - 5
-    - 6
-    - 7
-    - 8
-    - 9
-    - 10
-    - 11
-    - 12
-    - 13
-    - 14
-    - 15
-    - 16
-    - 17
-    - 18
-    - 19
-    - 20
-    - 21
-    - 22
-    - 23
-    - 24
-    - 25
-    - 26
+    - 2 
 ddp_init_methods:
-  - tcp://10.0.4.14:6666
-task_dispatcher_addr: tcp://10.0.4.14:8887
-task_result_addr: tcp://10.0.4.14:8886
+  - tcp://10.0.7.3:6666
+task_dispatcher_addr: tcp://10.0.7.3:8887
+task_result_addr: tcp://10.0.7.3:8886
 model_weights_addrs:  # every learner has a model_weights_addr and len(model_weights_adddrs) == num_policies == num_leraners
-  - tcp://10.0.4.14:8889
+  - tcp://10.0.7.3:8889
 seg_addrs:  # every worker node has seg_addrs connecting to all learners
-  - - tcp://10.0.4.14:12346
-num_actors: 128
+  - - tcp://10.0.7.3:12346
+    - tcp://10.0.7.3:12347
+num_actors: 80
 actor_group_size: 1
 envs_per_actor: 2
 min_num_requests: -1
@@ -151,12 +128,12 @@ worker_dir: "run_worker_node_on_smac.py"
 monitor_dir: "run_monitor.py"
 log_dir: "log/"
 
-trainer_logname: "trainer.log"
-worker_logname: "worker.log"
-monitor_logname: "monitor.log"
+trainer_logname: "trainer_3m_benchmark.log"
+worker_logname: "worker_3m_benchmark.log"
+monitor_logname: "monitor_3m_benchmark.log"
 
 # configdir: "configs/starcraft2/config.yaml"
-workers: "71,72,73"
+workers: "71,72"
 trainers: "70"
 container_name: marl-mzy
 
@@ -164,8 +141,9 @@ container_name: marl-mzy
 total_rounds: 100000000 # debug
 interval: 3
 # first node is head
-nodes: learner0,worker0,worker1,worker2
+nodes: learner0,worker0,worker1
 puller_address: "10.0.7.3"
 puller_port: 4321
 
 verbose: false
+

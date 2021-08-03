@@ -218,3 +218,6 @@ class TaskDispatcher:
 
     def join(self):
         join_or_kill(self.process)
+
+    def close(self):
+        pass

@@ -3,7 +3,9 @@ import sys
 
 def get_gpus_without_triggering_pytorch_cuda_initialization(envvars):
     import subprocess
-    out = subprocess.run([sys.executable, 'utils/get_available_gpus.py'], capture_output=True, env=envvars)
+    # temporary work dir for running benchmarks!!
+    wd = "/workspace/code/"
+    out = subprocess.run([sys.executable, wd + 'utils/get_available_gpus.py'], capture_output=True, env=envvars)
     text_output = out.stdout.decode()
     err_output = out.stderr.decode()
     returncode = out.returncode
