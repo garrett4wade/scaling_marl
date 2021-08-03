@@ -504,16 +504,8 @@ class PolicyMixin:
 
 
 class SharedPolicyMixin(PolicyMixin):
-    def insert(self,
-               timing,
-               client_ids,
-               obs,
-               share_obs,
-               rewards,
-               dones,
-               fct_masks=None,
-               available_actions=None,
-               **policy_outputs_and_input_rnn_states):
+    def advance_indices(self, timing, client_ids, pause=False, **insert_data):
+        # TODO: deal with pause
         client_ids = np.array(client_ids, dtype=np.int32)
 
         with timing.add_time('inference/insert/acquire_lock'), timing.time_avg('inference/insert/acquire_lock_once'):
@@ -534,7 +526,6 @@ class SharedPolicyMixin(PolicyMixin):
 
             # fill in the bootstrap step of a previous slot
             closure_choose = np.logical_and(ep_steps == 0, prev_slot_ids != self.num_slots)
-            closure_slot_ids = slot_ids[closure_choose]
             old_closure_slot_ids = prev_slot_ids[closure_choose]
 
             # if a slot is full except for the bootstrap step, allocate a new slot for the corresponding client
@@ -545,6 +536,37 @@ class SharedPolicyMixin(PolicyMixin):
             self._ep_step[opening_clients] = 0
             self._insertion_idx_lock.release()
 
+        with timing.add_time('inference/insert/closure'):
+            if len(old_closure_slot_ids) > 0:
+                # when filling the first timestep of a new slot, copy data into the previous slot as bootstrap values
+                # specifially, copied data includes all data needs to be bootstrapped
+                # and rewards, because rewards is 1-step behind other aligned data,
+                # i.e., env.step() returns observations of the current step, but rewards of the previous step
+                for storage_spec in self.storage_specs:
+                    name, _, _, bootstrap, _ = storage_spec
+                    if bootstrap:
+                        self.storage[name][old_closure_slot_ids, -1] = insert_data[name]
+
+                self.rewards[old_closure_slot_ids, -1] = insert_data['rewards']
+
+                # NOTE: following 2 lines for debug only
+                # with self._read_ready:
+                #     assert np.all(self._is_busy[old_slots]) and np.all(self._is_busy[new_slots])
+                super()._mark_as_readable(old_closure_slot_ids)
+
+        return slot_ids, ep_steps
+
+    def insert(self,
+               timing,
+               slot_ids,
+               ep_steps,
+               obs,
+               share_obs,
+               rewards,
+               dones,
+               fct_masks=None,
+               available_actions=None,
+               **policy_outputs_and_input_rnn_states):
         with timing.add_time('inference/insert/copy_data'), timing.time_avg('inference/insert/copy_data_once'):
             # env step returns
             self.share_obs[slot_ids, ep_steps] = share_obs
@@ -576,10 +598,6 @@ class SharedPolicyMixin(PolicyMixin):
                                         self.data_chunk_length] = policy_outputs_and_input_rnn_states[k][selected_idx]
                 else:
                     self.storage[k][slot_ids, ep_steps] = policy_outputs_and_input_rnn_states[k]
-
-        with timing.add_time('inference/insert/closure_and_opening'):
-            if len(closure_slot_ids) > 0:
-                self._slot_closure(old_closure_slot_ids, closure_slot_ids)
 
         self.total_timesteps += self.obs.shape[2]
 
