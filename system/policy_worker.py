@@ -23,8 +23,8 @@ def _t2n(x):
 
 class PolicyWorker:
     def __init__(self, cfg, policy_id, task_rank, replicate_rank, obs_space, share_obs_space, action_space, buffer,
-                 policy_queue, report_queue, act_shms, act_semaphores, envstep_output_shms,
-                 local_ps, param_lock, ps_policy_version, ps_ready_event):
+                 policy_queue, report_queue, act_shms, act_semaphores, envstep_output_shms, local_ps, param_lock,
+                 ps_policy_version, ps_ready_event):
         self.cfg = cfg
 
         self.policy_id = policy_id
@@ -144,6 +144,8 @@ class PolicyWorker:
                 # masks/dones has shape (num_requests, envs_per_split, num_agents, 1)
                 policy_inputs['masks'][:] = 1 - np.all(envstep_outputs['dones'], axis=2, keepdims=True)
 
+                input_rnn_states = {k: v for k, v in policy_inputs.items() if 'rnn_states' in k}
+
             with timing.add_time('inference/preprosessing'):
                 shared = policy_inputs['obs'].shape[:3] == (len(organized_requests), self.envs_per_group,
                                                             self.num_agents)
@@ -194,8 +196,9 @@ class PolicyWorker:
                             shm_pairs[group_idx][split_idx][:] = policy_outputs[k][i]
 
                 if self.buffer.policy_id == self.policy_id:
-                    insert_data = {**envstep_outputs, **policy_outputs}
-                    self.buffer.insert(timing, self.request_clients, **insert_data)
+                    insert_data = {k: v for k, v in policy_outputs.items() if 'rnn_states' not in k}
+                    self.buffer.insert(timing, self.request_clients, **envstep_outputs, **input_rnn_states,
+                                       **insert_data)
 
         self.request_clients = []
         self.total_num_samples += rollout_bs

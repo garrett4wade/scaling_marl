@@ -217,13 +217,14 @@ class WorkerBuffer(ReplayBuffer):
         super()._init_storage()
 
         # indices mapping client identity to slot id
-        self._slot_indices = ((-1) * torch.ones(
+        self._slot_indices = (self.num_slots * torch.ones(
             (self.num_splits * self.num_actor_groups, ), dtype=torch.int32)).share_memory_().numpy()
-        self._prev_slot_indices = ((-1) * torch.ones(
+        self._prev_slot_indices = (self.num_slots * torch.ones(
             (self.num_splits * self.num_actor_groups, ), dtype=torch.int32)).share_memory_().numpy()
 
         # episode step record
-        self._ep_step = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
+        self._ep_step = torch.zeros((self.num_splits * self.num_actor_groups, ),
+                                    dtype=torch.int32).share_memory_().numpy()
         # Buffer insertion is invoked after copying actions to small shared memory for actors.
         # Since buffer insertion is slow, it is very possible that before the buffer insertion on policy worker #1
         # finishes, policy worker #2 starts buffer insertion of the same client (slot),
@@ -512,7 +513,7 @@ class SharedPolicyMixin(PolicyMixin):
                dones,
                fct_masks=None,
                available_actions=None,
-               **policy_outputs):
+               **policy_outputs_and_input_rnn_states):
         client_ids = np.array(client_ids, dtype=np.int32)
 
         with timing.add_time('inference/insert/acquire_lock'), timing.time_avg('inference/insert/acquire_lock_once'):
@@ -520,30 +521,28 @@ class SharedPolicyMixin(PolicyMixin):
 
         with timing.add_time('inference/insert/get_indices'), timing.time_avg('inference/insert/get_indices_once'):
             for i, client_id in enumerate(client_ids):
-                if self._slot_indices[client_id] == -1:
+                if self._slot_indices[client_id] == self.num_slots:
                     self._allocate(client_id)
             slot_ids = self._slot_indices[client_ids]
-            ep_steps = self._ep_step[slot_ids]
+            ep_steps = self._ep_step[client_ids]
             prev_slot_ids = self._prev_slot_indices[client_ids]
 
         with timing.add_time('inference/insert/process_marginal'), timing.time_avg(
                 'inference/insert/process_marginal_once'):
             # advance 1 timestep
-            self._ep_step[slot_ids] += 1
+            self._ep_step[client_ids] += 1
 
             # fill in the bootstrap step of a previous slot
-            closure_choose = np.logical_and(ep_steps == 0, prev_slot_ids != -1)
+            closure_choose = np.logical_and(ep_steps == 0, prev_slot_ids != self.num_slots)
             closure_slot_ids = slot_ids[closure_choose]
             old_closure_slot_ids = prev_slot_ids[closure_choose]
 
             # if a slot is full except for the bootstrap step, allocate a new slot for the corresponding client
             opening_choose = ep_steps == self.episode_length - 1
-            opening_slot_ids = slot_ids[opening_choose]
             opening_clients = client_ids[opening_choose]
             self._allocate_many(opening_clients)
-            opening_new_slot_ids = self._slot_indices[opening_clients]
 
-            self._ep_step[opening_slot_ids] = 0
+            self._ep_step[opening_clients] = 0
             self._insertion_idx_lock.release()
 
         with timing.add_time('inference/insert/copy_data'), timing.time_avg('inference/insert/copy_data_once'):
@@ -567,26 +566,20 @@ class SharedPolicyMixin(PolicyMixin):
                 self.fct_masks[slot_ids, ep_steps] = fct_masks
 
             # model inference returns
-            rnn_mask = np.expand_dims(masks, -1)
-            for k in policy_outputs.keys():
+            # we don't need to mask rnn states here because they will be masked when fed into wrapped RNN
+            for k in policy_outputs_and_input_rnn_states.keys():
                 if 'rnn_states' in k:
-                    selected_idx = np.logical_and((ep_steps + 1) % self.data_chunk_length == 0,
-                                                  (ep_steps + 1) < self.episode_length)
+                    selected_idx = np.logical_and(ep_steps % self.data_chunk_length == 0,
+                                                  ep_steps < self.episode_length)
                     if np.any(selected_idx):
-                        self.storage[k][slot_ids[selected_idx], (ep_steps[selected_idx] + 1) //
-                                        self.data_chunk_length] = (policy_outputs[k] * rnn_mask)[selected_idx]
+                        self.storage[k][slot_ids[selected_idx], ep_steps[selected_idx] //
+                                        self.data_chunk_length] = policy_outputs_and_input_rnn_states[k][selected_idx]
                 else:
-                    self.storage[k][slot_ids, ep_steps] = policy_outputs[k]
+                    self.storage[k][slot_ids, ep_steps] = policy_outputs_and_input_rnn_states[k]
 
         with timing.add_time('inference/insert/closure_and_opening'):
             if len(closure_slot_ids) > 0:
                 self._slot_closure(old_closure_slot_ids, closure_slot_ids)
-
-            if len(opening_slot_ids) > 0:
-                for k in self.storage_keys:
-                    if 'rnn_states' in k:
-                        self.storage[k][opening_new_slot_ids,
-                                        0] = (policy_outputs[k] * rnn_mask)[ep_steps == self.episode_length - 1]
 
         self.total_timesteps += self.obs.shape[2]
 
