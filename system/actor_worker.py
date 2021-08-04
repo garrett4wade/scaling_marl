@@ -14,6 +14,7 @@ from utils.utils import log, memory_consumption_mb, join_or_kill, set_process_cp
 # TODO: may be accelerated by c++ threading pool
 from envs.env_wrappers import ShareDummyVecEnv
 
+
 class ActorWorkerPhase:
     ROLLOUT, EVALUATION = range(2)
 
@@ -295,7 +296,7 @@ class ActorWorker:
                             assert self.initialized
                             self.phase = ActorWorkerPhase.EVALUATION
                             self.pause_event.set()
-                        
+
                         if task_type == TaskType.RESUME:
                             assert self.initialized
                             self.phase = ActorWorkerPhase.ROLLOUT

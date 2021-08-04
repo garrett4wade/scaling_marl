@@ -64,7 +64,8 @@ class WorkerTask:
         # faster_fifo queue is initialized using BYTES!
         self.report_queue = MpQueue(40 * 1000 * 1000)  # 40 MB
         self.policy_queues = [MpQueue(40 * 1000) for _ in range(self.cfg.num_policies)]  # 40 KB
-        self.policy_worker_queues = [[mp.JoinableQueue(40 * 1000) for _ in range(self.cfg.num_policy_workers)] for _ in range(self.cfg.num_policies)]
+        self.policy_worker_queues = [[mp.JoinableQueue(40 * 1000) for _ in range(self.cfg.num_policy_workers)]
+                                     for _ in range(self.cfg.num_policies)]
 
         self.actor_queues = [MpQueue(2 * 1000 * 1000) for _ in range(self.num_actors)]
 
@@ -107,7 +108,8 @@ class WorkerTask:
 
         self.print_stats_cnt = 0
 
-        self.worker_policy_versions = torch.zeros((self.cfg.num_policies, self.cfg.num_policy_workers), dtype=torch.int32).numpy()
+        self.worker_policy_versions = torch.zeros((self.cfg.num_policies, self.cfg.num_policy_workers),
+                                                  dtype=torch.int32).numpy()
 
         self.actor_pause_events = [mp.Event() for _ in range(self.num_actors)]
         self.stop_experience_collection_cnt = torch.zeros(self.num_actors, dtype=torch.int32).share_memory_().numpy()
@@ -284,7 +286,7 @@ class WorkerTask:
                 policy_worker_tuple.append(policy_worker)
                 policy_worker.start_process()
             self.policy_workers.append(tuple(policy_worker_tuple))
-        
+
         # TODO: call this function every time a ROLLOUT task is received
         self.buffer.prepare_rollout()
 
@@ -382,7 +384,8 @@ class WorkerTask:
             for e in self.actor_pause_events:
                 e.wait()
 
-            self.stop_experience_collection_cond.wait_for(lambda: self.stop_experience_collection_cnt.sum() >= self.cfg.num_splits * self.num_actors)
+            self.stop_experience_collection_cond.wait_for(
+                lambda: self.stop_experience_collection_cnt.sum() >= self.cfg.num_splits * self.num_actors)
             for q in itertools.chain(*self.policy_worker_queues):
                 q.put(TaskType.EVALUATION)
 
@@ -414,7 +417,8 @@ class WorkerTask:
 
             summary_info = torch.zeros(len(infos), dtype=torch.float32).numpy()
             summary_info[:] = list(infos.values())
-            msg = [self.socket_identity, str(self.policy_id).encode('ascii')] + [k.encode('ascii') for k in infos.keys()] + [summary_info]
+            msg = [self.socket_identity, str(self.policy_id).encode('ascii')
+                   ] + [k.encode('ascii') for k in infos.keys()] + [summary_info]
             # TODO: we may need to send policy version for summary
             self.task_result_socket.send_multipart(msg)
 
@@ -423,7 +427,7 @@ class WorkerTask:
 
             for q in itertools.chain(*self.policy_worker_queues):
                 q.put(TaskType.RESUME)
-            
+
             for a_q in self.actor_queues:
                 a_q.put(TaskType.RESUME)
         else:
@@ -453,7 +457,7 @@ class WorkerTask:
                         msg = self.task_socket.recv_multipart(flags=zmq.NOBLOCK)
                         self.task_queue.put(msg)
                     except zmq.ZMQError:
-                        #log.warning(('ZMQ Error on Worker Task %d'), self.task_rank)
+                        # log.warning(('ZMQ Error on Worker Task %d'), self.task_rank)
                         pass
 
                     if not self.is_executing_task:

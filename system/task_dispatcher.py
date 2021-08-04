@@ -175,9 +175,9 @@ class TaskDispatcher:
         if not self.no_summary:
             if self.use_wandb:
                 infos = {'policy_' + str(policy_id) + '/' + k: v for k, v in infos.items()}
-                wandb.log(infos, step=self.consumed_num_steps[policy_id] )
+                wandb.log(infos, step=self.consumed_num_steps[policy_id])
             else:
-                self.writter.add_scalars('policy_' + str(policy_id), infos, step=self.consumed_num_steps[policy_id] )
+                self.writter.add_scalars('policy_' + str(policy_id), infos, step=self.consumed_num_steps[policy_id])
 
     def _run(self):
         log.info('Initializing Task Dispatcher...')

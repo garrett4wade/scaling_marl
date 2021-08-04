@@ -26,9 +26,30 @@ class PolicyWorkerPhase:
 
 
 class PolicyWorker:
-    def __init__(self, cfg, policy_id, task_rank, replicate_rank, obs_space, share_obs_space, action_space, buffer,
-                 task_queue, policy_queue, actor_queues, report_queue, act_shms, act_semaphores, envstep_output_shms, local_ps, param_lock,
-                 ps_policy_version, ps_ready_event, stop_experience_collection_cnt, stop_experience_collection_cond,):
+    def __init__(
+        self,
+        cfg,
+        policy_id,
+        task_rank,
+        replicate_rank,
+        obs_space,
+        share_obs_space,
+        action_space,
+        buffer,
+        task_queue,
+        policy_queue,
+        actor_queues,
+        report_queue,
+        act_shms,
+        act_semaphores,
+        envstep_output_shms,
+        local_ps,
+        param_lock,
+        ps_policy_version,
+        ps_ready_event,
+        stop_experience_collection_cnt,
+        stop_experience_collection_cond,
+    ):
         self.cfg = cfg
 
         self.policy_id = policy_id
@@ -191,21 +212,23 @@ class PolicyWorker:
                 if self.buffer.policy_id == self.policy_id and self.phase != PolicyWorkerPhase.STOP:
                     insert_data = {k: v for k, v in policy_outputs.items() if 'rnn_states' not in k}
                     insert_data = {**insert_data, **envstep_outputs}
-                    slot_ids, ep_steps, masks, active_masks, valid_choose = self.buffer.advance_indices(timing, self.request_clients, pause=(self.phase == PolicyWorkerPhase.CLOSING), **insert_data)
+                    slot_ids, ep_steps, masks, active_masks, valid_choose = self.buffer.advance_indices(
+                        timing, self.request_clients, pause=(self.phase == PolicyWorkerPhase.CLOSING), **insert_data)
                     insert_data.pop('dones')
 
             with timing.add_time('inference/copy_actions'):
                 for i, (split_idx, group_idx) in enumerate(organized_requests):
-                    if self.buffer.policy_id == self.policy_id and self.phase == PolicyWorkerPhase.CLOSING and not valid_choose[i]:
+                    if (self.buffer.policy_id == self.policy_id and self.phase == PolicyWorkerPhase.CLOSING
+                            and not valid_choose[i]):
                         with self.stop_experience_collection_cond:
-                            # if in the closing phase current buffer slot is filled, ignore copying action to actor workers,
+                            # if in the closing phase current buffer slot is filled, ignore copying action to actors,
                             # stop actor experience collection, and prepare to reset actors for evaluation
                             for local_actor_idx in range(self.cfg.actor_group_size):
                                 global_actor_idx = self.cfg.actor_group_size * group_idx + local_actor_idx
                                 self.stop_experience_collection_cnt[global_actor_idx] += 1
                                 if self.stop_experience_collection_cnt[global_actor_idx] >= self.cfg.num_splits:
                                     self.actor_queues[global_actor_idx].put(TaskType.PAUSE)
-                            
+
                             # when all actor workers stop experience collection, ignore all buffer related operations
                             if self.stop_experience_collection_cnt.sum() >= self.cfg.num_splits * self.num_actors:
                                 self.stop_experience_collection_cond.notify(1)
@@ -221,7 +244,13 @@ class PolicyWorker:
 
             with timing.add_time('inference/insert'):
                 if self.buffer.policy_id == self.policy_id and self.phase != PolicyWorkerPhase.STOP:
-                    self.buffer.insert(timing, slot_ids, ep_steps, valid_choose, masks=masks, active_masks=active_masks, **insert_data)
+                    self.buffer.insert(timing,
+                                       slot_ids,
+                                       ep_steps,
+                                       valid_choose,
+                                       masks=masks,
+                                       active_masks=active_masks,
+                                       **insert_data)
 
                 # copy rnn states into small shared memory block
                 for k, shm_pairs in self.envstep_output_shms.items():
@@ -296,19 +325,22 @@ class PolicyWorker:
 
                         if task_type == TaskType.TERMINATE:
                             self.terminate = True
-                        
+
                         if task_type == TaskType.PAUSE and self.policy_id == self.buffer.policy_id:
                             self.phase = PolicyWorkerPhase.CLOSING
 
                         if task_type == TaskType.RESUME:
                             self.phase = PolicyWorkerPhase.WORKING
-                        
+
                         if task_type == TaskType.EVALUATION:
                             # this ensures all policy workers have the same model weights
                             self.maybe_update_weights(timing)
-                            self.report_queue.put(dict(policy_id=self.policy_id,
-                                replicate_rank=self.replicate_rank,
-                                policy_version=self.local_policy_version,))
+                            self.report_queue.put(
+                                dict(
+                                    policy_id=self.policy_id,
+                                    replicate_rank=self.replicate_rank,
+                                    policy_version=self.local_policy_version,
+                                ))
 
                             self.phase = PolicyWorkerPhase.STOP
 

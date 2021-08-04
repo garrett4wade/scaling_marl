@@ -579,7 +579,7 @@ class SharedPolicyMixin(PolicyMixin):
                     # reset prev slot indices if ready to pause
                     closure_clients = client_ids[closure_choose]
                     self._prev_slot_indices[closure_clients] = self.num_slots
-            
+
             valid_choose = np.logical_not(closure_choose)
 
         return slot_ids[valid_choose], ep_steps[valid_choose], masks, active_masks, valid_choose
@@ -620,8 +620,9 @@ class SharedPolicyMixin(PolicyMixin):
                     selected_idx = np.logical_and(ep_steps % self.data_chunk_length == 0,
                                                   ep_steps < self.episode_length)
                     if np.any(selected_idx):
-                        self.storage[k][slot_ids[selected_idx], ep_steps[selected_idx] //
-                                        self.data_chunk_length] = policy_outputs_and_input_rnn_states[k][valid_choose][selected_idx]
+                        self.storage[k][
+                            slot_ids[selected_idx], ep_steps[selected_idx] //
+                            self.data_chunk_length] = policy_outputs_and_input_rnn_states[k][valid_choose][selected_idx]
                 else:
                     self.storage[k][slot_ids, ep_steps] = policy_outputs_and_input_rnn_states[k][valid_choose]
 
