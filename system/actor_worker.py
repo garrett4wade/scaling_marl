@@ -9,10 +9,13 @@ from torch.multiprocessing import Process as TorchProcess
 
 from utils.timing import Timing
 from utils.utils import log, memory_consumption_mb, join_or_kill, set_process_cpu_affinity, safe_put, \
-    TaskType, set_gpus_for_process
+    TaskType, set_gpus_for_process, drain_semaphore
 
 # TODO: may be accelerated by c++ threading pool
 from envs.env_wrappers import ShareDummyVecEnv
+
+class ActorWorkerPhase:
+    ROLLOUT, EVALUATION = range(2)
 
 
 class ActorWorker:
@@ -46,6 +49,10 @@ class ActorWorker:
         act_semaphore,
         envstep_output_shm,
         envstep_output_semaphore,
+        pause_event,
+        eval_summary_block,
+        eval_episode_cnt,
+        eval_finish_event,
     ):
         self.cfg = cfg
         self.env_fn = env_fn
@@ -87,6 +94,13 @@ class ActorWorker:
 
         self.envstep_output_shm = envstep_output_shm
         self.envstep_output_semaphore = envstep_output_semaphore
+
+        self.pause_event = pause_event
+        self.phase = ActorWorkerPhase.ROLLOUT
+
+        self.eval_summary_block = eval_summary_block
+        self.eval_episode_cnt = eval_episode_cnt
+        self.eval_finish_event = eval_finish_event
 
         self.processed_envsteps = 0
         self.process = TorchProcess(target=self._run, daemon=True)
@@ -132,6 +146,15 @@ class ActorWorker:
         Reset all envs, one split at a time (double-buffering), and send requests to policy workers to get
         actions for the very first env step.
         """
+        for s in self.envstep_output_semaphore:
+            drain_semaphore(s)
+
+        for s_pair in self.act_semaphore:
+            for s in s_pair:
+                drain_semaphore(s)
+
+        self.is_policy_act_semaphores_ready[:] = False
+
         for split_idx, env_runner in enumerate(self.env_runners):
             policy_inputs = env_runner.reset()
             policy_inputs['rewards'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
@@ -190,9 +213,16 @@ class ActorWorker:
             for env_id, (done, info) in enumerate(zip(dones, infos)):
                 if not np.all(done):
                     continue
-                with self.buffer.summary_lock:
+                if self.phase == ActorWorkerPhase.ROLLOUT:
+                    with self.buffer.summary_lock:
+                        for i, sum_key in enumerate(self.summary_keys):
+                            self.buffer.summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
+                elif self.phase == ActorWorkerPhase.EVALUATION:
+                    self.eval_episode_cnt += 1
                     for i, sum_key in enumerate(self.summary_keys):
-                        self.buffer.summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
+                        self.eval_summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
+                    if self.eval_episode_cnt >= self.cfg.eval_episodes:
+                        self.eval_finish_event.set()
 
         self.processed_envsteps += 1
 
@@ -245,9 +275,7 @@ class ActorWorker:
                         except Empty:
                             tasks = []
 
-                    for task in tasks:
-                        task_type, data = task
-
+                    for task_type in tasks:
                         if task_type == TaskType.INIT:
                             with timing.add_time('init_env'):
                                 self._init()
@@ -260,8 +288,17 @@ class ActorWorker:
 
                         # handling actual workload
                         if self.initialized and task_type == TaskType.RESET:
-                            with timing.add_time('first_reset'):
+                            with timing.add_time('reset'):
                                 self._handle_reset()
+
+                        if task_type == TaskType.PAUSE:
+                            assert self.initialized
+                            self.phase = ActorWorkerPhase.EVALUATION
+                            self.pause_event.set()
+                        
+                        if task_type == TaskType.RESUME:
+                            assert self.initialized
+                            self.phase = ActorWorkerPhase.ROLLOUT
 
                     with timing.add_time('report'):
                         if time.time() - last_report > 5.0 and 'env_step/simulation_avg' in timing:
@@ -294,13 +331,13 @@ class ActorWorker:
             )
 
     def init(self):
-        self.task_queue.put((TaskType.INIT, None))
+        self.task_queue.put(TaskType.INIT)
 
     def request_reset(self):
-        self.task_queue.put((TaskType.RESET, None))
+        self.task_queue.put(TaskType.RESET)
 
     def close(self):
-        self.task_queue.put((TaskType.TERMINATE, None))
+        self.task_queue.put(TaskType.TERMINATE)
 
     def join(self):
         join_or_kill(self.process)

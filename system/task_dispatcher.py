@@ -153,6 +153,7 @@ class TaskDispatcher:
         return end
 
     def report(self, msg):
+        # msg format: identity, policy_id, *summary_keys, summary_data (numpy array)
         policy_id = int(msg[1].decode('ascii'))
         data = np.frombuffer(memoryview(msg[-1]), dtype=np.float32)
         infos = {}
@@ -160,21 +161,22 @@ class TaskDispatcher:
             infos[key.decode('ascii')] = data[i]
         assert len(data) == len(msg[2:-1])
 
-        policy_version = infos['iteration']
-        consumed_num_steps = policy_version * self.transitions_per_batch
-
         if 'learner' in msg[0].decode('ascii'):
+            policy_version = infos['iteration']
             self.policy_version[policy_id] = policy_version
-            self.consumed_num_steps[policy_id] = consumed_num_steps
+            self.consumed_num_steps[policy_id] = policy_version * self.transitions_per_batch
             # TODO: send PAUSE task and set stop_experience_collection=True if accumulated too much experience
             self.accumulated_too_much_experience[policy_id] = infos['buffer_util'] > 0.8
+
+        if 'workertask' in msg[0].decode('ascii'):
+            log.info('Evaluation Results: %s', infos)
 
         if not self.no_summary:
             if self.use_wandb:
                 infos = {'policy_' + str(policy_id) + '/' + k: v for k, v in infos.items()}
-                wandb.log(infos, step=consumed_num_steps)
+                wandb.log(infos, step=self.consumed_num_steps[policy_id] )
             else:
-                self.writter.add_scalars('policy_' + str(policy_id), infos, step=consumed_num_steps)
+                self.writter.add_scalars('policy_' + str(policy_id), infos, step=self.consumed_num_steps[policy_id] )
 
     def _run(self):
         log.info('Initializing Task Dispatcher...')

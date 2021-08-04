@@ -113,6 +113,10 @@ class RWLock:
             self.release_write()
 
 
+def drain_semaphore(s):
+    while s.acquire(blocking=False):
+        continue
+
 def drain_queue(queue_obj, n_sentinel=0, guard_sentinel=False):
     """Empty a multiprocessing queue object, with options to protect against
     the delay between ``queue.put()`` and ``queue.get()``.  Returns a list of

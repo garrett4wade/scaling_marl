@@ -105,6 +105,20 @@ class WorkerTask:
 
         self.print_stats_cnt = 0
 
+        self.worker_policy_versions = np.zeros((self.cfg.num_policies, self.cfg.num_policy_workers), dtype=np.int32)
+
+        self.actor_pause_events = [mp.Event() for _ in range(self.num_actors)]
+        self.stop_experience_collection_cnt = torch.zeros(self.num_actors, dtype=torch.int32).share_memory_().numpy()
+        self.stop_experience_collection_cond = mp.Condition()
+
+        self.eval_summary_block = torch.zeros_like(self.buffer.summary_block).share_memory_().numpy()
+        self.eval_episode_cnt = torch.zeros(1, dtype=torch.int32).share_memory_().numpy()
+
+        self.summary_keys = self.buffer.summayr_keys
+        self.summary_idx_hash = {}
+        for i, k in enumerate(self.summary_keys):
+            self.summary_idx_hash[k] = i
+
         self.process = mp.Process(target=self.run)
 
     def start_process(self):
@@ -137,6 +151,9 @@ class WorkerTask:
             {k: [policy_v[group_idx] for policy_v in v]
              for k, v in self.envstep_output_shms.items()},
             self.envstep_output_semaphores[idx],
+            self.actor_pause_events[idx],
+            self.eval_summary_block,
+            self.eval_episode_cnt,
         )
 
     # noinspection PyProtectedMember
@@ -250,6 +267,7 @@ class WorkerTask:
                     self.buffer,
                     self.policy_worker_queues[policy_id][i],
                     self.policy_queues[policy_id],
+                    actor_queues,
                     self.report_queue,
                     self.act_shms,
                     self.act_semaphores[policy_id],
@@ -259,6 +277,8 @@ class WorkerTask:
                     self.param_locks[policy_id],
                     self.ps_policy_versions[policy_id:policy_id + 1],
                     self.ps_ready_events[policy_id],
+                    self.stop_experience_collection_cnt,
+                    self.stop_experience_collection_cond,
                 )
                 policy_worker_tuple.append(policy_worker)
                 policy_worker.start_process()
@@ -303,6 +323,12 @@ class WorkerTask:
         if 'stats' in report:
             self.stats.update(report['stats'])
 
+        if 'policy_version' in report:
+            assert 'replicate_rank' in report and 'policy_id' in report
+            policy_id = report['policy_id']
+            replicate_rank = report['replicate_rank']
+            self.worker_policy_versions[policy_id, replicate_rank] = report['policy_version']
+
     def report(self):
         # TODO: send summary info to task_result_socket during evaluation
         """
@@ -339,6 +365,66 @@ class WorkerTask:
             pass
         elif task == TaskType.TERMINATE:
             self.terminate = True
+        elif task == TaskType.EVALUATION:
+            # reset all signals
+            self.eval_summary_block[:] = 0
+            self.eval_episode_cnt[:] = 0
+            self.stop_experience_collection_cnt[:] = 0
+            self.eval_finish_event.clear()
+            for e in self.actor_pause_events:
+                e.clear()
+
+            # pause experience collection
+            for q in itertools.chain(*self.policy_worker_queues):
+                q.put(TaskType.PAUSE)
+
+            for e in self.actor_pause_events:
+                e.wait()
+            
+            self.stop_experience_collection_cond.wait_for(lambda: self.stop_experience_collection_cnt.sum() >= self.cfg.num_splits * self.num_actors)
+            for q in itertools.chain(*self.policy_worker_queues):
+                q.put(TaskType.EVALUATION)
+            
+            for actor in self.actor_workers:
+                actor.request_reset()
+
+            while True:
+                # get policy version from policy_workers
+                try:
+                    report = self.report_queue.get_nowait()
+                    self.process_report(report)
+                except Empty:
+                    break
+
+            self.eval_finish_event.wait()
+
+            with self.buffer.summary_lock:
+                summary_data = (self.eval_summary_block - self.buffer.summary_block).sum(0).sum(0)
+            
+            infos = {}
+            if self.cfg.env_name == 'StarCraft2':
+                raw_infos = {}
+                for i, k in enumerate(self.summary_keys):
+                    raw_infos[k] = summary_data[i]
+                infos['eval_winning_rate'] = raw_infos['winning_episodes'] / raw_infos['elapsed_episodes']
+                infos['eval_episode_return'] = raw_infos['episode_return'] / raw_infos['elapsed_episodes']
+            else:
+                raise NotImplementedError
+
+            summary_info = np.zeros(len(infos), dtype=np.float32)
+            summary_info[:] = list(infos.values())
+            msg = [self.socket_identity, str(self.policy_id).encode('ascii')] + [k.encode('ascii') for k in infos.keys()] + [summary_info]
+            # TODO: we may need to send policy version for summary
+            self.task_result_socket.send_multipart(msg)
+
+            # TODO: prepare rollout when receiving a ROLLOUT task
+            self.buffer.prepare_rollout()
+
+            for q in itertools.chain(*self.policy_worker_queues):
+                q.put(TaskType.RESUME)
+            
+            for a_q in self.actor_queues:
+                a_q.put(TaskType.RESUME)
         else:
             raise NotImplementedError
 
