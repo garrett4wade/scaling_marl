@@ -22,7 +22,7 @@ def _t2n(x):
 
 
 class PolicyWorkerPhase:
-    WORKING, CLOSING, STOP = range(3)
+    WORKING, CLOSING, IDLE, STOP = range(4)
 
 
 class PolicyWorker:
@@ -111,8 +111,7 @@ class PolicyWorker:
         self.total_num_samples = 0
         self.total_inference_steps = 0
 
-        # TODO: stop at first and working after receive the ROLLOUT task
-        self.phase = PolicyWorkerPhase.WORKING
+        self.phase = PolicyWorkerPhase.STOP
         self.stop_experience_collection_cnt = stop_experience_collection_cnt
         self.stop_experience_collection_cond = stop_experience_collection_cond
 
@@ -150,7 +149,7 @@ class PolicyWorker:
             self.initialized_event.set()
 
     def maybe_update_weights(self, timing):
-        if self.local_policy_version < self.ps_policy_version and self.phase != PolicyWorkerPhase.STOP:
+        if self.local_policy_version < self.ps_policy_version and self.phase != PolicyWorkerPhase.IDLE:
             with self.param_lock.r_locked():
                 with timing.time_avg('update_weights/load_state_dict_once'):
                     self.rollout_policy.load_state_dict(self.local_ps)
@@ -209,7 +208,7 @@ class PolicyWorker:
                                                             *v.shape[1:])
 
             with timing.add_time('inference/advance_buffer_indices'):
-                if self.buffer.policy_id == self.policy_id and self.phase != PolicyWorkerPhase.STOP:
+                if self.buffer.policy_id == self.policy_id and self.phase != PolicyWorkerPhase.IDLE:
                     insert_data = {k: v for k, v in policy_outputs.items() if 'rnn_states' not in k}
                     insert_data = {**insert_data, **envstep_outputs}
                     slot_ids, ep_steps, masks, active_masks, valid_choose = self.buffer.advance_indices(
@@ -243,7 +242,7 @@ class PolicyWorker:
                         self.act_semaphores[global_actor_idx][split_idx].release()
 
             with timing.add_time('inference/insert'):
-                if self.buffer.policy_id == self.policy_id and self.phase != PolicyWorkerPhase.STOP:
+                if self.buffer.policy_id == self.policy_id and self.phase != PolicyWorkerPhase.IDLE:
                     self.buffer.insert(timing,
                                        slot_ids,
                                        ep_steps,
@@ -301,23 +300,24 @@ class PolicyWorker:
         while not self.terminate:
             try:
                 waiting_started = time.time()
-                with timing.time_avg('waiting_avg'), timing.add_time('waiting'):
-                    while len(self.request_clients
-                              ) < min_num_requests and time.time() - waiting_started < wait_for_min_requests:
-                        try:
-                            policy_requests = self.policy_queue.get_many(timeout=0.005)
-                            self.request_clients.extend(policy_requests)
-                        except Empty:
-                            pass
+                if self.phase != PolicyWorkerPhase.STOP:
+                    with timing.time_avg('waiting_avg'), timing.add_time('waiting'):
+                        while (len(self.request_clients) < min_num_requests
+                               and time.time() - waiting_started < wait_for_min_requests):
+                            try:
+                                policy_requests = self.policy_queue.get_many(timeout=0.005)
+                                self.request_clients.extend(policy_requests)
+                            except Empty:
+                                pass
 
-                if len(self.request_clients) > 0:
-                    num_requests.append(len(self.request_clients))
+                    if len(self.request_clients) > 0:
+                        num_requests.append(len(self.request_clients))
 
-                    with timing.add_time('update_weights'):
-                        self.maybe_update_weights(timing)
+                        with timing.add_time('update_weights'):
+                            self.maybe_update_weights(timing)
 
-                    with timing.time_avg('inference_avg'), timing.add_time('inference'):
-                        self._handle_policy_steps(timing)
+                        with timing.time_avg('inference_avg'), timing.add_time('inference'):
+                            self._handle_policy_steps(timing)
 
                 with timing.add_time('get_tasks'):
                     try:
@@ -330,7 +330,11 @@ class PolicyWorker:
                             self.phase = PolicyWorkerPhase.CLOSING
 
                         if task_type == TaskType.RESUME:
+                            self.phase = PolicyWorkerPhase.STOP
+
+                        if task_type == TaskType.START:
                             self.phase = PolicyWorkerPhase.WORKING
+                            self.maybe_update_weights(timing)
 
                         if task_type == TaskType.EVALUATION:
                             # this ensures all policy workers have the same model weights
@@ -342,7 +346,7 @@ class PolicyWorker:
                                     policy_version=self.local_policy_version,
                                 ))
 
-                            self.phase = PolicyWorkerPhase.STOP
+                            self.phase = PolicyWorkerPhase.IDLE
 
                         self.task_queue.task_done()
                     except Empty:
@@ -387,6 +391,9 @@ class PolicyWorker:
 
     def start_process(self):
         self.process.start()
+
+    def start_rollout(self):
+        self.task_queue.put(TaskType.START)
 
     def close(self):
         self.task_queue.put(TaskType.TERMINATE)

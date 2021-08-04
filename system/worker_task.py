@@ -25,6 +25,10 @@ class ExperimentStatus:
     SUCCESS, FAILURE, INTERRUPTED = range(3)
 
 
+class WorkerTaskPhase:
+    WORKING, STOP = range(2)
+
+
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 
@@ -123,6 +127,8 @@ class WorkerTask:
         self.summary_idx_hash = {}
         for i, k in enumerate(self.summary_keys):
             self.summary_idx_hash[k] = i
+
+        self.phase = WorkerTaskPhase.STOP
 
         self.process = mp.Process(target=self.run)
 
@@ -287,9 +293,6 @@ class WorkerTask:
                 policy_worker.start_process()
             self.policy_workers.append(tuple(policy_worker_tuple))
 
-        # TODO: call this function every time a ROLLOUT task is received
-        self.buffer.prepare_rollout()
-
         log.info('Initializing actors...')
 
         # We support actor worker initialization in groups, which can be useful for some envs that
@@ -365,9 +368,19 @@ class WorkerTask:
     def process_task(self, task):
         # TODO: modify self.is_executing_tasks when processing tasks
         if task == TaskType.ROLLOUT:
-            pass
+            if self.phase == WorkerTaskPhase.STOP:
+                self.buffer.prepare_rollout()
+
+                for pw in itertools.chain.from_iterable(self.policy_workers):
+                    pw.start_rollout()
+
+                for aw in self.actor_workers:
+                    aw.start_rollout()
+                self.phase = WorkerTaskPhase.WORKING
+
         elif task == TaskType.TERMINATE:
             self.terminate = True
+
         elif task == TaskType.EVALUATION:
             # reset all signals
             self.eval_summary_block[:] = 0
@@ -377,20 +390,24 @@ class WorkerTask:
             for e in self.actor_pause_events:
                 e.clear()
 
-            # pause experience collection
-            for q in itertools.chain(*self.policy_worker_queues):
-                q.put(TaskType.PAUSE)
+            if self.phase == WorkerTaskPhase.WORKING:
+                # if the previous task is rollout, finish current rollout process and start evaluation
+                # closing experience collection
+                for q in itertools.chain(*self.policy_worker_queues):
+                    q.put(TaskType.PAUSE)
 
-            for e in self.actor_pause_events:
-                e.wait()
+                for e in self.actor_pause_events:
+                    e.wait()
 
-            self.stop_experience_collection_cond.wait_for(
-                lambda: self.stop_experience_collection_cnt.sum() >= self.cfg.num_splits * self.num_actors)
+                # TODO: we may remove this condition object
+                self.stop_experience_collection_cond.wait_for(
+                    lambda: self.stop_experience_collection_cnt.sum() >= self.cfg.num_splits * self.num_actors)
+
             for q in itertools.chain(*self.policy_worker_queues):
                 q.put(TaskType.EVALUATION)
 
             for actor in self.actor_workers:
-                actor.request_reset()
+                actor.request_reval()
 
             while True:
                 # get policy version from policy_workers
@@ -400,6 +417,7 @@ class WorkerTask:
                 except Empty:
                     break
 
+            # TODO: we may wait evaluation finish outside this function
             self.eval_finish_event.wait()
 
             with self.buffer.summary_lock:
@@ -422,14 +440,13 @@ class WorkerTask:
             # TODO: we may need to send policy version for summary
             self.task_result_socket.send_multipart(msg)
 
-            # TODO: prepare rollout when receiving a ROLLOUT task
-            self.buffer.prepare_rollout()
-
             for q in itertools.chain(*self.policy_worker_queues):
                 q.put(TaskType.RESUME)
 
             for a_q in self.actor_queues:
                 a_q.put(TaskType.RESUME)
+
+            self.phase = WorkerTaskPhase.STOP
         else:
             raise NotImplementedError
 
@@ -462,7 +479,6 @@ class WorkerTask:
 
                     if not self.is_executing_task:
                         try:
-                            # TODO: here we don't process task except for TERMINATE
                             msg = self.task_queue.get_nowait()
                             task = int(msg[1].decode('ascii'))
                             self.process_task(task)

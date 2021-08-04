@@ -16,7 +16,7 @@ from envs.env_wrappers import ShareDummyVecEnv
 
 
 class ActorWorkerPhase:
-    ROLLOUT, EVALUATION = range(2)
+    ROLLOUT, EVALUATION, IDLE, STOP = range(4)
 
 
 class ActorWorker:
@@ -97,7 +97,7 @@ class ActorWorker:
         self.envstep_output_semaphore = envstep_output_semaphore
 
         self.pause_event = pause_event
-        self.phase = ActorWorkerPhase.ROLLOUT
+        self.phase = ActorWorkerPhase.STOP
 
         self.eval_summary_block = eval_summary_block
         self.eval_episode_cnt = eval_episode_cnt
@@ -224,6 +224,8 @@ class ActorWorker:
                         self.eval_summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
                     if self.eval_episode_cnt >= self.cfg.eval_episodes:
                         self.eval_finish_event.set()
+                else:
+                    raise NotImplementedError
 
         self.processed_envsteps += 1
 
@@ -257,7 +259,7 @@ class ActorWorker:
         with torch.no_grad():
             while not self.terminate:
                 try:
-                    if self.initialized:
+                    if self.initialized and self.phase != ActorWorkerPhase.STOP:
                         with timing.add_time('waiting'), timing.time_avg('wait_for_inference'):
                             for i, policy_act_semaphore in enumerate(self.act_semaphore):
                                 if not self.is_policy_act_semaphores_ready[i]:
@@ -292,14 +294,22 @@ class ActorWorker:
                             with timing.add_time('reset'):
                                 self._handle_reset()
 
+                        if task_type == TaskType.EVALUATION:
+                            self.phase = ActorWorkerPhase.EVALUATION
+                            with timing.add_time('evaluation_reset'):
+                                self._handle_reset()
+
                         if task_type == TaskType.PAUSE:
                             assert self.initialized
-                            self.phase = ActorWorkerPhase.EVALUATION
+                            self.phase = ActorWorkerPhase.IDLE
                             self.pause_event.set()
+
+                        if task_type == TaskType.START:
+                            self.phase = ActorWorkerPhase.ROLLOUT
 
                         if task_type == TaskType.RESUME:
                             assert self.initialized
-                            self.phase = ActorWorkerPhase.ROLLOUT
+                            self.phase = ActorWorkerPhase.STOP
 
                     with timing.add_time('report'):
                         if time.time() - last_report > 5.0 and 'env_step/simulation_avg' in timing:
@@ -337,8 +347,14 @@ class ActorWorker:
     def request_reset(self):
         self.task_queue.put(TaskType.RESET)
 
+    def request_evel(self):
+        self.task_queue.put(TaskType.EVALUATION)
+
     def close(self):
         self.task_queue.put(TaskType.TERMINATE)
+
+    def start_rollout(self):
+        self.task_queue.put(TaskType.START)
 
     def join(self):
         join_or_kill(self.process)
