@@ -16,7 +16,7 @@ use_render: false
 
 num_env_steps: 100000000
 train_for_env_steps: 100000000
-train_for_seconds: 200
+train_for_seconds: 300
 model_dir: null
 save_dir: './models'
 summary_dir: './logs'

@@ -407,7 +407,7 @@ class WorkerTask:
                 q.put(TaskType.EVALUATION)
 
             for actor in self.actor_workers:
-                actor.request_reval()
+                actor.request_eval()
 
             while True:
                 # get policy version from policy_workers

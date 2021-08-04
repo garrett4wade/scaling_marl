@@ -347,7 +347,7 @@ class ActorWorker:
     def request_reset(self):
         self.task_queue.put(TaskType.RESET)
 
-    def request_evel(self):
+    def request_eval(self):
         self.task_queue.put(TaskType.EVALUATION)
 
     def close(self):
