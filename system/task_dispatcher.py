@@ -169,6 +169,7 @@ class TaskDispatcher:
             self.accumulated_too_much_experience[policy_id] = infos['buffer_util'] > 0.8
 
         if 'workertask' in msg[0].decode('ascii'):
+            # self.eval_start = time.time()
             log.info('Evaluation Results: %s', infos)
 
         if not self.no_summary:
@@ -183,6 +184,8 @@ class TaskDispatcher:
 
         self._init()
 
+        # import time
+        # self.eval_start = time.time()
         try:
             while not self._should_end_training():
                 try:
@@ -196,6 +199,13 @@ class TaskDispatcher:
 
                 except zmq.ZMQError:
                     pass
+
+                # if time.time() - self.eval_start >= 20:
+                #     import numpy as np
+                #     ident = np.random.choice(self.worker_socket_ident)
+                #     print('############################## send evaluation task to worker!')
+                #     self.task_socket.send_multipart([ident, str(TaskType.EVALUATION).encode('ascii')])
+                #     self.eval_start = time.time()
 
         except RuntimeError:
             log.warning('Error while distributing tasks on Task Dispatcher')

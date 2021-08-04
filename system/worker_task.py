@@ -66,6 +66,8 @@ class WorkerTask:
         self.policy_queues = [MpQueue(40 * 1000) for _ in range(self.cfg.num_policies)]  # 40 KB
         self.policy_worker_queues = [[mp.JoinableQueue(40 * 1000) for _ in range(self.cfg.num_policy_workers)] for _ in range(self.cfg.num_policies)]
 
+        self.actor_queues = [MpQueue(2 * 1000 * 1000) for _ in range(self.num_actors)]
+
         self.num_actor_groups = self.num_actors // self.cfg.actor_group_size
 
         self.samples_collected = 0
@@ -105,16 +107,17 @@ class WorkerTask:
 
         self.print_stats_cnt = 0
 
-        self.worker_policy_versions = np.zeros((self.cfg.num_policies, self.cfg.num_policy_workers), dtype=np.int32)
+        self.worker_policy_versions = torch.zeros((self.cfg.num_policies, self.cfg.num_policy_workers), dtype=torch.int32).numpy()
 
         self.actor_pause_events = [mp.Event() for _ in range(self.num_actors)]
         self.stop_experience_collection_cnt = torch.zeros(self.num_actors, dtype=torch.int32).share_memory_().numpy()
         self.stop_experience_collection_cond = mp.Condition()
 
-        self.eval_summary_block = torch.zeros_like(self.buffer.summary_block).share_memory_().numpy()
+        self.eval_summary_block = torch.zeros_like(torch.from_numpy(self.buffer.summary_block)).share_memory_().numpy()
         self.eval_episode_cnt = torch.zeros(1, dtype=torch.int32).share_memory_().numpy()
+        self.eval_finish_event = mp.Event()
 
-        self.summary_keys = self.buffer.summayr_keys
+        self.summary_keys = self.buffer.summary_keys
         self.summary_idx_hash = {}
         for i, k in enumerate(self.summary_keys):
             self.summary_idx_hash[k] = i
@@ -135,7 +138,7 @@ class WorkerTask:
         self.task_result_socket.connect(self.cfg.task_result_addr)
         self.task_result_socket.send(self.socket_identity)
 
-    def create_actor_worker(self, idx, actor_queue):
+    def create_actor_worker(self, idx):
         group_idx = idx // self.cfg.actor_group_size
         return ActorWorker(
             self.cfg,
@@ -143,7 +146,7 @@ class WorkerTask:
             idx,
             self.env_fn,
             self.buffer,
-            actor_queue,
+            self.actor_queues[idx],
             self.policy_queues,
             self.report_queue,
             self.act_shms[idx],
@@ -154,10 +157,11 @@ class WorkerTask:
             self.actor_pause_events[idx],
             self.eval_summary_block,
             self.eval_episode_cnt,
+            self.eval_finish_event,
         )
 
     # noinspection PyProtectedMember
-    def init_subset(self, indices, actor_queues):
+    def init_subset(self, indices):
         """
         Initialize a subset of actor workers (rollout workers) and wait until the first reset() is completed for all
         envs on these workers.
@@ -165,7 +169,6 @@ class WorkerTask:
         This function will retry if the worker process crashes during the initial reset.
 
         :param indices: indices of actor workers to initialize
-        :param actor_queues: task queues corresponding to these workers
         :return: initialized workers
         """
 
@@ -174,7 +177,7 @@ class WorkerTask:
         workers = dict()
         last_env_initialized = dict()
         for i in indices:
-            w = self.create_actor_worker(i, actor_queues[i])
+            w = self.create_actor_worker(i)
             w.start_process()
             w.init()
             w.request_reset()
@@ -224,7 +227,7 @@ class WorkerTask:
                     stuck_worker = w
                     stuck_worker.process.kill()
 
-                    new_worker = self.create_actor_worker(worker_idx, actor_queues[worker_idx])
+                    new_worker = self.create_actor_worker(worker_idx)
                     new_worker.start_process()
                     new_worker.init()
                     new_worker.request_reset()
@@ -240,8 +243,6 @@ class WorkerTask:
         """
         Initialize all types of workers and start their worker processes.
         """
-
-        actor_queues = [MpQueue(2 * 1000 * 1000) for _ in range(self.num_actors)]
 
         if self.cfg.actor_group_size > 1:
             log.info('Initializing group managers...')
@@ -267,7 +268,7 @@ class WorkerTask:
                     self.buffer,
                     self.policy_worker_queues[policy_id][i],
                     self.policy_queues[policy_id],
-                    actor_queues,
+                    self.actor_queues,
                     self.report_queue,
                     self.act_shms,
                     self.act_semaphores[policy_id],
@@ -298,7 +299,7 @@ class WorkerTask:
         max_parallel_init = 32  # might be useful to limit this for some envs
         actor_indices = list(range(self.num_actors))
         for i in range(0, self.num_actors, max_parallel_init):
-            workers = self.init_subset(actor_indices[i:i + max_parallel_init], actor_queues)
+            workers = self.init_subset(actor_indices[i:i + max_parallel_init])
             self.actor_workers.extend(workers)
 
     def finish_initialization(self):
@@ -380,11 +381,11 @@ class WorkerTask:
 
             for e in self.actor_pause_events:
                 e.wait()
-            
+
             self.stop_experience_collection_cond.wait_for(lambda: self.stop_experience_collection_cnt.sum() >= self.cfg.num_splits * self.num_actors)
             for q in itertools.chain(*self.policy_worker_queues):
                 q.put(TaskType.EVALUATION)
-            
+
             for actor in self.actor_workers:
                 actor.request_reset()
 
@@ -400,7 +401,7 @@ class WorkerTask:
 
             with self.buffer.summary_lock:
                 summary_data = (self.eval_summary_block - self.buffer.summary_block).sum(0).sum(0)
-            
+
             infos = {}
             if self.cfg.env_name == 'StarCraft2':
                 raw_infos = {}
@@ -411,7 +412,7 @@ class WorkerTask:
             else:
                 raise NotImplementedError
 
-            summary_info = np.zeros(len(infos), dtype=np.float32)
+            summary_info = torch.zeros(len(infos), dtype=torch.float32).numpy()
             summary_info[:] = list(infos.values())
             msg = [self.socket_identity, str(self.policy_id).encode('ascii')] + [k.encode('ascii') for k in infos.keys()] + [summary_info]
             # TODO: we may need to send policy version for summary

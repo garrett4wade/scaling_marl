@@ -203,7 +203,7 @@ class PolicyWorker:
                             for local_actor_idx in range(self.cfg.actor_group_size):
                                 global_actor_idx = self.cfg.actor_group_size * group_idx + local_actor_idx
                                 self.stop_experience_collection_cnt[global_actor_idx] += 1
-                                if self.stop_experience_collection_cnt[global_actor_idx] >= self.cfg.num_splits and self.replicate_rank == 0:
+                                if self.stop_experience_collection_cnt[global_actor_idx] >= self.cfg.num_splits:
                                     self.actor_queues[global_actor_idx].put(TaskType.PAUSE)
                             
                             # when all actor workers stop experience collection, ignore all buffer related operations
@@ -305,7 +305,7 @@ class PolicyWorker:
                         
                         if task_type == TaskType.EVALUATION:
                             # this ensures all policy workers have the same model weights
-                            self.maybe_update_weights()
+                            self.maybe_update_weights(timing)
                             self.report_queue.put(dict(policy_id=self.policy_id,
                                 replicate_rank=self.replicate_rank,
                                 policy_version=self.local_policy_version,))

@@ -114,7 +114,7 @@ class RWLock:
 
 
 def drain_semaphore(s):
-    while s.acquire(blocking=False):
+    while s.acquire(block=False):
         continue
 
 def drain_queue(queue_obj, n_sentinel=0, guard_sentinel=False):
