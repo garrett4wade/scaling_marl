@@ -382,7 +382,7 @@ class Trainer:
             self.policy_version += 1
             self.consumed_num_steps += self.transitions_per_batch
 
-        return {**train_info, 'buffer_util': buffer_util}
+        return {**train_info, 'buffer_util': buffer_util, 'iteration': self.policy_version}
 
     def maybe_save(self):
         if self.task_rank == 0 and (self.policy_version % self.save_interval == 0
@@ -405,13 +405,6 @@ class Trainer:
             recent_learning_fps = int(recent_consumed_num_steps / (time.time() - self.logging_tik))
             global_avg_learning_fps = int(self.consumed_num_steps / (time.time() - self.training_tik))
 
-            log.debug("Env {} Algo {} Exp {} updates {}/{} episodes, consumed num timesteps {}/{}, "
-                      "recent rollout FPS {}, global average rollout FPS {}, "
-                      "recent learning FPS {}, global average learning FPS {}.\n".format(
-                          self.env_name, self.algorithm_name, self.experiment_name, self.policy_version,
-                          self.train_for_episodes, self.consumed_num_steps, self.train_for_env_steps,
-                          recent_rollout_fps, global_avg_rollout_fps, recent_learning_fps, global_avg_learning_fps))
-
             # as defined in https://cdn.openai.com/dota-2.pdf
             if recent_received_num_steps > 0:
                 recent_sample_reuse = recent_consumed_num_steps / recent_received_num_steps
@@ -419,11 +412,14 @@ class Trainer:
                 recent_sample_reuse = np.nan
             global_sample_reuse = self.consumed_num_steps / self.received_num_steps
 
-            log.debug('recent sample reuse: {:.2f}, global average sample reuse: {:.2f}.'.format(
-                recent_sample_reuse, global_sample_reuse))
+            log.debug("Env {} Algo {} Exp {} updates {}/{} episodes, consumed num timesteps {}/{}, "
+                      "recent rollout FPS {}, global average rollout FPS {}, "
+                      "recent learning FPS {}, global average learning FPS {}, recent sample reuse: {:.2f}, global average sample reuse: {:.2f}.\n".format(
+                          self.env_name, self.algorithm_name, self.experiment_name, self.policy_version,
+                          self.train_for_episodes, self.consumed_num_steps, self.train_for_env_steps,
+                          recent_rollout_fps, global_avg_rollout_fps, recent_learning_fps, global_avg_learning_fps, recent_sample_reuse, global_sample_reuse))
 
             log_infos = {
-                'iteration': self.policy_version,
                 'rollout_FPS': recent_rollout_fps,
                 'learning_FPS': recent_learning_fps,
                 'sample_reuse': recent_sample_reuse,
@@ -470,13 +466,12 @@ class Trainer:
         self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model.pt'))
 
     def report(self, infos):
-        if infos is None or self.task_rank != 0:
+        if not infos or self.task_rank != 0:
             return
 
-        if not self.cfg.no_summary:
-            data = np.zeros(len(infos), dtype=np.float32)
-            data[:] = list(infos.values())
-            msg = [self.socket_identity, str(self.policy_id).encode('ascii')
-                   ] + [k.encode('ascii') for k in infos.keys()] + [data]
+        data = np.zeros(len(infos), dtype=np.float32)
+        data[:] = list(infos.values())
+        msg = [self.socket_identity, str(self.policy_id).encode('ascii')
+                ] + [k.encode('ascii') for k in infos.keys()] + [data]
 
-            self.task_result_socket.send_multipart(msg)
+        self.task_result_socket.send_multipart(msg)

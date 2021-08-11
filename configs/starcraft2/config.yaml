@@ -11,12 +11,12 @@ cuda_deterministic: true
 seed: 1
 no_summary: true
 use_wandb: true
-use_eval: false
+use_eval: true
 use_render: false
 
 num_env_steps: 100000000
 train_for_env_steps: 100000000
-train_for_seconds: 300
+train_for_seconds: 500
 model_dir: null
 save_dir: './models'
 summary_dir: './logs'
@@ -27,6 +27,7 @@ num_tasks_per_node: 1
 learner_config:
   "0":
     "0": 0
+    "1": 0
 policy2agents:
   "0":
     - 0
@@ -57,13 +58,13 @@ policy2agents:
     - 25
     - 26
 ddp_init_methods:
-  - tcp://10.0.4.14:6666
-task_dispatcher_addr: tcp://10.0.4.14:8887
-task_result_addr: tcp://10.0.4.14:8886
+  - tcp://10.0.4.132:6666
+task_dispatcher_addr: tcp://10.0.4.132:8887
+task_result_addr: tcp://10.0.4.132:8886
 model_weights_addrs:  # every learner has a model_weights_addr and len(model_weights_adddrs) == num_policies == num_leraners
-  - tcp://10.0.4.14:8889
+  - tcp://10.0.4.132:8889
 seg_addrs:  # every worker node has seg_addrs connecting to all learners
-  - - tcp://10.0.4.14:12346
+  - - tcp://10.0.4.132:12346
 num_actors: 8
 actor_group_size: 1
 envs_per_actor: 2
@@ -81,7 +82,7 @@ set_workers_cpu_affinity: true
 force_envs_single_thread: true
 default_niceness: 0
 eval_episodes: 32
-eval_interval: 25
+eval_interval: 100
 log_interval: 20
 n_training_threads: 16
 reset_timeout_seconds: 60
@@ -165,7 +166,7 @@ total_rounds: 100000000 # debug
 interval: 3
 # first node is head
 nodes: learner0,worker0
-puller_address: "10.0.4.14"
+puller_address: "10.0.4.132"
 puller_port: 4321
 
 verbose: false

@@ -135,9 +135,10 @@ class TaskDispatcher:
         yaml.dump(vars(self.cfg), config_file)
         config_file.close()
 
-        tasks = self.meta_controller.reset()
-        for task, ident in zip(tasks, itertools.chain(self.learner_socket_ident, self.worker_socket_ident)):
-            self.task_socket.send_multipart([ident, task])
+        tasks = self.meta_controller.reset(self.learner_socket_ident, self.worker_socket_ident)
+        assert len(tasks) >= self.num_learner_tasks + self.num_worker_tasks
+        for task in tasks:
+            self.task_socket.send_multipart(task)
 
         self.training_tik = time.time()
 
@@ -170,9 +171,6 @@ class TaskDispatcher:
 
         if 'workertask' in msg[0].decode('ascii'):
             log.info('Evaluation Results: %s', infos)
-            time.sleep(10)
-            self.task_socket.send_multipart([msg[0], str(TaskType.ROLLOUT).encode('ascii')])
-            self.eval_start = time.time()
 
         if not self.no_summary:
             if self.use_wandb:
@@ -186,27 +184,18 @@ class TaskDispatcher:
 
         self._init()
 
-        self.eval_start = time.time()
         try:
             while not self._should_end_training():
                 try:
                     msg = self.result_socket.recv_multipart(flags=zmq.NOBLOCK)
                     self.report(msg)
 
-                    # TODO: publish tasks of the next step according to the message received
                     new_tasks = self.meta_controller.step(msg)
                     for new_task in new_tasks:
-                        pass
+                        self.task_socket.send_multipart(new_task)
 
                 except zmq.ZMQError:
                     pass
-
-                if time.time() - self.eval_start >= 30:
-                    import numpy as np
-                    ident = np.random.choice(self.worker_socket_ident)
-                    print('############################## send evaluation task to worker!')
-                    self.task_socket.send_multipart([ident, str(TaskType.EVALUATION).encode('ascii')])
-                    self.eval_start = time.time()
 
         except RuntimeError:
             log.warning('Error while distributing tasks on Task Dispatcher')
