@@ -1,10 +1,10 @@
 project_name: scaling
-group_name: wandb_test
+group_name: performance_benchmark
 algorithm_name: rmappo
 env_name: StarCraft2
 map_name: 27m_vs_30m
 user_name: garrett4wade
-experiment_name: test
+experiment_name: benchmark_27m_vs_30m
 benchmark: false
 cuda: true
 cuda_deterministic: true
@@ -14,9 +14,9 @@ use_wandb: true
 use_eval: true
 use_render: false
 
-num_env_steps: 100000000
-train_for_env_steps: 100000000
-train_for_seconds: 500
+num_env_steps: 200000000
+train_for_env_steps: 200000000
+train_for_seconds: 10000000000000000
 model_dir: null
 save_dir: './models'
 summary_dir: './logs'
@@ -28,6 +28,8 @@ learner_config:
   "0":
     "0": 0
     "1": 0
+    # "2": 0
+    # "3": 0
 policy2agents:
   "0":
     - 0
@@ -70,7 +72,7 @@ actor_group_size: 1
 envs_per_actor: 2
 min_num_requests: -1
 num_policy_workers: 4
-slots_per_update: 8
+slots_per_update: 1
 qsize: 12
 num_splits: 2
 data_chunk_length: 10
