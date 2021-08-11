@@ -9,7 +9,7 @@ benchmark: false
 cuda: true
 cuda_deterministic: true
 seed: 1
-no_summary: true
+no_summary: false
 use_wandb: true
 use_eval: true
 use_render: false
@@ -27,7 +27,7 @@ num_tasks_per_node: 1
 learner_config:
   "0":
     "0": 0
-    "1": 0
+    # "1": 0
     # "2": 0
     # "3": 0
 policy2agents:
@@ -67,12 +67,12 @@ model_weights_addrs:  # every learner has a model_weights_addr and len(model_wei
   - tcp://10.0.4.132:8889
 seg_addrs:  # every worker node has seg_addrs connecting to all learners
   - - tcp://10.0.4.132:12346
-num_actors: 8
+num_actors: 48
 actor_group_size: 1
 envs_per_actor: 2
 min_num_requests: -1
 num_policy_workers: 4
-slots_per_update: 1
+slots_per_update: 48
 qsize: 12
 num_splits: 2
 data_chunk_length: 10

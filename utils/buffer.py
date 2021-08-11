@@ -536,7 +536,7 @@ class SharedPolicyMixin(PolicyMixin):
                     self._allocate_many(opening_clients)
                 else:
                     # reset slot_indices and destinations if ready to pause
-                    self._destination[slot_ids] = -1
+                    self._destination[slot_ids[opening_choose]] = -1
                     self._prev_slot_indices[opening_clients] = self._slot_indices[opening_clients]
                     self._slot_indices[opening_clients] = self.num_slots
 
