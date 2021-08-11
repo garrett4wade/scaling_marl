@@ -21,20 +21,20 @@ class Trainer:
         self.node_idx = self.cfg.learner_node_idx
 
         self.policy_id = self.cfg.learner_config[str(self.node_idx)][str(gpu_rank)]
-        self.task_rank = self.trainer_idx = self.num_trainers = 0
+        self.replicate_rank = self.trainer_idx = self.num_trainers = 0
 
         for node_idx, local_config in self.cfg.learner_config.items():
             if int(node_idx) < self.node_idx:
                 self.trainer_idx += len(local_config)
                 for gpu_idx, policy_id in local_config.items():
                     if policy_id == self.policy_id:
-                        self.task_rank += 1
+                        self.replicate_rank += 1
             elif int(node_idx) == self.node_idx:
                 for gpu_idx, policy_id in local_config.items():
                     if int(gpu_idx) < self.gpu_rank:
                         self.trainer_idx += 1
                         if policy_id == self.policy_id:
-                            self.task_rank += 1
+                            self.replicate_rank += 1
 
         for _, local_config in self.cfg.learner_config.items():
             for _, policy_id in local_config.items():
@@ -151,7 +151,7 @@ class Trainer:
         self.process.start()
 
     def _init(self):
-        if self.task_rank == 0:
+        if self.replicate_rank == 0:
             self._context = zmq.Context()
 
             # the first trainer on each node will manage its slice of worker nodes
@@ -174,7 +174,7 @@ class Trainer:
         os.environ['NCCL_IB_DISABLE'] = '1'
         # TODO: nccl with orthogonal initialization has a bug
         dist.init_process_group('nccl',
-                                rank=self.task_rank,
+                                rank=self.replicate_rank,
                                 world_size=self.num_trainers,
                                 init_method=self.cfg.ddp_init_methods[self.policy_id])
         log.debug('Trainer {} sucessfully initialized process group!'.format(self.trainer_idx))
@@ -198,12 +198,12 @@ class Trainer:
         log.debug('Waiting for all nodes ready...')
         for i, e in enumerate(self.nodes_ready_events):
             e.wait()
-            if self.task_rank == 0:
+            if self.replicate_rank == 0:
                 # the first trainer in each node outputs debug info
                 log.debug('Waiting for all nodes ready... {}/{} have already finished initialization...'.format(
                     i + 1, len(self.nodes_ready_events)))
 
-        if self.task_rank == 0:
+        if self.replicate_rank == 0:
             self.pack_off_weights()
         self.initialized = True
         log.debug('Sucessfully initializing Trainer %d!', self.trainer_idx)
@@ -218,7 +218,7 @@ class Trainer:
             raise NotImplementedError
 
     def _terminate(self):
-        if self.task_rank == 0:
+        if self.replicate_rank == 0:
             self.model_weights_socket.close()
             self.task_socket.close()
 
@@ -241,24 +241,25 @@ class Trainer:
 
         try:
             while not self.terminate:
-                try:
-                    msg = self.task_socket.recv_multipart(flags=zmq.NOBLOCK)
-                    self.task_queue.put(msg)
-                except zmq.ZMQError:
-                    pass
-
-                if not self.is_executing_task:
+                if self.replicate_rank == 0:
                     try:
-                        # TODO: here we don't process task except for TERMINATE
-                        msg = self.task_queue.get_nowait()
-                        task = int(msg[1].decode('ascii'))
-                        self.process_task(task)
-                        if self.terminate:
-                            break
-                    except Empty:
-                        # log.warning('Trainer %d is not executing tasks and there are no tasks distributed to it!',
-                        #             self.trainer_idx)
+                        msg = self.task_socket.recv_multipart(flags=zmq.NOBLOCK)
+                        self.task_queue.put(msg)
+                    except zmq.ZMQError:
                         pass
+
+                    if not self.is_executing_task:
+                        try:
+                            # TODO: here we don't process task except for TERMINATE
+                            msg = self.task_queue.get_nowait()
+                            task = int(msg[1].decode('ascii'))
+                            self.process_task(task)
+                            if self.terminate:
+                                break
+                        except Empty:
+                            # log.warning('Trainer %d is not executing tasks and there are no tasks distributed to it!',
+                            #             self.trainer_idx)
+                            pass
 
                 if not self.train_in_background:
                     train_infos = self.training_step(timing)
@@ -271,7 +272,7 @@ class Trainer:
 
                     dist.barrier()
 
-                if self.policy_version % self.cfg.broadcast_interval == 0 and self.task_rank == 0:
+                if self.policy_version % self.cfg.broadcast_interval == 0 and self.replicate_rank == 0:
                     # the first trainer in each node broadcasts weights
                     self.pack_off_weights()
 
@@ -385,14 +386,14 @@ class Trainer:
         return {**train_info, 'buffer_util': buffer_util, 'iteration': self.policy_version}
 
     def maybe_save(self):
-        if self.task_rank == 0 and (self.policy_version % self.save_interval == 0
+        if self.replicate_rank == 0 and (self.policy_version % self.save_interval == 0
                                     or self.policy_version == self.train_for_episodes - 1):
             self.save()
 
     def maybe_log(self):
         log_infos = {}
         # log information
-        if self.task_rank == 0 and self.policy_version % self.log_interval == 0:
+        if self.replicate_rank == 0 and self.policy_version % self.log_interval == 0:
             self.last_received_num_steps = self.received_num_steps
             self.received_num_steps = self.buffer.total_timesteps.item()
 
@@ -466,7 +467,7 @@ class Trainer:
         self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model.pt'))
 
     def report(self, infos):
-        if not infos or self.task_rank != 0:
+        if not infos or self.replicate_rank != 0:
             return
 
         data = np.zeros(len(infos), dtype=np.float32)
