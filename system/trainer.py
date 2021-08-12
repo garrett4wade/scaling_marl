@@ -328,7 +328,7 @@ class Trainer:
 
         with timing.add_time('training_step/get_slot'):
             # only train popart parameter in the first epoch
-            slot_id, data_generator = self.buffer.get()
+            slot_id = self.buffer.get()
 
         with timing.add_time('training_step/reanalyze'):
             if self.cfg.use_reanalyze:
@@ -349,6 +349,8 @@ class Trainer:
 
                     values = self.policy.get_values(**reanalyze_inputs).cpu().numpy()
                     self.buffer.values[slot_id] = values.reshape(*self.buffer.values[slot_id].shape)
+
+        data_generator = self.recurrent_generator(slot_id) if self.cfg.use_recurrent_policy else self.feed_forward_generator(slot_id)
 
         for sample in data_generator:
             with timing.add_time('training_step/to_device'):

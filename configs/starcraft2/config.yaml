@@ -71,7 +71,7 @@ num_actors: 48
 actor_group_size: 1
 envs_per_actor: 2
 min_num_requests: -1
-num_policy_workers: 4
+num_policy_workers: 1
 slots_per_update: 48
 qsize: 12
 num_splits: 2

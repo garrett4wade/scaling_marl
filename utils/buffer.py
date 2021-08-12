@@ -309,8 +309,12 @@ class LearnerBuffer(ReplayBuffer):
         self.summary_block = torch.zeros((len(cfg.seg_addrs[0]), len(self.summary_keys)),
                                          dtype=torch.float32).share_memory_().numpy()
 
-        self._ptr_lock = mp.RLock()
+        self._ptr_lock = mp.Lock()
         self._global_ptr = torch.zeros((2, ), dtype=torch.int32).share_memory_().numpy()
+        with self._read_ready:
+            self._is_writable[0] = 0
+            self._is_busy[0] = 1
+            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
 
         self.gamma = np.float32(cfg.gamma)
         self.lmbda = np.float32(cfg.gae_lambda)
@@ -386,8 +390,7 @@ class LearnerBuffer(ReplayBuffer):
             # defer the timestamp such that the slot will be selected again only after
             # all readable slots are selected at least once
             self._time_stamp[slot_id] = np.max(self._time_stamp) + 1
-        return slot_id, self.recurrent_generator(
-            slot_id) if self._use_recurrent_policy else self.feed_forward_generator(slot_id)
+        return slot_id
 
     def close_out(self, slot_id):
         with self._read_ready:
