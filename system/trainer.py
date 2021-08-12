@@ -350,7 +350,7 @@ class Trainer:
                     values = self.policy.get_values(**reanalyze_inputs).cpu().numpy()
                     self.buffer.values[slot_id] = values.reshape(*self.buffer.values[slot_id].shape)
 
-        data_generator = self.recurrent_generator(slot_id) if self.cfg.use_recurrent_policy else self.feed_forward_generator(slot_id)
+        data_generator = self.buffer.recurrent_generator(slot_id) if self.cfg.use_recurrent_policy else self.buffer.feed_forward_generator(slot_id)
 
         for sample in data_generator:
             with timing.add_time('training_step/to_device'):
