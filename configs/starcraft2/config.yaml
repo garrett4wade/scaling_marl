@@ -9,7 +9,7 @@ benchmark: false
 cuda: true
 cuda_deterministic: true
 seed: 1
-no_summary: false
+no_summary: true
 use_wandb: true
 use_eval: false
 use_render: false

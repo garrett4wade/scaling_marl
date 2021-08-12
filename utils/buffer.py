@@ -617,8 +617,7 @@ class SharedPolicyMixin(PolicyMixin):
             # we don't need to mask rnn states here because they will be masked when fed into wrapped RNN
             for k in policy_outputs_and_input_rnn_states.keys():
                 if 'rnn_states' in k:
-                    selected_idx = np.logical_and(ep_steps % self.data_chunk_length == 0,
-                                                  ep_steps < self.episode_length)
+                    selected_idx = ep_steps % self.data_chunk_length == 0
                     if np.any(selected_idx):
                         self.storage[k][
                             slot_ids[selected_idx], ep_steps[selected_idx] //

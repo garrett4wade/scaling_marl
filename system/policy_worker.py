@@ -233,6 +233,17 @@ class PolicyWorker:
                                 self.stop_experience_collection_cond.notify(1)
                         continue
 
+                    # copy rnn states into small shared memory block
+                    # we need to place this before copying action in case that other policy workers fetch rnn states
+                    # before the completion of copy
+                    for k, shm_pairs in self.envstep_output_shms.items():
+                        if 'rnn_states' in k:
+                            # NOTE: for debugging only
+                            # assert np.all(shm_pairs[group_idx][split_idx] == insert_data[k][i])
+                            shm_pairs[group_idx][split_idx][:] = policy_outputs[k][i]
+                            # NOTE: for debugging only
+                            # assert np.any(shm_pairs[group_idx][split_idx] == insert_data[k][i]).sum() < 3
+
                     for local_actor_idx in range(self.cfg.actor_group_size):
                         global_actor_idx = self.cfg.actor_group_size * group_idx + local_actor_idx
                         env_slice = slice(local_actor_idx * self.envs_per_split,
@@ -250,12 +261,6 @@ class PolicyWorker:
                                        masks=masks,
                                        active_masks=active_masks,
                                        **insert_data)
-
-                # copy rnn states into small shared memory block
-                for k, shm_pairs in self.envstep_output_shms.items():
-                    if 'rnn_states' in k:
-                        for i, (split_idx, group_idx) in enumerate(organized_requests):
-                            shm_pairs[group_idx][split_idx][:] = policy_outputs[k][i]
 
         self.request_clients = []
         self.total_num_samples += rollout_bs
