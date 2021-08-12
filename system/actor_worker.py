@@ -78,6 +78,7 @@ class ActorWorker:
 
         self.initialized = False
         self.terminate = False
+        self.ready = False
 
         self.group_local_idx = self.local_rank % self.cfg.actor_group_size
         self.env_slice = slice(self.group_local_idx * self.envs_per_split,
@@ -175,7 +176,9 @@ class ActorWorker:
                     policy_queue.put(split_idx * self.num_actors + self.local_rank)
 
         log.info('Finished reset for worker %d', self.worker_idx)
-        safe_put(self.report_queue, dict(finished_reset=self.local_rank), queue_name='report')
+        if not self.ready:
+            safe_put(self.report_queue, dict(finished_reset=self.local_rank), queue_name='report')
+            self.ready = True
 
     def _advance_rollouts(self, split_idx, timing):
         """
