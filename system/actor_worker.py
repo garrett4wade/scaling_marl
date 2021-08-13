@@ -211,21 +211,24 @@ class ActorWorker:
 
         with timing.add_time('env_step/summary'):
             dones = envstep_outputs['dones']
-            for env_id, (done, info) in enumerate(zip(dones, infos)):
-                if not np.all(done):
-                    continue
-                if self.phase == ActorWorkerPhase.ROLLOUT:
-                    with self.buffer.summary_lock:
+            try:
+                for env_id, (done, info) in enumerate(zip(dones, infos)):
+                    if not np.all(done):
+                        continue
+                    if self.phase == ActorWorkerPhase.ROLLOUT:
+                        with self.buffer.summary_lock:
+                            for i, sum_key in enumerate(self.summary_keys):
+                                self.buffer.summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
+                    elif self.phase == ActorWorkerPhase.EVALUATION:
+                        self.eval_episode_cnt += 1
                         for i, sum_key in enumerate(self.summary_keys):
-                            self.buffer.summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
-                elif self.phase == ActorWorkerPhase.EVALUATION:
-                    self.eval_episode_cnt += 1
-                    for i, sum_key in enumerate(self.summary_keys):
-                        self.eval_summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
-                    if self.eval_episode_cnt >= self.cfg.eval_episodes:
-                        self.eval_finish_event.set()
-                else:
-                    raise NotImplementedError
+                            self.eval_summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
+                        if self.eval_episode_cnt >= self.cfg.eval_episodes:
+                            self.eval_finish_event.set()
+                    else:
+                        raise NotImplementedError
+            except KeyError:
+                pass
 
         self.processed_envsteps += 1
 
