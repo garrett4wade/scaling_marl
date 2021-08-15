@@ -13,7 +13,6 @@ class R_Actor_Critic(nn.Module):
 
         self._gain = args.gain
         self._use_orthogonal = args.use_orthogonal
-        self._use_policy_active_masks = args.use_active_masks
         self._use_recurrent_policy = args.use_recurrent_policy
         self._rec_n = args.rec_n
 
@@ -34,16 +33,16 @@ class R_Actor_Critic(nn.Module):
         self.act = ACTLayer(action_space, self.hidden_size, self._use_orthogonal, self._gain)
         self.v_out = init_(nn.Linear(self.hidden_size, 1))
 
-    def forward(self, obs, rnn_states, masks, available_actions=None, share_obs=None, critic_rnn_states=None):
-        compute_critic = share_obs is not None
+    def forward(self, obs, actor_rnn_states, masks, available_actions=None, cent_obs=None, critic_rnn_states=None):
+        compute_critic = cent_obs is not None
         values = None
 
         actor_features = self.actor_base(obs)
         if compute_critic:
-            critic_features = self.critic_base(share_obs)
+            critic_features = self.critic_base(cent_obs)
 
         if self._use_recurrent_policy:
-            actor_features, rnn_states = self.actor_rnn(actor_features, rnn_states, masks)
+            actor_features, actor_rnn_states = self.actor_rnn(actor_features, actor_rnn_states, masks)
             if compute_critic:
                 critic_features, critic_rnn_states = self.critic_rnn(critic_features, critic_rnn_states, masks)
 
@@ -54,4 +53,4 @@ class R_Actor_Critic(nn.Module):
             values = self.v_out(critic_features)
 
         return (action_dists, action_reduce_fn, log_prob_reduce_fn, action_preprocess_fn, entropy_fn, entropy_reduce_fn,
-                rnn_states, values, critic_rnn_states)
+                actor_rnn_states, values, critic_rnn_states)

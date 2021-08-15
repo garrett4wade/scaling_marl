@@ -443,23 +443,27 @@ class Trainer:
                 elapsed_episodes = summary_info[self.summary_idx_hash['elapsed_episodes']]
                 winning_episodes = summary_info[self.summary_idx_hash['winning_episodes']]
                 episode_return = summary_info[self.summary_idx_hash['episode_return']]
+                episode_length = summary_info[self.summary_idx_hash['episode_length']]
 
                 recent_elapsed_episodes = elapsed_episodes - self.last_elapsed_episodes
                 recent_winning_episodes = winning_episodes - self.last_winning_episodes
                 recent_episode_return = episode_return - self.last_episode_return
+                recent_episode_length = episode_length - self.last_episode_length
 
                 if recent_elapsed_episodes > 0:
                     winning_rate = recent_winning_episodes / recent_elapsed_episodes
                     assert 0 <= winning_rate and winning_rate <= 1, winning_rate
                     avg_return = recent_episode_return / recent_elapsed_episodes
-                    log.debug('Map: {}, Recent Winning Rate: {:.2%}, Avg. Return: {:.2f}.'.format(
-                        self.cfg.map_name, winning_rate, avg_return))
+                    avg_ep_len = recent_episode_length / recent_elapsed_episodes
+                    log.debug('Map: {}, Recent Winning Rate: {:.2%} ({}/{}), Avg. Return: {:.2f}, Avg. Episode Length {:.2f}.'.format(
+                        self.cfg.map_name, winning_rate, int(recent_winning_episodes), int(recent_elapsed_episodes), avg_return, avg_ep_len))
 
                     self.last_elapsed_episodes = elapsed_episodes
                     self.last_winning_episodes = winning_episodes
                     self.last_episode_return = episode_return
+                    self.last_episode_length = episode_length
 
-                    log_infos = {**log_infos, 'train_winning_rate': winning_rate, 'train_episode_return': avg_return}
+                    log_infos = {**log_infos, 'train_winning_rate': winning_rate, 'train_episode_return': avg_return, 'train_episode_length': avg_ep_len}
             else:
                 raise NotImplementedError
 

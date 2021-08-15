@@ -30,7 +30,7 @@ def get_ppo_storage_specs(args, obs_space, share_obs_space, act_space):
     if isinstance(act_space, gym.spaces.Discrete):
         ppo_storage_specs.append(StorageSpec('available_actions', (act_space.n, ), torch.float32, True, 1))
 
-    if args.use_active_masks:
+    if not (args.no_policy_active_masks and args.no_value_active_masks):
         ppo_storage_specs.append(StorageSpec('active_masks', (1, ), torch.float32, True, 1))
 
     if args.use_fct_masks:
@@ -42,6 +42,6 @@ def get_ppo_storage_specs(args, obs_space, share_obs_space, act_space):
 
 
 SUMMARY_KEYS = {
-    'StarCraft2': ['elapsed_episodes', 'winning_episodes', 'episode_return'],
-    'Hanabi': ['elapsed_episodes', 'episode_return']
+    'StarCraft2': ['elapsed_episodes', 'winning_episodes', 'episode_return', 'episode_length'],
+    'Hanabi': ['elapsed_episodes', 'episode_return', 'episode_length']
 }

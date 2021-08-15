@@ -280,6 +280,7 @@ class StarCraft2Env(MultiAgentEnv):
         self.enemies = {}
         self._episode_count = 0
         self._episode_steps = 0
+        self.episode_steps = 0
         self._total_steps = 0
         self._obs = None
         self.battles_won = 0
@@ -495,6 +496,8 @@ class StarCraft2Env(MultiAgentEnv):
             for i in range(self.n_agents):
                 available_actions.append(self.get_avail_agent_actions(i))
                 infos[i] = {
+                    "_episode_length": self._episode_steps,
+                    "episode_length": self.episode_steps,
                     "episode_return": self.episode_return,
                     "winning_episodes": self.battles_won,
                     "elapsed_episodes": self.battles_game,
@@ -527,6 +530,7 @@ class StarCraft2Env(MultiAgentEnv):
 
         self._total_steps += 1
         self._episode_steps += 1
+        self.episode_steps += 1
 
         # Update units
         game_end_code = self.update_units()
@@ -572,6 +576,8 @@ class StarCraft2Env(MultiAgentEnv):
 
         for i in range(self.n_agents):
             infos[i] = {
+                "_episode_length": self._episode_steps,
+                "episode_length": self.episode_steps,
                 "episode_return": self.episode_return,
                 "winning_episodes": self.battles_won,
                 "elapsed_episodes": self.battles_game,

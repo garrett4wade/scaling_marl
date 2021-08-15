@@ -83,7 +83,6 @@ class ActorWorker:
         self.group_local_idx = self.local_rank % self.cfg.actor_group_size
         self.env_slice = slice(self.group_local_idx * self.envs_per_split,
                                (self.group_local_idx + 1) * self.envs_per_split)
-        print('actor {} env slice {}'.format(self.worker_idx, self.env_slice))
         self.steps = torch.zeros(self.cfg.num_splits, dtype=torch.float32)
 
         self.env_runners = None
@@ -285,6 +284,7 @@ class ActorWorker:
                             for i, policy_act_semaphore in enumerate(self.act_semaphore):
                                 if not self.is_policy_act_semaphores_ready[i]:
                                     cur_ready = policy_act_semaphore[cur_split].acquire(timeout=0.05)
+                                    # assert not policy_act_semaphore[cur_split].acquire(block=False)
                                     self.is_policy_act_semaphores_ready[i] = cur_ready
 
                         with timing.add_time('env_step'):

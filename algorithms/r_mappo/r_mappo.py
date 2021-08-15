@@ -25,8 +25,8 @@ class R_MAPPO:
         self._use_clipped_value_loss = args.use_clipped_value_loss
         self._use_huber_loss = args.use_huber_loss
         self._use_popart = args.use_popart
-        self._use_value_active_masks = args.use_active_masks
-        self._use_policy_active_masks = args.use_active_masks
+        self._no_value_active_masks = args.no_value_active_masks
+        self._no_policy_active_masks = args.no_policy_active_masks
 
         self.value_loss_fn = lambda x: huber_loss(x, args.huber_delta) if self._use_huber_loss else mse_loss
 
@@ -43,7 +43,7 @@ class R_MAPPO:
         else:
             value_loss = value_loss_original
 
-        if self._use_value_active_masks:
+        if not self._no_value_active_masks:
             value_loss = (value_loss * active_masks_batch).sum() / active_masks_batch.sum()
         else:
             value_loss = value_loss.mean()
@@ -71,7 +71,7 @@ class R_MAPPO:
         surr1 = imp_weights * adv_targ
         surr2 = torch.clamp(imp_weights, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv_targ
 
-        if self._use_policy_active_masks:
+        if not self._no_policy_active_masks:
             policy_action_loss = (-torch.sum(torch.min(surr1, surr2), dim=-1, keepdim=True) *
                                   active_masks_batch).sum() / active_masks_batch.sum()
         else:

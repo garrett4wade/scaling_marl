@@ -8,7 +8,7 @@ experiment_name: benchmark_27m_vs_30m
 benchmark: false
 cuda: true
 cuda_deterministic: true
-seed: 0
+seed: 1
 no_summary: true
 use_wandb: true
 use_eval: false
@@ -67,7 +67,7 @@ model_weights_addrs:  # every learner has a model_weights_addr and len(model_wei
   - tcp://10.0.4.6:8889
 seg_addrs:  # every worker node has seg_addrs connecting to all learners
   - - tcp://10.0.4.6:12346
-num_actors: 48
+num_actors: 32
 actor_group_size: 1
 envs_per_actor: 2
 min_num_requests: -1
@@ -86,7 +86,7 @@ default_niceness: 0
 eval_episodes: 32
 eval_interval: 100
 log_interval: 20
-n_training_threads: 16
+n_training_threads: 1
 reset_timeout_seconds: 60
 actor_worker_gpus: 0
 
@@ -127,14 +127,15 @@ use_orthogonal: false
 use_popart: true
 use_proper_time_limits: false
 use_ReLU: true
-use_active_masks: true
 use_advantage_normalization: true
 use_centralized_V: true
 use_clipped_value_loss: true
+no_value_active_masks: true
+no_policy_active_masks: false
 
 # some fixed tricks
 add_agent_id: false
-add_center_xy: true
+use_obs_instead_of_state: false
 add_distance_state: false
 add_enemy_action_state: false
 add_local_obs: false
@@ -145,7 +146,7 @@ use_stacked_frames: false
 stacked_frames: 1
 use_state_agent: true
 use_mustalive: true
-use_obs_instead_of_state: false
+add_center_xy: true
 
 # setup configs, use absolute dir
 cwd: "/workspace/workspace/scaling_marl"

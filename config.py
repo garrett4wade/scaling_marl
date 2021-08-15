@@ -326,10 +326,14 @@ def get_config():
                         action='store_false',
                         default=True,
                         help="by default, use huber loss. If set, do not use huber loss.")
-    parser.add_argument("--use_active_masks",
-                        action='store_false',
-                        default=True,
-                        help="by default True, whether to mask useless data in losses.")
+    parser.add_argument("--no_value_active_masks",
+                        action='store_true',
+                        default=False,
+                        help="by default False, whether to mask useless data in losses.")
+    parser.add_argument("--no_policy_active_masks",
+                        action='store_true',
+                        default=False,
+                        help="by default False, whether to mask useless data in losses.")
     parser.add_argument("--use_fct_masks",
                         action='store_false',
                         default=True,
