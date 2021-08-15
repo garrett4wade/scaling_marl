@@ -28,7 +28,7 @@ class WorkerNode:
         self.transmitter = None
 
         self.local_ps = [None for _ in range(self.cfg.num_policies)]
-        self.param_locks = [torch.multiprocessing.Lock() for _ in range(self.cfg.num_policies)]
+        self.param_locks = [RWLock() for _ in range(self.cfg.num_policies)]
         self.ps_policy_versions = ((-1) * torch.ones(self.cfg.num_policies, dtype=torch.int64)).share_memory_()
         self.ps_ready_events = [mp.Event() for _ in range(self.cfg.num_policies)]
 
@@ -146,7 +146,7 @@ class WorkerNode:
 
             # msg is multiple (key, tensor) pairs + policy version
             assert len(msg) % 2 == 1
-            with lock:
+            with lock.w_locked():
                 for i in range(len(msg) // 2):
                     key, value = msg[2 * i].decode('ascii'), msg[2 * i + 1]
 

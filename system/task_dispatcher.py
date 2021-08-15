@@ -34,7 +34,6 @@ class TaskDispatcher:
         self.no_summary = self.cfg.no_summary
         self.use_wandb = self.cfg.use_wandb
 
-        # TODO: add eval task
         self.use_eval = self.cfg.use_eval
         self.eval_interval = self.cfg.eval_interval
 
@@ -177,7 +176,9 @@ class TaskDispatcher:
                 infos = {'policy_' + str(policy_id) + '/' + k: v for k, v in infos.items()}
                 wandb.log(infos, step=int(self.consumed_num_steps[policy_id].item()))
             else:
-                self.writter.add_scalars('policy_' + str(policy_id), infos, step=int(self.consumed_num_steps[policy_id].item()))
+                self.writter.add_scalars('policy_' + str(policy_id),
+                                         infos,
+                                         step=int(self.consumed_num_steps[policy_id].item()))
 
     def _run(self):
         log.info('Initializing Task Dispatcher...')

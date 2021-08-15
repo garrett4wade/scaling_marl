@@ -11,7 +11,6 @@ from utils.timing import Timing
 from utils.utils import log, memory_consumption_mb, join_or_kill, set_process_cpu_affinity, safe_put, \
     TaskType, set_gpus_for_process, drain_semaphore
 
-# TODO: may be accelerated by c++ threading pool
 from envs.env_wrappers import ShareDummyVecEnv
 
 

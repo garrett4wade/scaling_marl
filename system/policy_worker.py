@@ -150,7 +150,7 @@ class PolicyWorker:
 
     def maybe_update_weights(self, timing):
         if self.local_policy_version < self.ps_policy_version and self.phase != PolicyWorkerPhase.IDLE:
-            with self.param_lock:
+            with self.param_lock.r_locked():
                 with timing.time_avg('update_weights/load_state_dict_once'):
                     self.rollout_policy.load_state_dict(self.local_ps)
                     self.local_policy_version = self.ps_policy_version.item()
