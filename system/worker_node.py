@@ -28,7 +28,7 @@ class WorkerNode:
         self.transmitter = None
 
         self.local_ps = [None for _ in range(self.cfg.num_policies)]
-        self.param_locks = [RWLock() for _ in range(self.cfg.num_policies)]
+        self.param_locks = [torch.multiprocessing.Lock() for _ in range(self.cfg.num_policies)]
         self.ps_policy_versions = ((-1) * torch.ones(self.cfg.num_policies, dtype=torch.int64)).share_memory_()
         self.ps_ready_events = [mp.Event() for _ in range(self.cfg.num_policies)]
 
@@ -78,6 +78,8 @@ class WorkerNode:
         for k in envstep_output_keys:
             envstep_output_shms[k] = []
         envstep_output_shms['dones'] = []
+        envstep_output_shms['step'] = []
+        envstep_output_shms['step_h'] = []
 
         for controlled_agents in self.cfg.policy2agents.values():
             act_semaphores.append([[mp.Semaphore(0) for _ in range(self.cfg.num_splits)]
@@ -108,6 +110,14 @@ class WorkerNode:
             dones_shape = (envs_per_split * self.cfg.actor_group_size, num_agents, 1)
             envstep_output_shms['dones'].append([[
                 torch.zeros(dones_shape, dtype=torch.float32).share_memory_().numpy()
+                for _ in range(self.cfg.num_splits)
+            ] for _ in range(num_actor_groups)])
+            envstep_output_shms['step'].append([[
+                torch.zeros((envs_per_split * self.cfg.actor_group_size, 1), dtype=torch.float32).share_memory_().numpy()
+                for _ in range(self.cfg.num_splits)
+            ] for _ in range(num_actor_groups)])
+            envstep_output_shms['step_h'].append([[
+                torch.zeros((envs_per_split * self.cfg.actor_group_size, 1), dtype=torch.float32).share_memory_().numpy()
                 for _ in range(self.cfg.num_splits)
             ] for _ in range(num_actor_groups)])
 
@@ -146,7 +156,7 @@ class WorkerNode:
 
             # msg is multiple (key, tensor) pairs + policy version
             assert len(msg) % 2 == 1
-            with lock.w_locked():
+            with lock:
                 for i in range(len(msg) // 2):
                     key, value = msg[2 * i].decode('ascii'), msg[2 * i + 1]
 
@@ -158,6 +168,9 @@ class WorkerNode:
                 learner_policy_version = int(msg[-1].decode('ascii'))
 
                 self.ps_policy_versions[policy_id] = learner_policy_version
+
+                # if learner_policy_version % 10 == 0:
+                #     print(ps['critic_rnn.rnn.weight_hh_l0'].numpy())
 
         if self.num_policy_updates[policy_id] % 10 == 0:
             log.debug(

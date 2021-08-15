@@ -150,13 +150,14 @@ class PolicyWorker:
 
     def maybe_update_weights(self, timing):
         if self.local_policy_version < self.ps_policy_version and self.phase != PolicyWorkerPhase.IDLE:
-            with self.param_lock.r_locked():
+            with self.param_lock:
                 with timing.time_avg('update_weights/load_state_dict_once'):
                     self.rollout_policy.load_state_dict(self.local_ps)
                     self.local_policy_version = self.ps_policy_version.item()
 
-            if self.local_policy_version % 20 == 0:
-                log.debug('Update policy %d to version %d', self.policy_id, self.local_policy_version)
+            if self.local_policy_version % 10 == 0:
+                # print(self.rollout_policy.state_dict()['critic_rnn.rnn.weight_hh_l0'].numpy())
+                log.info('Update policy %d to version %d', self.policy_id, self.local_policy_version)
 
     def _handle_policy_steps(self, timing):
         with torch.no_grad():
@@ -243,6 +244,8 @@ class PolicyWorker:
                             shm_pairs[group_idx][split_idx][:] = policy_outputs[k][i]
                             # NOTE: for debugging only
                             # assert np.any(shm_pairs[group_idx][split_idx] == insert_data[k][i]).sum() < 3
+                        elif k == 'step_h':
+                            shm_pairs[group_idx][split_idx][:] = self.envstep_output_shms['step'][group_idx][split_idx] + 1
 
                     for local_actor_idx in range(self.cfg.actor_group_size):
                         global_actor_idx = self.cfg.actor_group_size * group_idx + local_actor_idx
@@ -250,6 +253,7 @@ class PolicyWorker:
                                           (local_actor_idx + 1) * self.envs_per_split)
                         self.act_shms[global_actor_idx][split_idx][:, self.agent_idx] = policy_outputs['actions'][
                             i, env_slice]
+                        assert not self.act_semaphores[global_actor_idx][split_idx].acquire(block=False)
                         self.act_semaphores[global_actor_idx][split_idx].release()
 
             with timing.add_time('inference/insert'):

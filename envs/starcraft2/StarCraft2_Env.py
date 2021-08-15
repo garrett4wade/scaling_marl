@@ -495,8 +495,9 @@ class StarCraft2Env(MultiAgentEnv):
             for i in range(self.n_agents):
                 available_actions.append(self.get_avail_agent_actions(i))
                 infos[i] = {
-                    "battles_won": self.battles_won,
-                    "battles_game": self.battles_game,
+                    "episode_return": self.episode_return,
+                    "winning_episodes": self.battles_won,
+                    "elapsed_episodes": self.battles_game,
                     "battles_draw": self.timeouts,
                     "restarts": self.force_restarts,
                     "won": self.win_counted,

@@ -272,7 +272,7 @@ class Trainer:
 
                     dist.barrier()
 
-                if self.policy_version % self.cfg.broadcast_interval == 0 and self.replicate_rank == 0:
+                if self.policy_version % (self.cfg.sample_reuse * self.cfg.broadcast_interval) == 0 and self.replicate_rank == 0:
                     # the first trainer in each node broadcasts weights
                     self.pack_off_weights()
 
@@ -305,6 +305,7 @@ class Trainer:
         self.model_weights_socket.send_multipart(msg)
 
         if self.policy_version % 10 == 0:
+            # print(numpy_state_dict['critic_rnn.rnn.weight_hh_l0'])
             log.debug('Broadcasting model weights...(ver. {})'.format(self.policy_version))
 
     def training_step(self, timing):
@@ -324,11 +325,15 @@ class Trainer:
             train_info[k] = 0
 
         with timing.add_time('training_step/synchronization'):
+            self.policy.train_mode()
             dist.barrier()
 
         with timing.add_time('training_step/get_slot'):
             # only train popart parameter in the first epoch
             slot_id = self.buffer.get()
+            tmp = np.arange(self.cfg.slots_per_update) + self.buffer.step_storage[slot_id, 0]
+            assert np.all(self.buffer.step_storage[slot_id].reshape(-1) == tmp), (self.buffer.step_storage[slot_id].reshape(-1), tmp)
+            # print(slot_id)
 
         with timing.add_time('training_step/reanalyze'):
             if self.cfg.use_reanalyze:

@@ -83,6 +83,8 @@ class ActorWorker:
         self.group_local_idx = self.local_rank % self.cfg.actor_group_size
         self.env_slice = slice(self.group_local_idx * self.envs_per_split,
                                (self.group_local_idx + 1) * self.envs_per_split)
+        print('actor {} env slice {}'.format(self.worker_idx, self.env_slice))
+        self.steps = torch.zeros(self.cfg.num_splits, dtype=torch.float32)
 
         self.env_runners = None
 
@@ -162,16 +164,23 @@ class ActorWorker:
             policy_inputs['rewards'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
             policy_inputs['dones'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
             policy_inputs['fct_masks'] = np.ones((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
+            self.steps[split_idx] += 1
             for k, shms in self.envstep_output_shm.items():
                 # new rnn states is updated after each inference step
-                if 'rnn_states' not in k:
+                if 'rnn_states' not in k and k != 'step' and k != 'step_h':
                     for policy_shm, agent_idx in zip(shms, self.agent_ids):
                         policy_shm[split_idx][self.env_slice] = policy_inputs[k][:, agent_idx]
+                elif k == 'step' or k == 'step_h':
+                    for policy_shm, agent_idx in zip(shms, self.agent_ids):
+                        assert self.steps[split_idx] == 1
+                        policy_shm[split_idx][self.env_slice] = self.steps[split_idx]
 
         for split_idx in range(len(self.env_runners)):
             self.envstep_output_semaphore[split_idx].release()
             if self.cfg.actor_group_size == 1:
                 # when #actors == #groups
+                self.envstep_output_semaphore[split_idx].acquire()
+                assert not self.envstep_output_semaphore[split_idx].acquire(block=False)
                 for policy_queue in self.policy_queues:
                     policy_queue.put(split_idx * self.num_actors + self.local_rank)
 
@@ -194,7 +203,10 @@ class ActorWorker:
         env = self.env_runners[split_idx]
 
         with timing.add_time('env_step/simulation'), timing.time_avg('env_step/simulation_avg'):
+            action = self.act_shm[split_idx].copy()
             envstep_outputs = env.step(self.act_shm[split_idx])
+            assert np.all(action == self.act_shm[split_idx])
+            self.steps[split_idx] += 1
 
         with timing.add_time('env_step/copy_outputs'):
             infos = envstep_outputs['infos']
@@ -202,18 +214,23 @@ class ActorWorker:
                                            for info in infos])
             envstep_outputs['fct_masks'] = 1 - force_terminations
             for k, shms in self.envstep_output_shm.items():
-                if 'rnn_states' not in k:
+                if 'rnn_states' not in k and k != 'step' and k != 'step_h':
                     for policy_shm, agent_idx in zip(shms, self.agent_ids):
                         policy_shm[split_idx][self.env_slice] = envstep_outputs[k][:, agent_idx]
+                elif k == 'step':
+                    for policy_shm, agent_idx in zip(shms, self.agent_ids):
+                        policy_shm[split_idx][self.env_slice] = self.steps[split_idx]
             self.envstep_output_semaphore[split_idx].release()
 
             if self.cfg.actor_group_size == 1:
                 # when #actors == #groups
+                self.envstep_output_semaphore[split_idx].acquire()
+                assert not self.envstep_output_semaphore[split_idx].acquire(block=False)
                 for policy_queue in self.policy_queues:
                     policy_queue.put(split_idx * self.num_actors + self.local_rank)
 
         with timing.add_time('env_step/summary'):
-            dones = envstep_outputs['dones']
+            dones = envstep_outputs['dones'].copy()
             for env_id, (done, info) in enumerate(zip(dones, infos)):
                 if not np.all(done):
                     continue
@@ -221,6 +238,7 @@ class ActorWorker:
                     with self.buffer.summary_lock:
                         for i, sum_key in enumerate(self.summary_keys):
                             self.buffer.summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
+                        # print(self.buffer.summary_block.sum(axis=(0, 1)))
                 elif self.phase == ActorWorkerPhase.EVALUATION:
                     self.eval_episode_cnt += 1
                     for i, sum_key in enumerate(self.summary_keys):

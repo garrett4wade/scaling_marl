@@ -52,6 +52,7 @@ class Receiver:
         log.info('Reiceiver %d is ready!', self.rank)
 
     def _unpack_msg(self, timing, msg):
+        self.recv_cnt += 1
         msg = msg[2:]
         assert len(msg) % 2 == 1
         buffer_id = int(msg[-1].decode('ascii'))
@@ -79,13 +80,11 @@ class Receiver:
 
         tik = time.time()
         with timing.add_time('put_buffer'):
-            buffer.put(seg_dict)
+            buffer.put(seg_dict, self.recv_cnt)
 
             with buffer.summary_lock:
                 buffer.summary_block[worker_node_idx] = summary_info
         buffer_put_time = time.time() - tik
-
-        self.recv_cnt += 1
 
         if self.recv_cnt % 100 == 0:
             log.info('Receiver {} decompression time: {:.2f}, buffer put time: {:.2f}'.format(

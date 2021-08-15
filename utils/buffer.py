@@ -225,6 +225,12 @@ class WorkerBuffer(ReplayBuffer):
         # episode step record
         self._ep_step = torch.zeros((self.num_splits * self.num_actor_groups, ),
                                     dtype=torch.int32).share_memory_().numpy()
+        self.step_storage = torch.zeros((self.num_slots, self.episode_length + 1, self.envs_per_seg, 1), dtype=torch.int32).share_memory_().numpy()
+        self.step_r_storage = torch.zeros((self.num_slots, self.episode_length, self.envs_per_seg, 1), dtype=torch.int32).share_memory_().numpy()
+        self.num_chunks = self.episode_length // self.cfg.data_chunk_length
+        self.data_chunk_length = self.cfg.data_chunk_length
+        self.step_h_storage = torch.zeros((self.num_slots, self.num_chunks, self.envs_per_seg, 1), dtype=torch.int32).share_memory_().numpy()
+
         # Buffer insertion is invoked after copying actions to small shared memory for actors.
         # Since buffer insertion is slow, it is very possible that before the buffer insertion on policy worker #1
         # finishes, policy worker #2 starts buffer insertion of the same client (slot),
@@ -301,6 +307,7 @@ class LearnerBuffer(ReplayBuffer):
         self.sample_reuse = cfg.sample_reuse
 
         super()._init_storage()
+        self.step_storage = torch.zeros((self.num_slots, self.slots_per_update), dtype=torch.int32).share_memory_().numpy()
 
         self._used_times = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
 
@@ -358,7 +365,7 @@ class LearnerBuffer(ReplayBuffer):
         self._global_ptr[0] = slot_id
         self._global_ptr[1] = 0
 
-    def put(self, seg_dict):
+    def put(self, seg_dict, step):
         # move pointer forward without waiting for the completion of copying
         with self._ptr_lock:
             slot_id = self._global_ptr[0].item()
@@ -373,6 +380,7 @@ class LearnerBuffer(ReplayBuffer):
 
         for k, v in seg_dict.items():
             self.storage[k][slot_id, :, batch_slice] = v
+        self.step_storage[slot_id, batch_slice] = step
 
         self.total_timesteps += self.envs_per_seg * self.episode_length
 
@@ -385,11 +393,12 @@ class LearnerBuffer(ReplayBuffer):
     def get(self, block=True, timeout=None):
         with self._read_ready:
             # randomly choose one slot from the oldest available slots
-            slot_id = super().get(block, timeout, lambda x: np.random.choice(x[:self.target_num_slots]))
+            slot_id = super().get(block, timeout, lambda x: x[0])
             # TODO: default reuse pattern is recycle, while it could be set to 'exhausting' or others
             # defer the timestamp such that the slot will be selected again only after
             # all readable slots are selected at least once
-            self._time_stamp[slot_id] = np.max(self._time_stamp) + 1
+
+            # self._time_stamp[slot_id] = np.max(self._time_stamp) + 1
         return slot_id
 
     def close_out(self, slot_id):
@@ -472,15 +481,14 @@ class LearnerBuffer(ReplayBuffer):
             return to_chunk(x, self.num_chunks)
 
         def _cast_h(h):
-            # [T, B, A, rN, D] -> [T/L, B, A, rN, D] -> [T/L * B * A, rN, D] -> [rN, T/L * B * A, D]
-            h = select(h, self.num_chunks)
+            # [T/L, B, A, rN, D] -> [T/L * B * A, rN, D] -> [rN, T/L * B * A, D]
             return h.reshape(-1, *h.shape[3:]).swapaxes(0, 1)
 
         for k in self.storage_keys:
             # we don't need fct_masks/rewards for policy learning, because they are used in v_target computation
             if k != 'fct_masks' and k != 'rewards':
                 if 'rnn_states' in k:
-                    output_tensors[k] = _cast_h(self.storage[k][slot, :self.episode_length])
+                    output_tensors[k] = _cast_h(self.storage[k][slot])
                 else:
                     output_tensors[k] = _cast(self.storage[k][slot, :self.episode_length])
 
@@ -572,6 +580,16 @@ class SharedPolicyMixin(PolicyMixin):
                             self.storage[name][old_closure_slot_ids, -1] = locals()[name][closure_choose]
 
                 self.rewards[old_closure_slot_ids, -1] = insert_data['rewards'][closure_choose]
+                self.step_storage[old_closure_slot_ids, -1] = insert_data['step'][closure_choose]
+                self.step_r_storage[old_closure_slot_ids, -1] = insert_data['step'][closure_choose] - 1
+                assert np.all(self.step_storage[old_closure_slot_ids, 0] % 400 == 1)
+                for old_closure_slot_id in old_closure_slot_ids:
+                    tmp = np.arange(self.step_storage[old_closure_slot_id, 0], self.step_storage[old_closure_slot_id, -1] + 1)
+                    assert np.all(self.step_storage[old_closure_slot_id].squeeze(-1).squeeze(-1) == tmp), (self.step_storage[old_closure_slot_id].squeeze(-1).squeeze(-1), tmp)
+                    assert np.all(self.step_r_storage[old_closure_slot_id].squeeze(-1).squeeze(-1) == tmp[:-1])
+
+                    tmp = np.arange(self.step_storage[old_closure_slot_id, 0], self.step_storage[old_closure_slot_id, 0] + self.episode_length, step=self.data_chunk_length)
+                    assert np.all(self.step_h_storage[old_closure_slot_id].squeeze(-1).squeeze(-1) == tmp), (self.step_h_storage[old_closure_slot_id].squeeze(-1).squeeze(-1), tmp)
 
                 # NOTE: following 2 lines for debug only
                 # with self._read_ready:
@@ -583,7 +601,7 @@ class SharedPolicyMixin(PolicyMixin):
                     closure_clients = client_ids[closure_choose]
                     self._prev_slot_indices[closure_clients] = self.num_slots
 
-            valid_choose = np.logical_not(closure_choose)
+            valid_choose = np.logical_not(closure_choose) if pause else np.ones(closure_choose.shape, dtype=np.bool)
 
         return slot_ids[valid_choose], ep_steps[valid_choose], masks, active_masks, valid_choose
 
@@ -605,6 +623,7 @@ class SharedPolicyMixin(PolicyMixin):
             self.share_obs[slot_ids, ep_steps] = share_obs[valid_choose]
             self.obs[slot_ids, ep_steps] = obs[valid_choose]
             self.rewards[slot_ids[ep_steps >= 1], ep_steps[ep_steps >= 1] - 1] = rewards[valid_choose][ep_steps >= 1]
+            self.step_r_storage[slot_ids[ep_steps >= 1], ep_steps[ep_steps >= 1] - 1] = policy_outputs_and_input_rnn_states['step'][valid_choose][ep_steps >= 1] - 1
             self.masks[slot_ids, ep_steps] = masks[valid_choose]
 
             if hasattr(self, 'available_actions') and available_actions is not None:
@@ -623,6 +642,14 @@ class SharedPolicyMixin(PolicyMixin):
                     selected_idx = ep_steps % self.data_chunk_length == 0
                     if np.any(selected_idx):
                         self.storage[k][
+                            slot_ids[selected_idx], ep_steps[selected_idx] //
+                            self.data_chunk_length] = policy_outputs_and_input_rnn_states[k][valid_choose][selected_idx]
+                elif k == 'step':
+                    self.step_storage[slot_ids, ep_steps] = policy_outputs_and_input_rnn_states[k][valid_choose]
+                elif k == 'step_h':
+                    selected_idx = ep_steps % self.data_chunk_length == 0
+                    if np.any(selected_idx):
+                        self.step_h_storage[
                             slot_ids[selected_idx], ep_steps[selected_idx] //
                             self.data_chunk_length] = policy_outputs_and_input_rnn_states[k][valid_choose][selected_idx]
                 else:
