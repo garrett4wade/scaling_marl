@@ -41,7 +41,11 @@ def get_ppo_storage_specs(args, obs_space, share_obs_space, act_space):
     return ppo_storage_specs, policy_input_keys, policy_output_keys
 
 
-SUMMARY_KEYS = {
+ENV_SUMMARY_KEYS = {
     'StarCraft2': ['elapsed_episodes', 'winning_episodes', 'episode_return', 'episode_length'],
     'Hanabi': ['elapsed_episodes', 'episode_return', 'episode_length']
+}
+
+ALGORITHM_SUMMARY_KEYS = {
+    'rmappo': ['value_loss', 'policy_loss', 'dist_entropy', 'grad_norm'],
 }

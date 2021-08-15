@@ -12,6 +12,7 @@ import time
 import torch.multiprocessing as mp
 
 import torch.distributed as dist
+from algorithms.registries import ALGORITHM_SUMMARY_KEYS
 
 
 class Trainer:
@@ -64,11 +65,12 @@ class Trainer:
         self.algorithm_name = self.cfg.algorithm_name
         self.experiment_name = self.cfg.experiment_name
         # summary
-        self.summary_keys = self.buffer.summary_keys
-        self.summary_idx_hash = {}
-        for i, k in enumerate(self.summary_keys):
-            self.summary_idx_hash[k] = i
+        self.env_summary_keys = self.buffer.env_summary_keys
+        self.env_summary_idx_hash = {}
+        for i, k in enumerate(self.env_summary_keys):
+            self.env_summary_idx_hash[k] = i
             setattr(self, 'last_' + k, 0)
+        self.algorithm_summary_keys = ALGORITHM_SUMMARY_KEYS[self.cfg.algorithm_name]
         # tricks
         self.use_linear_lr_decay = self.cfg.use_linear_lr_decay
         # system dataflow
@@ -320,9 +322,8 @@ class Trainer:
 
         train_info = {}
 
-        # TODO: use different summary keys for different algorithms
-        summary_keys = ['value_loss', 'policy_loss', 'dist_entropy', 'grad_norm']
-        for k in summary_keys:
+        self.algorithm_summary_keys = ['value_loss', 'policy_loss', 'dist_entropy', 'grad_norm']
+        for k in self.algorithm_summary_keys:
             train_info[k] = 0
 
         with timing.add_time('training_step/synchronization'):
@@ -371,7 +372,7 @@ class Trainer:
             with timing.add_time('training_step/logging/loss'):
                 value_loss, policy_loss, dist_entropy, grad_norm = infos
 
-                for k in summary_keys:
+                for k in self.algorithm_summary_keys:
                     train_info[k] += locals()[k].item()
 
         with timing.add_time('training_step/logging/other_records'):
@@ -381,7 +382,7 @@ class Trainer:
 
             reduce_factor = self.num_mini_batch * self.num_trainers
 
-            for k in summary_keys:
+            for k in self.algorithm_summary_keys:
                 train_info[k] /= reduce_factor
 
         with timing.add_time('training_step/close_out'):
@@ -439,12 +440,12 @@ class Trainer:
             self.logging_tik = time.time()
 
             if self.env_name == 'StarCraft2':
-                with self.buffer.summary_lock:
+                with self.buffer.env_summary_lock:
                     summary_info = self.buffer.summary_block.sum(0)
-                elapsed_episodes = summary_info[self.summary_idx_hash['elapsed_episodes']]
-                winning_episodes = summary_info[self.summary_idx_hash['winning_episodes']]
-                episode_return = summary_info[self.summary_idx_hash['episode_return']]
-                episode_length = summary_info[self.summary_idx_hash['episode_length']]
+                elapsed_episodes = summary_info[self.env_summary_idx_hash['elapsed_episodes']]
+                winning_episodes = summary_info[self.env_summary_idx_hash['winning_episodes']]
+                episode_return = summary_info[self.env_summary_idx_hash['episode_return']]
+                episode_length = summary_info[self.env_summary_idx_hash['episode_length']]
 
                 recent_elapsed_episodes = elapsed_episodes - self.last_elapsed_episodes
                 recent_winning_episodes = winning_episodes - self.last_winning_episodes

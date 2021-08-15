@@ -82,7 +82,7 @@ class Receiver:
         with timing.add_time('put_buffer'):
             buffer.put(seg_dict)
 
-            with buffer.summary_lock:
+            with buffer.env_summary_lock:
                 buffer.summary_block[worker_node_idx] = summary_info
         buffer_put_time = time.time() - tik
 

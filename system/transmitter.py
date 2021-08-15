@@ -71,7 +71,7 @@ class Transmitter:
             total_mem += mem
             msg.extend([k.encode('ascii'), compressed])
 
-        with self.buffers[buffer_id].summary_lock:
+        with self.buffers[buffer_id].env_summary_lock:
             summary_info = self.buffers[buffer_id].summary_block.sum(axis=(0, 1))
         msg.extend([self.sockets[learner_node_idx].identity, summary_info, str(local_trainer_idx).encode('ascii')])
 

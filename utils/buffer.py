@@ -3,7 +3,7 @@ import time
 import numpy as np
 import multiprocessing as mp
 from queue import Empty
-from algorithms.storage_registries import get_ppo_storage_specs, to_numpy_type, SUMMARY_KEYS
+from algorithms.registries import get_ppo_storage_specs, to_numpy_type, ENV_SUMMARY_KEYS
 from algorithms.utils.modules import compute_gae, masked_normalization
 from utils.utils import log
 from algorithms.utils.transforms import flatten, to_chunk
@@ -85,8 +85,8 @@ class ReplayBuffer:
         self.storage = {k: getattr(self, k) for k in self.storage_keys}
 
         # to specify recorded summary infos
-        self.summary_keys = SUMMARY_KEYS[self.cfg.env_name]
-        self.summary_lock = mp.Lock()
+        self.env_summary_keys = ENV_SUMMARY_KEYS[self.cfg.env_name]
+        self.env_summary_lock = mp.Lock()
 
         # buffer indicators
         self._is_readable = torch.zeros((self.num_slots, ), dtype=torch.uint8).share_memory_().numpy()
@@ -241,7 +241,7 @@ class WorkerBuffer(ReplayBuffer):
         # summary block
         # TODO: when task changes, we also need to reset summary block
         self.summary_block = torch.zeros(
-            (self.num_splits, self.envs_per_split * self.num_actors, len(self.summary_keys)),
+            (self.num_splits, self.envs_per_split * self.num_actors, len(self.env_summary_keys)),
             dtype=torch.float32).share_memory_().numpy()
 
     def _allocate(self, identity):
@@ -309,7 +309,7 @@ class LearnerBuffer(ReplayBuffer):
 
         # summary block
         # TODO: move this summary block to task dispatcher
-        self.summary_block = torch.zeros((len(cfg.seg_addrs[0]), len(self.summary_keys)),
+        self.summary_block = torch.zeros((len(cfg.seg_addrs[0]), len(self.env_summary_keys)),
                                          dtype=torch.float32).share_memory_().numpy()
 
         self._ptr_lock = mp.Lock()

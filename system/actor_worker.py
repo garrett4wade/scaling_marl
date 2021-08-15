@@ -73,7 +73,7 @@ class ActorWorker:
         self.envs_per_split = self.envs_per_actor // self.num_splits
 
         self.buffer = buffer
-        self.summary_keys = self.buffer.summary_keys
+        self.env_summary_keys = self.buffer.env_summary_keys
         self.summary_offset = self.local_rank * self.envs_per_split
 
         self.initialized = False
@@ -222,13 +222,13 @@ class ActorWorker:
                 if not np.all(done):
                     continue
                 if self.phase == ActorWorkerPhase.ROLLOUT:
-                    with self.buffer.summary_lock:
-                        for i, sum_key in enumerate(self.summary_keys):
+                    with self.buffer.env_summary_lock:
+                        for i, sum_key in enumerate(self.env_summary_keys):
                             self.buffer.summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
                         # print(self.buffer.summary_block.sum(axis=(0, 1)))
                 elif self.phase == ActorWorkerPhase.EVALUATION:
                     self.eval_episode_cnt += 1
-                    for i, sum_key in enumerate(self.summary_keys):
+                    for i, sum_key in enumerate(self.env_summary_keys):
                         self.eval_summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
                     if self.eval_episode_cnt >= self.cfg.eval_episodes:
                         self.eval_finish_event.set()

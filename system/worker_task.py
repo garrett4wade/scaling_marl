@@ -123,10 +123,10 @@ class WorkerTask:
         self.eval_episode_cnt = torch.zeros(1, dtype=torch.int32).share_memory_().numpy()
         self.eval_finish_event = mp.Event()
 
-        self.summary_keys = self.buffer.summary_keys
-        self.summary_idx_hash = {}
-        for i, k in enumerate(self.summary_keys):
-            self.summary_idx_hash[k] = i
+        self.env_summary_keys = self.buffer.env_summary_keys
+        self.env_summary_idx_hash = {}
+        for i, k in enumerate(self.env_summary_keys):
+            self.env_summary_idx_hash[k] = i
 
         self.phase = WorkerTaskPhase.STOP
 
@@ -420,13 +420,13 @@ class WorkerTask:
             # TODO: we may wait evaluation finish outside this function
             self.eval_finish_event.wait()
 
-            with self.buffer.summary_lock:
+            with self.buffer.env_summary_lock:
                 summary_data = (self.eval_summary_block - self.buffer.summary_block).sum(0).sum(0)
 
             infos = {}
             if self.cfg.env_name == 'StarCraft2':
                 raw_infos = {}
-                for i, k in enumerate(self.summary_keys):
+                for i, k in enumerate(self.env_summary_keys):
                     raw_infos[k] = summary_data[i]
                 infos['eval_winning_rate'] = raw_infos['winning_episodes'] / raw_infos['elapsed_episodes']
                 infos['eval_episode_return'] = raw_infos['episode_return'] / raw_infos['elapsed_episodes']
