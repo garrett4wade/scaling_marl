@@ -66,11 +66,7 @@ class Transmitter:
         total_mem = 0
         for k, data in self.buffers[buffer_id].storage.items():
             # lz4 is the most cost-efficient compression choice, ~7.5x compression in ~1.5s in 27m_vs_30m env
-            assert np.all(data[slot] == self.storage_copy[k])
             compressed = blosc.compress(data[slot].tobytes(), typesize=4, cname='lz4')
-            decompressed = np.frombuffer(blosc.decompress(compressed), dtype=np.float32).reshape(data[slot].shape)
-            assert np.all(self.storage_copy[k] == decompressed)
-            assert np.all(data[slot] == decompressed)
             mem_data[k] = mem = getsizeof(compressed) / 1024**2
             total_mem += mem
             msg.extend([k.encode('ascii'), compressed])
@@ -96,7 +92,7 @@ class Transmitter:
 
         timing = Timing()
 
-        min_num_segs = 0
+        min_num_segs = 4
 
         self._init()
         while not self.terminate:
@@ -144,10 +140,6 @@ class Transmitter:
                             slot, (learner_node_idx, local_trainer_dst) = buffer.get(timeout=0.02)
 
                             if slot is not None:
-                                self.storage_copy = {}
-                                for k, v in buffer.storage.items():
-                                    self.storage_copy[k] = v[slot].copy()
-
                                 self.seg_queues[learner_node_idx].put((buffer_id, slot, local_trainer_dst))
                                 self.remaining_segs += 1
 

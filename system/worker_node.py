@@ -78,8 +78,6 @@ class WorkerNode:
         for k in envstep_output_keys:
             envstep_output_shms[k] = []
         envstep_output_shms['dones'] = []
-        envstep_output_shms['step'] = []
-        envstep_output_shms['step_h'] = []
 
         for controlled_agents in self.cfg.policy2agents.values():
             act_semaphores.append([[mp.Semaphore(0) for _ in range(self.cfg.num_splits)]
@@ -110,14 +108,6 @@ class WorkerNode:
             dones_shape = (envs_per_split * self.cfg.actor_group_size, num_agents, 1)
             envstep_output_shms['dones'].append([[
                 torch.zeros(dones_shape, dtype=torch.float32).share_memory_().numpy()
-                for _ in range(self.cfg.num_splits)
-            ] for _ in range(num_actor_groups)])
-            envstep_output_shms['step'].append([[
-                torch.zeros((envs_per_split * self.cfg.actor_group_size, 1), dtype=torch.float32).share_memory_().numpy()
-                for _ in range(self.cfg.num_splits)
-            ] for _ in range(num_actor_groups)])
-            envstep_output_shms['step_h'].append([[
-                torch.zeros((envs_per_split * self.cfg.actor_group_size, 1), dtype=torch.float32).share_memory_().numpy()
                 for _ in range(self.cfg.num_splits)
             ] for _ in range(num_actor_groups)])
 

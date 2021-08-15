@@ -272,7 +272,8 @@ class Trainer:
 
                     dist.barrier()
 
-                if self.policy_version % (self.cfg.sample_reuse * self.cfg.broadcast_interval) == 0 and self.replicate_rank == 0:
+                if self.policy_version % (self.cfg.sample_reuse *
+                                          self.cfg.broadcast_interval) == 0 and self.replicate_rank == 0:
                     # the first trainer in each node broadcasts weights
                     self.pack_off_weights()
 
@@ -331,9 +332,6 @@ class Trainer:
         with timing.add_time('training_step/get_slot'):
             # only train popart parameter in the first epoch
             slot_id = self.buffer.get()
-            tmp = np.arange(self.cfg.slots_per_update) + self.buffer.step_storage[slot_id, 0]
-            assert np.all(self.buffer.step_storage[slot_id].reshape(-1) == tmp), (self.buffer.step_storage[slot_id].reshape(-1), tmp)
-            # print(slot_id)
 
         with timing.add_time('training_step/reanalyze'):
             if self.cfg.use_reanalyze:
@@ -355,7 +353,8 @@ class Trainer:
                     values = self.policy.get_values(**reanalyze_inputs).cpu().numpy()
                     self.buffer.values[slot_id] = values.reshape(*self.buffer.values[slot_id].shape)
 
-        data_generator = self.buffer.recurrent_generator(slot_id) if self.cfg.use_recurrent_policy else self.buffer.feed_forward_generator(slot_id)
+        data_generator = self.buffer.recurrent_generator(
+            slot_id) if self.cfg.use_recurrent_policy else self.buffer.feed_forward_generator(slot_id)
 
         for sample in data_generator:
             with timing.add_time('training_step/to_device'):
@@ -394,7 +393,7 @@ class Trainer:
 
     def maybe_save(self):
         if self.replicate_rank == 0 and (self.policy_version % self.save_interval == 0
-                                    or self.policy_version == self.train_for_episodes - 1):
+                                         or self.policy_version == self.train_for_episodes - 1):
             self.save()
 
     def maybe_log(self):
@@ -421,11 +420,13 @@ class Trainer:
             global_sample_reuse = self.consumed_num_steps / self.received_num_steps
 
             log.debug("Env {} Algo {} Exp {} updates {}/{} episodes, consumed num timesteps {}/{}, "
-                      "recent rollout FPS {}, global average rollout FPS {}, "
-                      "recent learning FPS {}, global average learning FPS {}, recent sample reuse: {:.2f}, global average sample reuse: {:.2f}.\n".format(
+                      "recent rollout FPS {}, global average rollout FPS {}, recent learning FPS {}, "
+                      "global average learning FPS {}, recent sample reuse: {:.2f}, "
+                      "global average sample reuse: {:.2f}.\n".format(
                           self.env_name, self.algorithm_name, self.experiment_name, self.policy_version,
                           self.train_for_episodes, self.consumed_num_steps, self.train_for_env_steps,
-                          recent_rollout_fps, global_avg_rollout_fps, recent_learning_fps, global_avg_learning_fps, recent_sample_reuse, global_sample_reuse))
+                          recent_rollout_fps, global_avg_rollout_fps, recent_learning_fps, global_avg_learning_fps,
+                          recent_sample_reuse, global_sample_reuse))
 
             log_infos = {
                 'rollout_FPS': recent_rollout_fps,
@@ -455,15 +456,21 @@ class Trainer:
                     assert 0 <= winning_rate and winning_rate <= 1, winning_rate
                     avg_return = recent_episode_return / recent_elapsed_episodes
                     avg_ep_len = recent_episode_length / recent_elapsed_episodes
-                    log.debug('Map: {}, Recent Winning Rate: {:.2%} ({}/{}), Avg. Return: {:.2f}, Avg. Episode Length {:.2f}.'.format(
-                        self.cfg.map_name, winning_rate, int(recent_winning_episodes), int(recent_elapsed_episodes), avg_return, avg_ep_len))
+                    log.debug(
+                        'Map: {}, Recent Winning Rate: {:.2%} ({}/{}), Avg. Return: {:.2f}, Avg. Episode Length {:.2f}.'
+                        .format(self.cfg.map_name, winning_rate, int(recent_winning_episodes),
+                                int(recent_elapsed_episodes), avg_return, avg_ep_len))
 
                     self.last_elapsed_episodes = elapsed_episodes
                     self.last_winning_episodes = winning_episodes
                     self.last_episode_return = episode_return
                     self.last_episode_length = episode_length
 
-                    log_infos = {**log_infos, 'train_winning_rate': winning_rate, 'train_episode_return': avg_return, 'train_episode_length': avg_ep_len}
+                    log_infos = {
+                        **log_infos, 'train_winning_rate': winning_rate,
+                        'train_episode_return': avg_return,
+                        'train_episode_length': avg_ep_len
+                    }
             else:
                 raise NotImplementedError
 
@@ -483,7 +490,7 @@ class Trainer:
 
         data = np.zeros(len(infos), dtype=np.float32)
         data[:] = list(infos.values())
-        msg = [self.socket_identity, str(self.policy_id).encode('ascii')
-                ] + [k.encode('ascii') for k in infos.keys()] + [data]
+        msg = [self.socket_identity, str(self.policy_id).encode('ascii')] + [k.encode('ascii')
+                                                                             for k in infos.keys()] + [data]
 
         self.task_result_socket.send_multipart(msg)
