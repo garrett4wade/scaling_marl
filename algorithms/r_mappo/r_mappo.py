@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from utils.utils import get_gard_norm, huber_loss, mse_loss
-import torch.distributed as dist
 
 
 class R_MAPPO:
@@ -9,20 +8,15 @@ class R_MAPPO:
         self.device = policy.device
         self.tpdv = dict(dtype=torch.float32, device=self.device)
         self.policy = policy
-        self.num_mini_batch = args.num_mini_batch
-        self.num_trainers = dist.get_world_size()
-        self.slots_per_update = args.slots_per_update
 
         self.clip_param = args.clip_param
         self.entropy_coef = args.entropy_coef
         self.value_coef = args.value_coef
         self.max_grad_norm = args.max_grad_norm
 
-        self._use_recurrent_policy = args.use_recurrent_policy
         self._use_max_grad_norm = args.use_max_grad_norm
         self._use_clipped_value_loss = args.use_clipped_value_loss
         self._use_huber_loss = args.use_huber_loss
-        self._use_popart = args.use_popart
         self._no_value_active_masks = args.no_value_active_masks
         self._no_policy_active_masks = args.no_policy_active_masks
 
@@ -50,35 +44,25 @@ class R_MAPPO:
 
     def step(self, sample, update_actor=True):
         assert update_actor, 'currently ppg not supported'
-        (share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch, value_preds_batch,
-         v_target_batch, masks_batch, active_masks_batch, old_action_log_probs_batch, adv_targ,
-         available_actions_batch) = (sample['share_obs'], sample['obs'], sample['rnn_states'],
-                                     sample['rnn_states_critic'], sample['actions'], sample['values'],
-                                     sample['v_target'], sample['masks'], sample['active_masks'],
-                                     sample['action_log_probs'], sample['advantages'], sample['available_actions'])
 
         # Reshape to do in a single forward pass for all steps
-        values, action_log_probs, dist_entropy = self.policy.evaluate_actions(share_obs_batch, obs_batch,
-                                                                              rnn_states_batch, rnn_states_critic_batch,
-                                                                              actions_batch, masks_batch,
-                                                                              available_actions_batch,
-                                                                              active_masks_batch)
-        # actor update
-        imp_weights = torch.exp(action_log_probs - old_action_log_probs_batch)
+        values, action_log_probs, dist_entropy = self.policy.evaluate_actions(**sample)
 
+        # actor update
+        imp_weights = torch.exp(action_log_probs - sample['action_log_probs'])
+
+        adv_targ = sample['advantages'].sum(-1, keepdim=True)
         surr1 = imp_weights * adv_targ
         surr2 = torch.clamp(imp_weights, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv_targ
 
         if not self._no_policy_active_masks:
-            policy_action_loss = (-torch.sum(torch.min(surr1, surr2), dim=-1, keepdim=True) *
-                                  active_masks_batch).sum() / active_masks_batch.sum()
+            policy_loss = (-torch.sum(torch.min(surr1, surr2), dim=-1, keepdim=True) *
+                           sample['active_masks']).sum() / sample['active_masks'].sum()
         else:
-            policy_action_loss = -torch.sum(torch.min(surr1, surr2), dim=-1, keepdim=True).mean()
-
-        policy_loss = policy_action_loss
+            policy_loss = -torch.sum(torch.min(surr1, surr2), dim=-1, keepdim=True).mean()
 
         # critic update
-        value_loss = self.cal_value_loss(values, value_preds_batch, v_target_batch, active_masks_batch)
+        value_loss = self.cal_value_loss(values, sample['values'], sample['v_target'], sample['active_masks'])
 
         self.policy.optimizer.zero_grad()
 

@@ -89,7 +89,8 @@ class R_MAPPOPolicy:
                          actions,
                          masks,
                          available_actions=None,
-                         active_masks=None):
+                         active_masks=None,
+                         **kwargs):
         (action_dists, _, log_prob_reduce_fn, action_preprocess_fn, entropy_fn, entropy_reduce_fn, _, values,
          _) = self.actor_critic(obs, rnn_states, masks, available_actions, share_obs, rnn_states_critic)
         action_log_probs, dist_entropy = evaluate_actions_from_dist(action_dists, actions, log_prob_reduce_fn,

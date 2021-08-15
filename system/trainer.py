@@ -457,9 +457,9 @@ class Trainer:
                     avg_return = recent_episode_return / recent_elapsed_episodes
                     avg_ep_len = recent_episode_length / recent_elapsed_episodes
                     log.debug(
-                        'Map: {}, Recent Winning Rate: {:.2%} ({}/{}), Avg. Return: {:.2f}, Avg. Episode Length {:.2f}.'
+                        'Map: {}, Recent Winning Rate: {:.2%} ({}/{}), Avg. Episode Length {:.2f}, Avg. Return: {:.2f}.'
                         .format(self.cfg.map_name, winning_rate, int(recent_winning_episodes),
-                                int(recent_elapsed_episodes), avg_return, avg_ep_len))
+                                int(recent_elapsed_episodes), avg_ep_len, avg_return))
 
                     self.last_elapsed_episodes = elapsed_episodes
                     self.last_winning_episodes = winning_episodes
