@@ -422,6 +422,9 @@ class WorkerTask:
             else:
                 raise NotImplementedError
 
+            with self.buffer.env_summary_lock:
+                self.eval_summary_block[:] = self.buffer.summary_block
+
             log.info('--- Worker Task %d --- prepares for evaluation...', self.task_rank)
             for q in itertools.chain(*self.policy_worker_queues):
                 q.put(TaskType.EVALUATION)
@@ -452,6 +455,8 @@ class WorkerTask:
                 assert raw_infos['elapsed_episodes'] == self.cfg.eval_episodes, (raw_infos['elapsed_episodes'], self.cfg.eval_episodes)
                 infos['eval_winning_rate'] = raw_infos['winning_episodes'] / raw_infos['elapsed_episodes']
                 infos['eval_episode_return'] = raw_infos['episode_return'] / raw_infos['elapsed_episodes']
+                infos['eval_episode_length'] = raw_infos['episode_length'] / raw_infos['elapsed_episodes']
+                assert 0 <= infos['eval_winning_rate'] and infos['eval_winning_rate'] <= 1
             else:
                 raise NotImplementedError
 
