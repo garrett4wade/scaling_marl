@@ -15,7 +15,7 @@ from utils.get_available_gpus import get_gpus_without_triggering_pytorch_cuda_in
 
 
 class TaskType:
-    INIT, TERMINATE, RESET, ROLLOUT, EVALUATION, TRAIN, START, PBT, UPDATE_ENV_STEPS, EMPTY, PAUSE, RESUME = range(12)
+    INIT, TERMINATE, RESET, START, PAUSE, ROLLOUT, EVALUATION, CLOSING_ROLLOUT, CLOSING_EVALUATION, TRAIN, PBT, EMPTY = range(12)
 
 
 class SocketState:

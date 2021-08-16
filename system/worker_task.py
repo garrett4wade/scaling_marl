@@ -115,7 +115,6 @@ class WorkerTask:
         self.worker_policy_versions = torch.zeros((self.cfg.num_policies, self.cfg.num_policy_workers),
                                                   dtype=torch.int32).numpy()
 
-        self.actor_pause_events = [mp.Event() for _ in range(self.num_actors)]
         self.stop_experience_collection_cnt = torch.zeros(self.num_actors, dtype=torch.int32).share_memory_().numpy()
         self.stop_experience_collection_cond = mp.Condition()
 
@@ -128,7 +127,7 @@ class WorkerTask:
         for i, k in enumerate(self.env_summary_keys):
             self.env_summary_idx_hash[k] = i
 
-        self.phase = WorkerTaskPhase.STOP
+        self.phase = WorkerTaskPhase.PAUSE
 
         self.process = mp.Process(target=self.run)
 
@@ -162,7 +161,6 @@ class WorkerTask:
             {k: [policy_v[group_idx] for policy_v in v]
              for k, v in self.envstep_output_shms.items()},
             self.envstep_output_semaphores[idx],
-            self.actor_pause_events[idx],
             self.eval_summary_block,
             self.eval_episode_cnt,
             self.eval_finish_event,
@@ -368,7 +366,7 @@ class WorkerTask:
     def process_task(self, task):
         # TODO: modify self.is_executing_tasks when processing tasks
         if task == TaskType.ROLLOUT:
-            if self.phase == WorkerTaskPhase.STOP:
+            if self.phase == WorkerTaskPhase.PAUSE:
                 self.buffer.prepare_rollout()
 
                 for pw in itertools.chain.from_iterable(self.policy_workers):
@@ -387,21 +385,15 @@ class WorkerTask:
             self.eval_episode_cnt[:] = 0
             self.stop_experience_collection_cnt[:] = 0
             self.eval_finish_event.clear()
-            for e in self.actor_pause_events:
-                e.clear()
 
             if self.phase == WorkerTaskPhase.WORKING:
                 # if the previous task is rollout, finish current rollout process and start evaluation
                 # closing experience collection
                 for q in itertools.chain(*self.policy_worker_queues):
-                    q.put(TaskType.PAUSE)
+                    q.put(TaskType.CLOSING_ROLLOUT)
 
-                for e in self.actor_pause_events:
-                    e.wait()
-
-                # TODO: we may remove this condition object
-                self.stop_experience_collection_cond.wait_for(
-                    lambda: self.stop_experience_collection_cnt.sum() >= self.cfg.num_splits * self.num_actors)
+                while self.stop_experience_collection_cnt.sum() < self.cfg.num_splits * self.num_actors:
+                    self.stop_experience_collection_cond.wait()
 
             for q in itertools.chain(*self.policy_worker_queues):
                 q.put(TaskType.EVALUATION)
@@ -441,12 +433,12 @@ class WorkerTask:
             self.task_result_socket.send_multipart(msg)
 
             for q in itertools.chain(*self.policy_worker_queues):
-                q.put(TaskType.RESUME)
+                q.put(TaskType.CLOSING_EVALUATION)
 
             for a_q in self.actor_queues:
-                a_q.put(TaskType.RESUME)
+                a_q.put(TaskType.CLOSING_EVALUATION)
 
-            self.phase = WorkerTaskPhase.STOP
+            self.phase = WorkerTaskPhase.PAUSE
         else:
             raise NotImplementedError
 

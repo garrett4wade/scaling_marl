@@ -22,7 +22,7 @@ def _t2n(x):
 
 
 class PolicyWorkerPhase:
-    WORKING, CLOSING, IDLE, STOP = range(4)
+    WORKING, CLOSING, IDLE, PAUSE = range(4)
 
 
 class PolicyWorker:
@@ -111,7 +111,7 @@ class PolicyWorker:
         self.total_num_samples = 0
         self.total_inference_steps = 0
 
-        self.phase = PolicyWorkerPhase.STOP
+        self.phase = PolicyWorkerPhase.PAUSE
         self.stop_experience_collection_cnt = stop_experience_collection_cnt
         self.stop_experience_collection_cond = stop_experience_collection_cond
 
@@ -226,11 +226,10 @@ class PolicyWorker:
                             for local_actor_idx in range(self.cfg.actor_group_size):
                                 global_actor_idx = self.cfg.actor_group_size * group_idx + local_actor_idx
                                 self.stop_experience_collection_cnt[global_actor_idx] += 1
-                                if self.stop_experience_collection_cnt[global_actor_idx] >= self.cfg.num_splits:
-                                    self.actor_queues[global_actor_idx].put(TaskType.PAUSE)
 
                             # when all actor workers stop experience collection, ignore all buffer related operations
                             if self.stop_experience_collection_cnt.sum() >= self.cfg.num_splits * self.num_actors:
+                                assert np.all(self.stop_experience_collection_cnt == self.cfg.num_splits)
                                 self.stop_experience_collection_cond.notify(1)
                         continue
 
@@ -307,7 +306,7 @@ class PolicyWorker:
         while not self.terminate:
             try:
                 waiting_started = time.time()
-                if self.phase != PolicyWorkerPhase.STOP:
+                if self.phase != PolicyWorkerPhase.PAUSE:
                     with timing.time_avg('waiting_avg'), timing.add_time('waiting'):
                         while (len(self.request_clients) < min_num_requests
                                and time.time() - waiting_started < wait_for_min_requests):
@@ -333,15 +332,12 @@ class PolicyWorker:
                         if task_type == TaskType.TERMINATE:
                             self.terminate = True
 
-                        if task_type == TaskType.PAUSE and self.policy_id == self.buffer.policy_id:
-                            self.phase = PolicyWorkerPhase.CLOSING
-
-                        if task_type == TaskType.RESUME:
-                            self.phase = PolicyWorkerPhase.STOP
-
                         if task_type == TaskType.START:
                             self.phase = PolicyWorkerPhase.WORKING
                             self.maybe_update_weights(timing)
+
+                        if task_type == TaskType.CLOSING_ROLLOUT and self.policy_id == self.buffer.policy_id:
+                            self.phase = PolicyWorkerPhase.CLOSING
 
                         if task_type == TaskType.EVALUATION:
                             # this ensures all policy workers have the same model weights
@@ -352,8 +348,11 @@ class PolicyWorker:
                                     replicate_rank=self.replicate_rank,
                                     policy_version=self.local_policy_version,
                                 ))
-
+                            # during evaluation, policy worker does not update model weights or write summary data into buffer
                             self.phase = PolicyWorkerPhase.IDLE
+
+                        if task_type == TaskType.CLOSING_EVALUATION:
+                            self.phase = PolicyWorkerPhase.PAUSE
 
                         self.task_queue.task_done()
                     except Empty:

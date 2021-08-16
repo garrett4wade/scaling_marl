@@ -15,7 +15,7 @@ from envs.env_wrappers import ShareDummyVecEnv
 
 
 class ActorWorkerPhase:
-    ROLLOUT, EVALUATION, IDLE, STOP = range(4)
+    ROLLOUT, EVALUATION, PAUSE = range(3)
 
 
 class ActorWorker:
@@ -49,7 +49,6 @@ class ActorWorker:
         act_semaphore,
         envstep_output_shm,
         envstep_output_semaphore,
-        pause_event,
         eval_summary_block,
         eval_episode_cnt,
         eval_finish_event,
@@ -96,8 +95,7 @@ class ActorWorker:
         self.envstep_output_shm = envstep_output_shm
         self.envstep_output_semaphore = envstep_output_semaphore
 
-        self.pause_event = pause_event
-        self.phase = ActorWorkerPhase.STOP
+        self.phase = ActorWorkerPhase.PAUSE
 
         self.eval_summary_block = eval_summary_block
         self.eval_episode_cnt = eval_episode_cnt
@@ -224,7 +222,6 @@ class ActorWorker:
                     with self.buffer.env_summary_lock:
                         for i, sum_key in enumerate(self.env_summary_keys):
                             self.buffer.summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
-                        # print(self.buffer.summary_block.sum(axis=(0, 1)))
                 elif self.phase == ActorWorkerPhase.EVALUATION:
                     self.eval_episode_cnt += 1
                     for i, sum_key in enumerate(self.env_summary_keys):
@@ -266,7 +263,7 @@ class ActorWorker:
         with torch.no_grad():
             while not self.terminate:
                 try:
-                    if self.initialized and self.phase != ActorWorkerPhase.STOP:
+                    if self.initialized and self.phase != ActorWorkerPhase.PAUSE:
                         with timing.add_time('waiting'), timing.time_avg('wait_for_inference'):
                             for i, policy_act_semaphore in enumerate(self.act_semaphore):
                                 if not self.is_policy_act_semaphores_ready[i]:
@@ -298,26 +295,22 @@ class ActorWorker:
                             break
 
                         # handling actual workload
-                        if self.initialized and task_type == TaskType.RESET:
+                        if task_type == TaskType.RESET:
+                            assert self.initialized
                             with timing.add_time('reset'):
                                 self._handle_reset()
+
+                        if task_type == TaskType.START:
+                            self.phase = ActorWorkerPhase.ROLLOUT
 
                         if task_type == TaskType.EVALUATION:
                             self.phase = ActorWorkerPhase.EVALUATION
                             with timing.add_time('evaluation_reset'):
                                 self._handle_reset()
 
-                        if task_type == TaskType.PAUSE:
+                        if task_type == TaskType.CLOSING_EVALUATION:
                             assert self.initialized
-                            self.phase = ActorWorkerPhase.IDLE
-                            self.pause_event.set()
-
-                        if task_type == TaskType.START:
-                            self.phase = ActorWorkerPhase.ROLLOUT
-
-                        if task_type == TaskType.RESUME:
-                            assert self.initialized
-                            self.phase = ActorWorkerPhase.STOP
+                            self.phase = ActorWorkerPhase.PAUSE
 
                     with timing.add_time('report'):
                         if time.time() - last_report > 5.0 and 'env_step/simulation_avg' in timing:
