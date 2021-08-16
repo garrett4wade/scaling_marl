@@ -54,13 +54,12 @@ class Receiver:
     def _unpack_msg(self, timing, msg):
         self.recv_cnt += 1
         msg = msg[2:]
-        assert len(msg) % 2 == 1
-        buffer_id = int(msg[-1].decode('ascii'))
-        buffer = self.buffers[buffer_id]
+        assert len(msg) % 2 == 0
+        buffer = self.buffers[int(msg[-1].decode('ascii'))]
 
         seg_dict = {}
         decompression_time = 0
-        for i in range(len(msg) // 2 - 1):
+        for i in range(len(msg) // 2 - 2):
             k, v = msg[2 * i].decode('ascii'), msg[2 * i + 1]
             shape, dtype = buffer.shapes_and_dtypes[k]
 
@@ -72,7 +71,8 @@ class Receiver:
             array = np.frombuffer(decompressed, dtype=np.float32).reshape(*shape)
             seg_dict[k] = array
 
-        socket_ident, summary_info = msg[-3:-1]
+        socket_ident, summary_info = msg[-4:-2]
+        task_rank = int(msg[-2].decode('ascii'))
         summary_info = np.frombuffer(summary_info, dtype=np.float32)
 
         assert socket_ident.decode('ascii')[-1] == str(self.cfg.learner_node_idx)
@@ -83,7 +83,7 @@ class Receiver:
             buffer.put(seg_dict)
 
             with buffer.env_summary_lock:
-                buffer.summary_block[worker_node_idx] = summary_info
+                buffer.summary_block[worker_node_idx, task_rank] = summary_info
         buffer_put_time = time.time() - tik
 
         if self.recv_cnt % 100 == 0:

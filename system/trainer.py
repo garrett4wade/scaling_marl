@@ -441,7 +441,7 @@ class Trainer:
 
             if self.env_name == 'StarCraft2':
                 with self.buffer.env_summary_lock:
-                    summary_info = self.buffer.summary_block.sum(0)
+                    summary_info = self.buffer.summary_block.sum(axis=(0, 1))
                 elapsed_episodes = summary_info[self.env_summary_idx_hash['elapsed_episodes']]
                 winning_episodes = summary_info[self.env_summary_idx_hash['winning_episodes']]
                 episode_return = summary_info[self.env_summary_idx_hash['episode_return']]
