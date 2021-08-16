@@ -73,8 +73,8 @@ class PolicyWorker:
         self.num_splits = cfg.num_splits
         self.envs_per_split = self.envs_per_actor // self.num_splits
 
-        self.num_actors = self.cfg.num_actors // self.cfg.actor_group_size
-        self.num_actor_groups = self.num_actors // self.cfg.num_tasks_per_node
+        self.num_actors = self.cfg.num_actors // self.cfg.num_tasks_per_node
+        self.num_actor_groups = self.num_actors // self.cfg.actor_group_size
         self.envs_per_group = self.cfg.actor_group_size * self.envs_per_split
 
         self.device = None

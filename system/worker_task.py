@@ -26,7 +26,7 @@ class ExperimentStatus:
 
 
 class WorkerTaskPhase:
-    WORKING, STOP = range(2)
+    WORKING, PAUSE = range(2)
 
 
 torch.multiprocessing.set_sharing_strategy('file_system')
@@ -392,6 +392,7 @@ class WorkerTask:
                 for q in itertools.chain(*self.policy_worker_queues):
                     q.put(TaskType.CLOSING_ROLLOUT)
 
+                self.stop_experience_collection_cond.acquire()
                 while self.stop_experience_collection_cnt.sum() < self.cfg.num_splits * self.num_actors:
                     self.stop_experience_collection_cond.wait()
 
@@ -413,7 +414,7 @@ class WorkerTask:
             self.eval_finish_event.wait()
 
             with self.buffer.env_summary_lock:
-                summary_data = (self.eval_summary_block - self.buffer.summary_block).sum(0).sum(0)
+                summary_data = (self.eval_summary_block - self.buffer.summary_block).sum(axis=(0, 1))
 
             infos = {}
             if self.cfg.env_name == 'StarCraft2':
