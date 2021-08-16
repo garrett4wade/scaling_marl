@@ -403,7 +403,7 @@ class WorkerTask:
             self.eval_episode_cnt[:] = 0
             self.stop_experience_collection_cnt[:] = 0
             self.eval_finish_event.clear()
-            log.debug('--- Worker Task %d --- closing rollout...', self.task_rank)
+            log.info('--- Worker Task %d --- closing rollout...', self.task_rank)
 
             if self.phase == WorkerTaskPhase.WORKING:
                 # if the previous task is rollout, finish current rollout process and start evaluation
@@ -422,7 +422,7 @@ class WorkerTask:
             else:
                 raise NotImplementedError
 
-            log.debug('--- Worker Task %d --- prepares for evaluation...', self.task_rank)
+            log.info('--- Worker Task %d --- prepares for evaluation...', self.task_rank)
             for q in itertools.chain(*self.policy_worker_queues):
                 q.put(TaskType.EVALUATION)
 
@@ -449,7 +449,7 @@ class WorkerTask:
                 raw_infos = {}
                 for i, k in enumerate(self.env_summary_keys):
                     raw_infos[k] = summary_data[i]
-                assert raw_infos['elapsed_episodes'] == self.cfg.eval_episodes
+                assert raw_infos['elapsed_episodes'] == self.cfg.eval_episodes, (raw_infos['elapsed_episodes'], self.cfg.eval_episodes)
                 infos['eval_winning_rate'] = raw_infos['winning_episodes'] / raw_infos['elapsed_episodes']
                 infos['eval_episode_return'] = raw_infos['episode_return'] / raw_infos['elapsed_episodes']
             else:

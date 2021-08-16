@@ -227,8 +227,8 @@ class ActorWorker:
                         for i, sum_key in enumerate(self.env_summary_keys):
                             self.buffer.summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
                 elif self.phase == ActorWorkerPhase.EVALUATION:
-                    if not self.eval_finish_event.is_set():
-                        with self.eval_summary_lock:
+                    with self.eval_summary_lock:
+                        if not self.eval_finish_event.is_set():
                             self.eval_episode_cnt += 1
                             for i, sum_key in enumerate(self.env_summary_keys):
                                 self.eval_summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
