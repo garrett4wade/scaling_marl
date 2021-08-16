@@ -356,14 +356,14 @@ class WorkerTask:
 
     def print_stats(self, sample_throughputs):
         self.print_stats_cnt += 1
-        log.debug('Throughput: {:.2f} (10 sec), {:.2f} (1 min), {:.2f} (5 mins). Samples: {}.'.format(
-            *sample_throughputs, self.samples_collected))
+        log.debug('--- Worker Task {} --- Throughput: {:.2f} (10 sec), {:.2f} (1 min), {:.2f} (5 mins). Samples: {}.'.format(
+            int(self.task_rank), *sample_throughputs, self.samples_collected))
         if self.print_stats_cnt % 10 == 0:
             mem_stats = ''.join(['{}: {:.2f} MB, '.format(k, v) for k, v in self.stats.items()])[:-2]
-            log.debug('Memory statistics: %s', mem_stats)
+            log.debug('--- Worker Task %d --- Memory statistics: %s', int(self.task_rank), mem_stats)
             timing_stats = ''.join(['{}: {:.4f} s, '.format(k,
                                                             sum(v) / len(v)) for k, v in self.avg_stats.items()])[:-2]
-            log.debug('Timing: %s', timing_stats)
+            log.debug('--- Worker Task %d --- Timing: %s', int(self.task_rank), timing_stats)
 
     def process_task(self, task):
         # TODO: modify self.is_executing_tasks when processing tasks

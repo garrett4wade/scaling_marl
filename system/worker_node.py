@@ -159,10 +159,7 @@ class WorkerNode:
 
                 self.ps_policy_versions[policy_id] = learner_policy_version
 
-                # if learner_policy_version % 10 == 0:
-                #     print(ps['critic_rnn.rnn.weight_hh_l0'].numpy())
-
-        if self.num_policy_updates[policy_id] % 10 == 0:
+        if self.num_policy_updates[policy_id] % 100 == 0:
             log.debug(
                 'Updated Policy %d on node %d, policy_version %d (%s)',
                 policy_id,

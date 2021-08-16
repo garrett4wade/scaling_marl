@@ -155,9 +155,9 @@ class PolicyWorker:
                     self.rollout_policy.load_state_dict(self.local_ps)
                     self.local_policy_version = self.ps_policy_version.item()
 
-            if self.local_policy_version % 10 == 0:
+            if self.local_policy_version % 100 == 0:
                 # print(self.rollout_policy.state_dict()['critic_rnn.rnn.weight_hh_l0'].numpy())
-                log.info('Update policy %d to version %d', self.policy_id, self.local_policy_version)
+                log.info('Worker Task %d Policy ID %d Replicate %d --- Update policy %d to version %d', self.task_rank, self.policy_id, self.replicate_rank, self.policy_id, self.local_policy_version)
 
     def _handle_policy_steps(self, timing):
         with torch.no_grad():
