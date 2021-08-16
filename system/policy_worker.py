@@ -22,7 +22,7 @@ def _t2n(x):
 
 
 class PolicyWorkerPhase:
-    WORKING, CLOSING, IDLE, PAUSE = range(4)
+    ROLLOUT, CLOSING, EVALUATION, PAUSE = range(4)
 
 
 class PolicyWorker:
@@ -149,15 +149,15 @@ class PolicyWorker:
             self.initialized_event.set()
 
     def maybe_update_weights(self, timing):
-        if self.local_policy_version < self.ps_policy_version and self.phase != PolicyWorkerPhase.IDLE:
+        if self.local_policy_version < self.ps_policy_version and self.phase != PolicyWorkerPhase.EVALUATION:
             with self.param_lock.r_locked():
                 with timing.time_avg('update_weights/load_state_dict_once'):
                     self.rollout_policy.load_state_dict(self.local_ps)
                     self.local_policy_version = self.ps_policy_version.item()
 
-            if self.local_policy_version % 100 == 0:
+            if self.local_policy_version % 100 == 0 and self.replicate_rank == 0:
                 # print(self.rollout_policy.state_dict()['critic_rnn.rnn.weight_hh_l0'].numpy())
-                log.info('Worker Task %d Policy ID %d Replicate %d --- Update policy %d to version %d', self.task_rank, self.policy_id, self.replicate_rank, self.policy_id, self.local_policy_version)
+                log.info('Worker Task %d Policy ID %d Replicate %d --- Update to policy version %d', self.task_rank, self.policy_id, self.replicate_rank, self.local_policy_version)
 
     def _handle_policy_steps(self, timing):
         with torch.no_grad():
@@ -209,7 +209,7 @@ class PolicyWorker:
                                                             *v.shape[1:])
 
             with timing.add_time('inference/advance_buffer_indices'):
-                if self.buffer.policy_id == self.policy_id and self.phase != PolicyWorkerPhase.IDLE:
+                if self.buffer.policy_id == self.policy_id and self.phase != PolicyWorkerPhase.EVALUATION:
                     insert_data = {k: v for k, v in policy_outputs.items() if 'rnn_states' not in k}
                     insert_data = {**insert_data, **envstep_outputs}
                     slot_ids, ep_steps, masks, active_masks, valid_choose = self.buffer.advance_indices(
@@ -226,6 +226,7 @@ class PolicyWorker:
                             for local_actor_idx in range(self.cfg.actor_group_size):
                                 global_actor_idx = self.cfg.actor_group_size * group_idx + local_actor_idx
                                 self.stop_experience_collection_cnt[global_actor_idx] += 1
+                                self.actor_queues[global_actor_idx].put(TaskType.PAUSE)
 
                             # when all actor workers stop experience collection, ignore all buffer related operations
                             if self.stop_experience_collection_cnt.sum() >= self.cfg.num_splits * self.num_actors:
@@ -254,7 +255,7 @@ class PolicyWorker:
                         self.act_semaphores[global_actor_idx][split_idx].release()
 
             with timing.add_time('inference/insert'):
-                if self.buffer.policy_id == self.policy_id and self.phase != PolicyWorkerPhase.IDLE:
+                if self.buffer.policy_id == self.policy_id and self.phase != PolicyWorkerPhase.EVALUATION:
                     self.buffer.insert(timing,
                                        slot_ids,
                                        ep_steps,
@@ -333,10 +334,11 @@ class PolicyWorker:
                             self.terminate = True
 
                         if task_type == TaskType.START:
-                            self.phase = PolicyWorkerPhase.WORKING
+                            self.phase = PolicyWorkerPhase.ROLLOUT
                             self.maybe_update_weights(timing)
 
                         if task_type == TaskType.CLOSING_ROLLOUT and self.policy_id == self.buffer.policy_id:
+                            assert self.phase == PolicyWorkerPhase.ROLLOUT, 'Evaluation task must be dispatched during rollout! But current policy worker phase is {}'.format(self.phase)
                             self.phase = PolicyWorkerPhase.CLOSING
 
                         if task_type == TaskType.EVALUATION:
@@ -349,9 +351,9 @@ class PolicyWorker:
                                     policy_version=self.local_policy_version,
                                 ))
                             # during evaluation, policy worker does not update model weights or write summary data into buffer
-                            self.phase = PolicyWorkerPhase.IDLE
+                            self.phase = PolicyWorkerPhase.EVALUATION
 
-                        if task_type == TaskType.CLOSING_EVALUATION:
+                        if task_type == TaskType.PAUSE:
                             self.phase = PolicyWorkerPhase.PAUSE
 
                         self.task_queue.task_done()
@@ -403,6 +405,9 @@ class PolicyWorker:
 
     def close(self):
         self.task_queue.put(TaskType.TERMINATE)
+
+    def pause(self):
+        self.task_queue.put(TaskType.PAUSE)
 
     def join(self):
         join_or_kill(self.process)

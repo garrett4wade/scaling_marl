@@ -48,8 +48,9 @@ class TaskDispatcher:
         self.num_worker_tasks = len(cfg.seg_addrs[0]) * cfg.num_tasks_per_node
 
         self.worker_socket_ident = [None for _ in range(self.num_worker_tasks)]
+        self.policy_id2task_ident = {}
+
         self.learner_socket_ident = [None for _ in range(self.num_learner_tasks)]
-        self.ready_tasks = 0
 
         self.consumed_num_steps = [0 for _ in range(self.cfg.num_policies)]
         self.policy_version = [0 for _ in range(self.cfg.num_policies)]
@@ -72,6 +73,7 @@ class TaskDispatcher:
         self.result_socket = None
 
         self.accumulated_too_much_experience = [False for _ in range(self.cfg.num_policies)]
+        self.accumulated_too_few_experience = [True for _ in range(self.cfg.num_policies)]
         self.stop_experience_collection = [False for _ in range(self.cfg.num_policies)]
 
         self.process = mp.Process(target=self._run)
@@ -111,18 +113,24 @@ class TaskDispatcher:
         result_port = self.cfg.task_result_addr.split(':')[-1]
         self.result_socket.bind('tcp://*:' + result_port)
 
-        while self.ready_tasks < self.num_learner_tasks + self.num_worker_tasks:
-            msg = self.result_socket.recv()
-            idx = int(msg.decode('ascii').split('-')[-1])
+        ready_tasks = 0
+        while ready_tasks < self.num_learner_tasks + self.num_worker_tasks:
+            msg = self.result_socket.recv_multipart()
+            idx = int(msg[0].decode('ascii').split('-')[-1])
+            policy_id = int(msg[1].decode('ascii'))
 
-            if 'learner' in msg.decode('ascii'):
-                self.learner_socket_ident[idx] = msg
-            elif 'worker' in msg.decode('ascii'):
-                self.worker_socket_ident[idx] = msg
+            if 'learner' in msg[0].decode('ascii'):
+                self.learner_socket_ident[idx] = msg[0]
+            elif 'worker' in msg[0].decode('ascii'):
+                self.worker_socket_ident[idx] = msg[0]
+                if policy_id not in self.policy_id2task_ident:
+                    self.policy_id2task_ident[policy_id] = [msg[0]]
+                else:
+                    self.policy_id2task_ident[policy_id].append(msg[0])
             else:
                 raise NotImplementedError
 
-            self.ready_tasks += 1
+            ready_tasks += 1
 
         assert all(self.worker_socket_ident) and all(self.learner_socket_ident), (self.worker_socket_ident,
                                                                                   self.learner_socket_ident)
@@ -166,7 +174,8 @@ class TaskDispatcher:
             self.policy_version[policy_id] = policy_version
             self.consumed_num_steps[policy_id] = policy_version * self.transitions_per_batch
             # TODO: send PAUSE task and set stop_experience_collection=True if accumulated too much experience
-            self.accumulated_too_much_experience[policy_id] = infos['buffer_util'] > 0.8
+            self.accumulated_too_much_experience[policy_id] = infos['buffer_util'] > 0.75
+            self.accumulated_too_few_experience[policy_id] = infos['buffer_util'] < 0.25
 
         if 'workertask' in msg[0].decode('ascii'):
             log.info('Evaluation Results: %s', infos)
@@ -190,6 +199,19 @@ class TaskDispatcher:
                 try:
                     msg = self.result_socket.recv_multipart(flags=zmq.NOBLOCK)
                     self.report(msg)
+
+                    for policy_id in range(self.cfg.num_policies):
+                        if self.accumulated_too_much_experience[policy_id] and not self.stop_experience_collection[policy_id]:
+                            for ident in self.policy_id2task_ident[policy_id]:
+                                task = [ident, str(TaskType.PAUSE).encode('ascii')]
+                                self.task_socket.send_multipart(task)
+                            self.stop_experience_collection[policy_id] = True
+                        
+                        if self.stop_experience_collection[policy_id] and self.accumulated_too_few_experience[policy_id]:
+                            for ident in self.policy_id2task_ident[policy_id]:
+                                task = [ident, str(TaskType.RESUME).encode('ascii')]
+                                self.task_socket.send_multipart(task)
+                            self.stop_experience_collection[policy_id] = False
 
                     new_tasks = self.meta_controller.step(msg)
                     for new_task in new_tasks:

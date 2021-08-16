@@ -167,7 +167,7 @@ class Trainer:
 
             self.task_result_socket = self._context.socket(zmq.PUSH)
             self.task_result_socket.connect(self.cfg.task_result_addr)
-            self.task_result_socket.send(self.socket_identity)
+            self.task_result_socket.send_multipart([self.socket_identity, str(self.policy_id).encode('ascii')])
 
         log.debug('Trainer {} initializing process group!'.format(self.trainer_idx))
 

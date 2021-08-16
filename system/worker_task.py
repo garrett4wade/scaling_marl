@@ -3,7 +3,7 @@ import torch.multiprocessing as mp
 import os
 import time
 from collections import deque
-from queue import Empty, Queue
+from queue import Empty, Full, Queue
 
 import torch
 import zmq
@@ -26,7 +26,10 @@ class ExperimentStatus:
 
 
 class WorkerTaskPhase:
-    WORKING, PAUSE = range(2)
+    # WORKING: rollout or evaluation
+    # PRIMAL_PAUSE: policy workers and actor workers are all stopped, and buffer has been flushed
+    # INTERMEDIATE_PAUSE: policy workers and actor workers are all stopped, but buffer is not flushed
+    WORKING, PRIMAL_PAUSE, INTERMEDIATE_PAUSE = range(3)
 
 
 torch.multiprocessing.set_sharing_strategy('file_system')
@@ -99,9 +102,8 @@ class WorkerTask:
         self.task_socket = None
         self.task_result_socket = None
 
-        self.socket_identity = (
-            'workertask-' +
-            str(self.task_rank + self.cfg.num_tasks_per_node * self.cfg.worker_node_idx)).encode('ascii')
+        postfix = str(self.task_rank + self.cfg.num_tasks_per_node * self.cfg.worker_node_idx)
+        self.socket_identity = ('workertask-' + postfix).encode('ascii')
         # TODO: modify this when processing tasks
         self.is_executing_task = False
         self.task_queue = Queue(8)
@@ -119,6 +121,8 @@ class WorkerTask:
         self.stop_experience_collection_cond = mp.Condition()
 
         self.eval_summary_block = torch.zeros_like(torch.from_numpy(self.buffer.summary_block)).share_memory_().numpy()
+        self.eval_summary_lock = mp.Lock()
+
         self.eval_episode_cnt = torch.zeros(1, dtype=torch.int32).share_memory_().numpy()
         self.eval_finish_event = mp.Event()
 
@@ -127,7 +131,7 @@ class WorkerTask:
         for i, k in enumerate(self.env_summary_keys):
             self.env_summary_idx_hash[k] = i
 
-        self.phase = WorkerTaskPhase.PAUSE
+        self.phase = WorkerTaskPhase.PRIMAL_PAUSE
 
         self.process = mp.Process(target=self.run)
 
@@ -143,7 +147,7 @@ class WorkerTask:
 
         self.task_result_socket = self._context.socket(zmq.PUSH)
         self.task_result_socket.connect(self.cfg.task_result_addr)
-        self.task_result_socket.send(self.socket_identity)
+        self.task_result_socket.send_multipart([self.socket_identity, str(self.policy_id).encode('ascii')])
 
     def create_actor_worker(self, idx):
         group_idx = idx // self.cfg.actor_group_size
@@ -162,6 +166,7 @@ class WorkerTask:
              for k, v in self.envstep_output_shms.items()},
             self.envstep_output_semaphores[idx],
             self.eval_summary_block,
+            self.eval_summary_lock,
             self.eval_episode_cnt,
             self.eval_finish_event,
         )
@@ -365,19 +370,32 @@ class WorkerTask:
 
     def process_task(self, task):
         # TODO: modify self.is_executing_tasks when processing tasks
-        if task == TaskType.ROLLOUT:
-            if self.phase == WorkerTaskPhase.PAUSE:
+        if task == TaskType.ROLLOUT or task == TaskType.START or task == TaskType.RESUME:
+            if self.phase == WorkerTaskPhase.PRIMAL_PAUSE:
+                # when buffer is flushed, allocate some slots for data
                 self.buffer.prepare_rollout()
 
-                for pw in itertools.chain.from_iterable(self.policy_workers):
-                    pw.start_rollout()
+            if task == TaskType.RESUME:
+                log.warning('--- Worker Task {} --- resumed experience collection.'.format(self.task_rank))
+            for pw in itertools.chain.from_iterable(self.policy_workers):
+                pw.start_rollout()
 
-                for aw in self.actor_workers:
-                    aw.start_rollout()
-                self.phase = WorkerTaskPhase.WORKING
+            for aw in self.actor_workers:
+                aw.start_rollout()
+            self.phase = WorkerTaskPhase.WORKING
 
-        elif task == TaskType.TERMINATE:
-            self.terminate = True
+        elif task == TaskType.PAUSE:
+            if self.phase == WorkerTaskPhase.PRIMAL_PAUSE or self.phase == WorkerTaskPhase.INTERMEDIATE_PAUSE:
+                return
+
+            log.warning('--- Worker Task {} --- paused due to too much experience data accumulation.'.format(self.task_rank))
+            for pw in itertools.chain.from_iterable(self.policy_workers):
+                pw.pause()
+
+            for aw in self.actor_workers:
+                aw.pause()
+            
+            self.phase = WorkerTaskPhase.INTERMEDIATE_PAUSE
 
         elif task == TaskType.EVALUATION:
             # reset all signals
@@ -385,6 +403,7 @@ class WorkerTask:
             self.eval_episode_cnt[:] = 0
             self.stop_experience_collection_cnt[:] = 0
             self.eval_finish_event.clear()
+            log.debug('--- Worker Task %d --- closing rollout...', self.task_rank)
 
             if self.phase == WorkerTaskPhase.WORKING:
                 # if the previous task is rollout, finish current rollout process and start evaluation
@@ -395,7 +414,15 @@ class WorkerTask:
                 self.stop_experience_collection_cond.acquire()
                 while self.stop_experience_collection_cnt.sum() < self.cfg.num_splits * self.num_actors:
                     self.stop_experience_collection_cond.wait()
+            elif self.phase == WorkerTaskPhase.INTERMEDIATE_PAUSE:
+                log.warning('--- Worker Task %d --- receiving EVALUATION task during PAUSE, ignore this.', self.task_rank)
+                return
+            elif self.phase == WorkerTaskPhase.PRIMAL_PAUSE:
+                pass
+            else:
+                raise NotImplementedError
 
+            log.debug('--- Worker Task %d --- prepares for evaluation...', self.task_rank)
             for q in itertools.chain(*self.policy_worker_queues):
                 q.put(TaskType.EVALUATION)
 
@@ -414,13 +441,15 @@ class WorkerTask:
             self.eval_finish_event.wait()
 
             with self.buffer.env_summary_lock:
-                summary_data = (self.eval_summary_block - self.buffer.summary_block).sum(axis=(0, 1))
+                with self.eval_summary_lock:
+                    summary_data = (self.eval_summary_block - self.buffer.summary_block).sum(axis=(0, 1))
 
             infos = {}
             if self.cfg.env_name == 'StarCraft2':
                 raw_infos = {}
                 for i, k in enumerate(self.env_summary_keys):
                     raw_infos[k] = summary_data[i]
+                assert raw_infos['elapsed_episodes'] == self.cfg.eval_episodes
                 infos['eval_winning_rate'] = raw_infos['winning_episodes'] / raw_infos['elapsed_episodes']
                 infos['eval_episode_return'] = raw_infos['episode_return'] / raw_infos['elapsed_episodes']
             else:
@@ -433,13 +462,17 @@ class WorkerTask:
             # TODO: we may need to send policy version for summary
             self.task_result_socket.send_multipart(msg)
 
-            for q in itertools.chain(*self.policy_worker_queues):
-                q.put(TaskType.CLOSING_EVALUATION)
+            for pw in itertools.chain.from_iterable(self.policy_workers):
+                pw.pause()
 
-            for a_q in self.actor_queues:
-                a_q.put(TaskType.CLOSING_EVALUATION)
+            for aw in self.actor_workers:
+                aw.pause()
 
-            self.phase = WorkerTaskPhase.PAUSE
+            self.phase = WorkerTaskPhase.PRIMAL_PAUSE
+        
+        elif task == TaskType.TERMINATE:
+            self.terminate = True
+
         else:
             raise NotImplementedError
 
@@ -465,10 +498,12 @@ class WorkerTask:
                 while not self.terminate:
                     try:
                         msg = self.task_socket.recv_multipart(flags=zmq.NOBLOCK)
-                        self.task_queue.put(msg)
+                        self.task_queue.put_nowait(msg)
                     except zmq.ZMQError:
                         # log.warning(('ZMQ Error on Worker Task %d'), self.task_rank)
                         pass
+                    except Full:
+                        raise RuntimeError('Too many tasks accumulated in task queue! Try to decrease eval_interval, match the throughput of rollout and learning or increase the size of task queue.')
 
                     if not self.is_executing_task:
                         try:

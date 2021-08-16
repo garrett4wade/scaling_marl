@@ -50,6 +50,7 @@ class ActorWorker:
         envstep_output_shm,
         envstep_output_semaphore,
         eval_summary_block,
+        eval_summary_lock,
         eval_episode_cnt,
         eval_finish_event,
     ):
@@ -98,6 +99,7 @@ class ActorWorker:
         self.phase = ActorWorkerPhase.PAUSE
 
         self.eval_summary_block = eval_summary_block
+        self.eval_summary_lock = eval_summary_lock
         self.eval_episode_cnt = eval_episode_cnt
         self.eval_finish_event = eval_finish_event
 
@@ -174,10 +176,12 @@ class ActorWorker:
                 for policy_queue in self.policy_queues:
                     policy_queue.put(split_idx * self.num_actors + self.local_rank)
 
-        log.info('Finished reset for worker %d', self.worker_idx)
         if not self.ready:
+            log.info('Worker task %d finished reset of worker %d (after initialization)', self.task_rank, self.worker_idx)
             safe_put(self.report_queue, dict(finished_reset=self.local_rank), queue_name='report')
             self.ready = True
+        # else:
+        #     log.info('Worker task %d finished reset of worker %d (for evaluation)', self.task_rank, self.worker_idx)
 
     def _advance_rollouts(self, split_idx, timing):
         """
@@ -223,11 +227,13 @@ class ActorWorker:
                         for i, sum_key in enumerate(self.env_summary_keys):
                             self.buffer.summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
                 elif self.phase == ActorWorkerPhase.EVALUATION:
-                    self.eval_episode_cnt += 1
-                    for i, sum_key in enumerate(self.env_summary_keys):
-                        self.eval_summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
-                    if self.eval_episode_cnt >= self.cfg.eval_episodes:
-                        self.eval_finish_event.set()
+                    if not self.eval_finish_event.is_set():
+                        with self.eval_summary_lock:
+                            self.eval_episode_cnt += 1
+                            for i, sum_key in enumerate(self.env_summary_keys):
+                                self.eval_summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
+                            if self.eval_episode_cnt >= self.cfg.eval_episodes:
+                                self.eval_finish_event.set()
                 else:
                     raise NotImplementedError
 
@@ -308,7 +314,7 @@ class ActorWorker:
                             with timing.add_time('evaluation_reset'):
                                 self._handle_reset()
 
-                        if task_type == TaskType.CLOSING_EVALUATION:
+                        if task_type == TaskType.PAUSE:
                             assert self.initialized
                             self.phase = ActorWorkerPhase.PAUSE
 
@@ -350,6 +356,9 @@ class ActorWorker:
 
     def request_eval(self):
         self.task_queue.put(TaskType.EVALUATION)
+
+    def pause(self):
+        self.task_queue.put(TaskType.PAUSE)
 
     def close(self):
         self.task_queue.put(TaskType.TERMINATE)
