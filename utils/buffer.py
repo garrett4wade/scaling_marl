@@ -526,12 +526,14 @@ class SharedPolicyMixin(PolicyMixin):
 
         with timing.add_time('inference/insert/process_marginal'), timing.time_avg(
                 'inference/insert/process_marginal_once'):
-            # advance 1 timestep
-            self._ep_step[client_ids] += 1
-
             # fill in the bootstrap step of a previous slot
             closure_choose = np.logical_and(ep_steps == 0, prev_slot_ids != self.num_slots)
             old_closure_slot_ids = prev_slot_ids[closure_choose]
+
+            valid_choose = np.logical_not(closure_choose) if pause else np.ones(closure_choose.shape, dtype=np.bool)
+
+            # advance 1 timestep
+            self._ep_step[client_ids[valid_choose]] += 1
 
             # if a slot is full except for the bootstrap step, allocate a new slot for the corresponding client
             opening_choose = ep_steps == self.episode_length - 1
@@ -585,8 +587,6 @@ class SharedPolicyMixin(PolicyMixin):
                     # reset prev slot indices if ready to pause
                     closure_clients = client_ids[closure_choose]
                     self._prev_slot_indices[closure_clients] = self.num_slots
-
-            valid_choose = np.logical_not(closure_choose) if pause else np.ones(closure_choose.shape, dtype=np.bool)
 
         return slot_ids[valid_choose], ep_steps[valid_choose], masks, active_masks, valid_choose
 
