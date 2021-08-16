@@ -474,6 +474,7 @@ class WorkerTask:
                 aw.pause()
 
             self.phase = WorkerTaskPhase.PRIMAL_PAUSE
+            log.info('--- Worker Task %d --- evaluation finished!', self.task_rank)
         
         elif task == TaskType.TERMINATE:
             self.terminate = True

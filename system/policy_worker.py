@@ -194,7 +194,7 @@ class PolicyWorker:
                     policy_inputs[k] = check(v).to(**self.tpdv, non_blocking=True)
 
             with timing.add_time('inference/inference_step'):
-                policy_outputs = self.rollout_policy.get_actions(**policy_inputs)
+                policy_outputs = self.rollout_policy.get_actions(**policy_inputs, deterministic=(self.phase == PolicyWorkerPhase.EVALUATION))
 
             with timing.add_time('inference/to_cpu_and_postprosessing'):
                 if shared:

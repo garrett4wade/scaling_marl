@@ -9,7 +9,7 @@ benchmark: false
 cuda: true
 cuda_deterministic: true
 seed: 1
-no_summary: true
+no_summary: false
 use_wandb: true
 use_eval: true
 use_render: false
@@ -73,7 +73,7 @@ envs_per_actor: 2
 min_num_requests: -1
 num_policy_workers: 4
 slots_per_update: 48
-qsize: 10
+qsize: 4
 num_splits: 2
 data_chunk_length: 10
 episode_length: 400
@@ -84,7 +84,7 @@ set_workers_cpu_affinity: true
 force_envs_single_thread: true
 default_niceness: 0
 eval_episodes: 32
-eval_interval: 20
+eval_interval: 100
 log_interval: 20
 n_training_threads: 1
 reset_timeout_seconds: 60
