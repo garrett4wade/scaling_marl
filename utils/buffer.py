@@ -309,8 +309,9 @@ class LearnerBuffer(ReplayBuffer):
 
         # summary block
         # TODO: move this summary block to task dispatcher
-        self.summary_block = torch.zeros((len(cfg.seg_addrs[0]), self.cfg.num_tasks_per_node, len(self.env_summary_keys)),
-                                         dtype=torch.float32).share_memory_().numpy()
+        self.summary_block = torch.zeros(
+            (len(cfg.seg_addrs[0]), self.cfg.num_tasks_per_node, len(self.env_summary_keys)),
+            dtype=torch.float32).share_memory_().numpy()
 
         self._ptr_lock = mp.Lock()
         self._global_ptr = torch.zeros((2, ), dtype=torch.int32).share_memory_().numpy()

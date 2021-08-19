@@ -157,7 +157,8 @@ class PolicyWorker:
 
             if self.local_policy_version % 100 == 0 and self.replicate_rank == 0:
                 # print(self.rollout_policy.state_dict()['critic_rnn.rnn.weight_hh_l0'].numpy())
-                log.info('Worker Task %d Policy ID %d Replicate %d --- Update to policy version %d', self.task_rank, self.policy_id, self.replicate_rank, self.local_policy_version)
+                log.info('Worker Task %d Policy ID %d Replicate %d --- Update to policy version %d', self.task_rank,
+                         self.policy_id, self.replicate_rank, self.local_policy_version)
 
     def _handle_policy_steps(self, timing):
         with torch.no_grad():
@@ -194,7 +195,9 @@ class PolicyWorker:
                     policy_inputs[k] = check(v).to(**self.tpdv, non_blocking=True)
 
             with timing.add_time('inference/inference_step'):
-                policy_outputs = self.rollout_policy.get_actions(**policy_inputs, deterministic=(self.phase == PolicyWorkerPhase.EVALUATION))
+                policy_outputs = self.rollout_policy.get_actions(**policy_inputs,
+                                                                 deterministic=(
+                                                                     self.phase == PolicyWorkerPhase.EVALUATION))
 
             with timing.add_time('inference/to_cpu_and_postprosessing'):
                 if shared:
@@ -339,7 +342,9 @@ class PolicyWorker:
                             self.maybe_update_weights(timing)
 
                         if task_type == TaskType.CLOSING_ROLLOUT and self.policy_id == self.buffer.policy_id:
-                            assert self.phase == PolicyWorkerPhase.ROLLOUT, 'Evaluation task must be dispatched during rollout! But current policy worker phase is {}'.format(self.phase)
+                            assert self.phase == PolicyWorkerPhase.ROLLOUT, (
+                                "Evaluation task must be dispatched during rollout!"
+                                " But current policy worker phase is {}").format(self.phase)
                             self.phase = PolicyWorkerPhase.CLOSING
 
                         if task_type == TaskType.EVALUATION:
@@ -351,7 +356,8 @@ class PolicyWorker:
                                     replicate_rank=self.replicate_rank,
                                     policy_version=self.local_policy_version,
                                 ))
-                            # during evaluation, policy worker does not update model weights or write summary data into buffer
+                            # during evaluation, policy worker does not update model weights or
+                            # write summary data into buffer
                             self.phase = PolicyWorkerPhase.EVALUATION
 
                         if task_type == TaskType.PAUSE:

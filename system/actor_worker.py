@@ -183,7 +183,8 @@ class ActorWorker:
                     policy_queue.put(split_idx * self.num_actors + self.local_rank)
 
         if not self.ready:
-            log.info('Worker task %d finished reset of worker %d (after initialization)', self.task_rank, self.worker_idx)
+            log.info('Worker task %d finished reset of worker %d (after initialization)', self.task_rank,
+                     self.worker_idx)
             safe_put(self.report_queue, dict(finished_reset=self.local_rank), queue_name='report')
             self.ready = True
         # else:
@@ -289,7 +290,7 @@ class ActorWorker:
                                 self._advance_rollouts(cur_split, timing)
                                 cur_split = (cur_split + 1) % self.num_splits
                                 self.is_policy_act_semaphores_ready[:] = 0
-                    
+
                     if self.phase == ActorWorkerPhase.PAUSE and cur_split == stop_split:
                         assert self.debug_ep_steps[0] == self.debug_ep_steps[1]
                         self.pause_alignment.set()

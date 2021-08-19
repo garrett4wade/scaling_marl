@@ -227,7 +227,7 @@ class Trainer:
         dist.destroy_process_group()
 
     def _run(self):
-        psutil.Process().nice(self.cfg.default_niceness)
+        psutil.Process().nice(self.cfg.default_niceness + 5)
 
         torch.multiprocessing.set_sharing_strategy('file_system')
         torch.set_num_threads(self.cfg.n_training_threads)

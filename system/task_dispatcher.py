@@ -200,13 +200,15 @@ class TaskDispatcher:
                     self.report(msg)
 
                     for policy_id in range(self.cfg.num_policies):
-                        if self.accumulated_too_much_experience[policy_id] and not self.stop_experience_collection[policy_id]:
+                        if self.accumulated_too_much_experience[
+                                policy_id] and not self.stop_experience_collection[policy_id]:
                             for ident in self.policy_id2task_ident[policy_id]:
                                 task = [ident, str(TaskType.PAUSE).encode('ascii')]
                                 self.task_socket.send_multipart(task)
                             self.stop_experience_collection[policy_id] = True
-                        
-                        if self.stop_experience_collection[policy_id] and self.accumulated_too_few_experience[policy_id]:
+
+                        if (self.stop_experience_collection[policy_id]
+                                and self.accumulated_too_few_experience[policy_id]):
                             for ident in self.policy_id2task_ident[policy_id]:
                                 task = [ident, str(TaskType.RESUME).encode('ascii')]
                                 self.task_socket.send_multipart(task)

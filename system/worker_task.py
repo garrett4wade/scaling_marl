@@ -362,8 +362,9 @@ class WorkerTask:
 
     def print_stats(self, sample_throughputs):
         self.print_stats_cnt += 1
-        log.debug('--- Worker Task {} --- Throughput: {:.2f} (10 sec), {:.2f} (1 min), {:.2f} (5 mins). Samples: {}.'.format(
-            int(self.task_rank), *sample_throughputs, self.samples_collected))
+        log.debug(
+            '--- Worker Task {} --- Throughput: {:.2f} (10 sec), {:.2f} (1 min), {:.2f} (5 mins). Samples: {}.'.format(
+                int(self.task_rank), *sample_throughputs, self.samples_collected))
         if self.print_stats_cnt % 10 == 0:
             mem_stats = ''.join(['{}: {:.2f} MB, '.format(k, v) for k, v in self.stats.items()])[:-2]
             log.debug('--- Worker Task %d --- Memory statistics: %s', int(self.task_rank), mem_stats)
@@ -391,11 +392,12 @@ class WorkerTask:
             if self.phase == WorkerTaskPhase.PRIMAL_PAUSE or self.phase == WorkerTaskPhase.INTERMEDIATE_PAUSE:
                 return
 
-            log.warning('--- Worker Task {} --- paused due to too much experience data accumulation.'.format(self.task_rank))
+            log.warning('--- Worker Task {} --- paused due to too much experience data accumulation.'.format(
+                self.task_rank))
 
             for aw in self.actor_workers:
                 aw.pause()
-            
+
             self.phase = WorkerTaskPhase.INTERMEDIATE_PAUSE
 
         elif task == TaskType.EVALUATION:
@@ -413,7 +415,7 @@ class WorkerTask:
                 # closing experience collection
                 for aw in self.actor_workers:
                     aw.pause()
-                
+
                 for align in self.pause_alignments:
                     align.wait()
 
@@ -431,7 +433,8 @@ class WorkerTask:
                 while self.stop_experience_collection_cnt.sum() < self.cfg.num_splits * self.num_actors:
                     self.stop_experience_collection_cond.wait()
             elif self.phase == WorkerTaskPhase.INTERMEDIATE_PAUSE:
-                log.warning('--- Worker Task %d --- receiving EVALUATION task during PAUSE, ignore this.', self.task_rank)
+                log.warning('--- Worker Task %d --- receiving EVALUATION task during PAUSE, ignore this.',
+                            self.task_rank)
                 return
             elif self.phase == WorkerTaskPhase.PRIMAL_PAUSE:
                 pass
@@ -469,7 +472,8 @@ class WorkerTask:
                 raw_infos = {}
                 for i, k in enumerate(self.env_summary_keys):
                     raw_infos[k] = summary_data[i]
-                assert raw_infos['elapsed_episodes'] == self.cfg.eval_episodes, (raw_infos['elapsed_episodes'], self.cfg.eval_episodes)
+                assert raw_infos['elapsed_episodes'] == self.cfg.eval_episodes, (raw_infos['elapsed_episodes'],
+                                                                                 self.cfg.eval_episodes)
                 infos['eval_winning_rate'] = raw_infos['winning_episodes'] / raw_infos['elapsed_episodes']
                 infos['eval_episode_return'] = raw_infos['episode_return'] / raw_infos['elapsed_episodes']
                 infos['eval_episode_length'] = raw_infos['episode_length'] / raw_infos['elapsed_episodes']
@@ -497,7 +501,7 @@ class WorkerTask:
 
             self.phase = WorkerTaskPhase.PRIMAL_PAUSE
             log.info('--- Worker Task %d --- evaluation finished!', self.task_rank)
-        
+
         elif task == TaskType.TERMINATE:
             self.terminate = True
 
@@ -531,7 +535,9 @@ class WorkerTask:
                         # log.warning(('ZMQ Error on Worker Task %d'), self.task_rank)
                         pass
                     except Full:
-                        raise RuntimeError('Too many tasks accumulated in task queue! Try to decrease eval_interval, match the throughput of rollout and learning or increase the size of task queue.')
+                        raise RuntimeError("Too many tasks accumulated in task queue! "
+                                           "Try to decrease eval_interval, match the throughput of "
+                                           "rollout and learning or increase the size of task queue.")
 
                     if not self.is_executing_task:
                         try:

@@ -73,7 +73,11 @@ class Transmitter:
 
         with self.buffers[buffer_id].env_summary_lock:
             summary_info = self.buffers[buffer_id].summary_block.sum(axis=(0, 1))
-        msg.extend([self.sockets[learner_node_idx].identity, summary_info, str(buffer_id).encode('ascii'), str(local_trainer_idx).encode('ascii')])
+        msg.extend([
+            self.sockets[learner_node_idx].identity, summary_info,
+            str(buffer_id).encode('ascii'),
+            str(local_trainer_idx).encode('ascii')
+        ])
 
         # log.info('seg size:  {} (MB), total {:.2f} MB'.format(mem_data, total_mem))
         self.sockets[learner_node_idx].send_multipart(msg)
