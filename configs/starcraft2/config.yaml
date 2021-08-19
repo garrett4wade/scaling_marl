@@ -27,7 +27,7 @@ num_actors: 24
 actor_group_size: 1
 envs_per_actor: 2
 num_policy_workers: 4
-qsize: 4
+qsize: 8
 min_num_requests: -1
 
 ddp_init_methods:

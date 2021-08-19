@@ -13,12 +13,9 @@ import numpy as np
 
 
 class Receiver:
-    def __init__(self, cfg, rank, trainers, nodes_ready_event, trainer_buffer_ready_events):
+    def __init__(self, cfg, rank, trainers, nodes_ready_event):
         self.cfg = cfg
         self.rank = rank
-
-        for e in trainer_buffer_ready_events:
-            e.wait()
 
         self.buffers = [trainer.buffer for trainer in trainers]
 

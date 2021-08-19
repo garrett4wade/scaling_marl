@@ -24,7 +24,7 @@ class ValueHead(nn.Module):
         self.stddev = nn.Parameter(torch.ones(output_dim), requires_grad=False)
         self.mean = nn.Parameter(torch.zeros(output_dim), requires_grad=False)
         self.mean_sq = nn.Parameter(torch.zeros(output_dim), requires_grad=False)
-        self.debiasing_term = nn.Parameter(torch.tensor(0.0), requires_grad=False)
+        self.debiasing_term = nn.Parameter(torch.zeros(1), requires_grad=False)
 
         self.reset_parameters()
 
@@ -59,7 +59,7 @@ class ValueHead(nn.Module):
         x = torch.from_numpy(x) if isinstance(x, np.ndarray) else x
         reduce_axes = len(x.shape) - 1
 
-        old_mean, old_stddev = self.mean, self.stddev
+        old_mean, old_stddev = self.mean.data.clone(), self.stddev.data.clone()
 
         batch_mean = x.mean(dim=tuple(range(reduce_axes))) / dist.get_world_size()
         batch_sq_mean = x.square().mean(dim=tuple(range(reduce_axes))) / dist.get_world_size()
@@ -70,10 +70,10 @@ class ValueHead(nn.Module):
         self.mean_sq.mul_(self.beta).add_(batch_sq_mean * (1.0 - self.beta))
         self.debiasing_term.mul_(self.beta).add_(1.0 * (1.0 - self.beta))
 
-        self.stddev = (self.mean_sq - self.mean**2).sqrt().clamp(min=1e-4)
+        self.stddev.data[:] = (self.mean_sq - self.mean**2).sqrt().clamp(min=1e-4)
 
-        self.weight = self.weight * old_stddev / self.stddev
-        self.bias = (old_stddev * self.bias + old_mean - self.mean) / self.stddev
+        self.weight.data[:] = self.weight * old_stddev / self.stddev
+        self.bias.data[:] = (old_stddev * self.bias + old_mean - self.mean) / self.stddev
 
     @torch.no_grad()
     def debiased_mean_var(self):
@@ -86,9 +86,9 @@ class ValueHead(nn.Module):
     def normalize(self, x):
         np_input = isinstance(x, np.ndarray)
         x = torch.from_numpy(x) if np_input else x
-        assert x.shape[-1:] == self.input_dim, (
-            "trailing dimensions of the input vector " + "are expected to be {} ".format([self.input_dim]) +
-            "while the input vector has shape {}".format(x.shape[-self.remaining_axes:]))
+        assert x.shape[-1:] == self.mean.shape, (
+            "trailing dimensions of the input vector " + "are expected to be {} ".format(self.mean.shape) +
+            "while the input vector has shape {}".format(x.shape[-1:]))
 
         mean, var = self.debiased_mean_var()
         out = (x - mean) / torch.sqrt(var)
@@ -99,9 +99,9 @@ class ValueHead(nn.Module):
     def denormalize(self, x):
         np_input = isinstance(x, np.ndarray)
         x = torch.from_numpy(x) if np_input else x
-        assert x.shape[-1:] == self.input_dim, (
-            "trailing dimensions of the input vector " + "are expected to be {} ".format([self.input_dim]) +
-            "while the input vector has shape {}".format(x.shape[-self.remaining_axes:]))
+        assert x.shape[-1:] == self.mean.shape, (
+            "trailing dimensions of the input vector " + "are expected to be {} ".format(self.mean.shape) +
+            "while the input vector has shape {}".format(x.shape[-1:]))
 
         mean, var = self.debiased_mean_var()
         out = x * torch.sqrt(var) + mean

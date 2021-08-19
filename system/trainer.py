@@ -13,14 +13,10 @@ import torch.multiprocessing as mp
 
 import torch.distributed as dist
 from algorithms.registries import ALGORITHM_SUMMARY_KEYS
-from system.reanalyzer import Reanalyzer
-from system.value_tracer import ValueTracer
-
-from faster_fifo import Queue as MpQueue
 
 
 class Trainer:
-    def __init__(self, cfg, gpu_rank, nodes_ready_events, trainer_buffer_ready_event):
+    def __init__(self, cfg, gpu_rank, nodes_ready_events, trainer_ready_event, shm_state_dict):
         self.cfg = cfg
         self.gpu_rank = gpu_rank
         self.node_idx = self.cfg.learner_node_idx
@@ -56,7 +52,7 @@ class Trainer:
         self.buffer = LearnerBuffer(self.cfg, self.policy_id, self.num_agents, self.obs_space, self.share_obs_space,
                                     self.act_space)
 
-        trainer_buffer_ready_event.set()
+        self.trainer_ready_event = trainer_ready_event
 
         # TODO: support CPU
         self.tpdv = dict(device=torch.device(gpu_rank), dtype=torch.float32)
@@ -124,7 +120,8 @@ class Trainer:
         # policy network
         self.policy_fn = Policy
         self.policy = None
-        self.policy_version = (torch.ones(1, dtype=torch.int32) * (-1)).share_memory_().numpy()
+        self.policy_version = (torch.ones(1, dtype=torch.int32) * (-1)).share_memory_()
+        self.shm_state_dict = shm_state_dict
 
         self.consumed_num_steps = 0
         self.received_num_steps = 0
@@ -147,8 +144,8 @@ class Trainer:
         self.is_executing_task = False
         self.task_queue = Queue(8)
 
-        self.batch_queue = MpQueue(4 * 1000)
-        self.value_tracer_queue = MpQueue(4 * 1000)
+        self.batch_queue = mp.Queue(4 * 1000)
+        self.value_tracer_queue = mp.Queue(4 * 1000)
         self.value_tracer_task_queues = [mp.JoinableQueue(1) for _ in range(self.cfg.num_value_tracers_per_trainer)]
         self.reanalyzer_task_queues = [mp.JoinableQueue(1) for _ in range(self.cfg.num_reanalyzers_per_trainer)]
         self.param_lock = RWLock()
@@ -206,42 +203,13 @@ class Trainer:
 
         with self.param_lock.w_locked():
             self.policy_version += 1
-            self.shm_state_dict = {k: v.detach().cpu().share_memory_() for k, v in self.policy.state_dict().items()}
-
-        for i in range(self.cfg.num_reanalyzers_per_trainer):
-            # TODO: use different GPU rank
-            r_a = Reanalyzer(
-                self.cfg,
-                self.trainer_idx,
-                i,
-                self.gpu_rank,
-                self.buffer,
-                self.value_tracer_queue,
-                self.reanalyzer_task_queues[i],
-                self.shm_state_dict,
-                self.policy_version,
-                self.param_lock,
-            )
-            r_a.start_process()
-            self.reanalyzers.append(r_a)
-
-        for i in range(self.cfg.num_value_tracers_per_trainer):
-            v_t = ValueTracer(
-                self.cfg,
-                self.trainer_idx,
-                i,
-                self.buffer,
-                self.value_tracer_queue,
-                self.batch_queue,
-                self.value_tracer_task_queues[i],
-                self.shm_state_dict,
-                self.policy_version,
-                self.param_lock,
-            )
-            v_t.start_process()
-            self.value_tracers.append(v_t)
+            primal_state_dict = {k.replace('module.', ''): v.cpu() for k, v in self.policy.state_dict().items()}
+            for k, v in self.shm_state_dict.items():
+                v[:] = primal_state_dict[k]
 
         self.algorithm = self.algorithm_fn(self.cfg, self.policy)
+
+        self.trainer_ready_event.set()
 
         log.debug('Waiting for all nodes ready...')
         for i, e in enumerate(self.nodes_ready_events):
@@ -271,12 +239,6 @@ class Trainer:
             self.task_socket.close()
 
         dist.destroy_process_group()
-
-        for r_a in self.reanalyzers:
-            r_a.close()
-
-        for v_t in self.value_tracers:
-            v_t.close()
 
     def _run(self):
         psutil.Process().nice(self.cfg.default_niceness + 5)

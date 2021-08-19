@@ -3,7 +3,7 @@ from utils.timing import Timing
 import time
 
 from queue import Empty
-from utils import log, TaskType
+from utils.utils import log, TaskType
 
 import torch
 import torch.multiprocessing as mp
@@ -27,7 +27,6 @@ class Reanalyzer:
         self.trainer_idx = trainer_idx
         self.replicate_rank = replicate_rank
         self.gpu_rank = gpu_rank
-        torch.cuda.set_device(gpu_rank)
 
         self.buffer = buffer
         self.policy_id = buffer.policy_id
@@ -40,6 +39,11 @@ class Reanalyzer:
         self.share_obs_space = self.cfg.share_observation_space[example_agent]
         self.act_space = self.cfg.action_space[example_agent]
 
+        from algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
+
+        # policy network
+        self.policy_fn = Policy
+
         # to send reanalyzed data to value_tracer
         self.value_tracer_queue = value_tracer_queue
         # to synchronize weights with trainers
@@ -47,7 +51,7 @@ class Reanalyzer:
         self.trainer_policy_version = trainer_policy_version
         self.local_policy_version = -1
         assert self.trainer_policy_version.is_shared()
-        for k, v in self.shm_state_dict().items():
+        for k, v in self.shm_state_dict.items():
             assert v.is_shared()
         self.param_lock = param_lock
 
@@ -84,7 +88,7 @@ class Reanalyzer:
             with self.param_lock.r_locked():
                 with timing.time_avg('update_weights/load_state_dict_once'):
                     self.policy.load_state_dict(self.shm_state_dict)
-                    self.local_policy_version = self.ps_policy_version.item()
+                    self.local_policy_version = self.trainer_policy_version.item()
 
             if self.local_policy_version % 100 == 0:
                 log.info('Reanalyzer %d of trainer %d --- Update to policy version %d', self.replicate_rank,
@@ -158,11 +162,6 @@ class Reanalyzer:
                         self.task_queue.task_done()
                     except Empty:
                         pass
-
-                if self.policy_version % (self.cfg.sample_reuse *
-                                          self.cfg.broadcast_interval) == 0 and self.replicate_rank == 0:
-                    # the first trainer in each node broadcasts weights
-                    self.pack_off_weights()
 
         except RuntimeError as exc:
             log.warning('Error in Reanalyzer %d of trainer %d, exception: %s', self.replicate_rank, self.trainer_idx,

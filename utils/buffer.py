@@ -89,9 +89,10 @@ class ReplayBuffer:
 
         # buffer indicators
         self._is_readable = torch.zeros((self.num_slots, ), dtype=torch.uint8).share_memory_().numpy()
-        self._is_busy = torch.zeros((self.num_slots, ), dtype=torch.uint8).share_memory_().numpy()
+        self._is_being_read = torch.zeros((self.num_slots, ), dtype=torch.uint8).share_memory_().numpy()
+        self._is_being_written = torch.zeros((self.num_slots, ), dtype=torch.uint8).share_memory_().numpy()
         self._is_writable = torch.ones((self.num_slots, ), dtype=torch.uint8).share_memory_().numpy()
-        assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
+        assert np.all(self._is_readable + self._is_being_read + self._is_being_written + self._is_writable == 1)
 
         self._time_stamp = torch.zeros((self.num_slots, ), dtype=torch.float32).share_memory_().numpy()
 
@@ -108,14 +109,14 @@ class ReplayBuffer:
                 self._is_writable[slot_id] = 0
             else:
                 readable_slots = np.nonzero(self._is_readable)[0]
-                assert len(readable_slots) > 0, 'please increase qsize!'
+                assert len(readable_slots) > 0, 'please increase qsize! slots being read: {}, slots being written: {}, total number of slots: {}'.format(np.nonzero(self._is_being_read)[0], np.nonzero(self._is_being_written)[0], self.num_slots)
                 # replace the oldest readable slot, in a FIFO pattern
                 slot_id = readable_slots[np.argsort(self._time_stamp[readable_slots])[0]]
                 # readable -> busy
                 self._is_readable[slot_id] = 0
                 self._time_stamp[slot_id] = 0
-            self._is_busy[slot_id] = 1
-            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
+            self._is_being_written[slot_id] = 1
+            assert np.all(self._is_readable + self._is_being_read + self._is_being_written + self._is_writable == 1)
         return slot_id
 
     def _allocate_many(self, num_slots_to_allocate):
@@ -129,15 +130,15 @@ class ReplayBuffer:
             if len(slot_ids) < num_slots_to_allocate:
                 res = num_slots_to_allocate - len(slot_ids)
                 readable_slots = np.nonzero(self._is_readable)[0]
-                assert len(readable_slots) > res, 'please increase qsize!'
+                assert len(readable_slots) >= res, 'please increase qsize! slots being read: {}, slots being written: {}, total number of slots: {}'.format(np.nonzero(self._is_being_read)[0], np.nonzero(self._is_being_written)[0], self.num_slots)
                 # replace the oldest readable slot, in a FIFO pattern
                 res_slots = readable_slots[np.argsort(self._time_stamp[readable_slots])[:res]]
                 # readable -> busy
                 self._is_readable[res_slots] = 0
                 self._time_stamp[res_slots] = 0
                 slot_ids.extend(res_slots)
-            self._is_busy[slot_ids] = 1
-            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
+            self._is_being_written[slot_ids] = 1
+            assert np.all(self._is_readable + self._is_being_read + self._is_being_written + self._is_writable == 1)
         return slot_ids
 
     def _mark_as_readable(self, slots):
@@ -146,7 +147,7 @@ class ReplayBuffer:
             no_availble_before = np.sum(self._is_readable) < self.target_num_slots
             # readable -> busy (being written)
             self._is_readable[slots] = 1
-            self._is_busy[slots] = 0
+            self._is_being_written[slots] = 0
             self._time_stamp[slots] = time.time()
             # if reader is waiting for data, notify it
             if no_availble_before and np.sum(self._is_readable) >= self.target_num_slots:
@@ -174,9 +175,9 @@ class ReplayBuffer:
 
             # readable -> busy (being-read)
             self._is_readable[slot] = 0
-            self._is_busy[slot] = 1
+            self._is_being_read[slot] = 1
 
-            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
+            assert np.all(self._is_readable + self._is_being_read + self._is_being_written + self._is_writable == 1)
         return slot
 
     def get_many(self, timeout=None):
@@ -188,18 +189,18 @@ class ReplayBuffer:
 
             # readable -> busy (being-read)
             self._is_readable[available_slots] = 0
-            self._is_busy[available_slots] = 1
+            self._is_being_read[available_slots] = 1
 
-            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
+            assert np.all(self._is_readable + self._is_being_read + self._is_being_written + self._is_writable == 1)
         return available_slots
 
     def close_out(self, slot_id):
         with self._read_ready:
             # reset indicator, busy (being-read) -> writable
-            self._is_busy[slot_id] = 0
+            self._is_being_read[slot_id] = 0
             self._is_writable[slot_id] = 1
             self._time_stamp[slot_id] = 0
-            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
+            assert np.all(self._is_readable + self._is_being_read + self._is_being_written + self._is_writable == 1)
 
 
 class WorkerBuffer(ReplayBuffer):
@@ -274,7 +275,7 @@ class WorkerBuffer(ReplayBuffer):
 
         # NOTE: following 2 lines for debug only
         # with self._read_ready:
-        #     assert np.all(self._is_busy[old_slots]) and np.all(self._is_busy[new_slots])
+        #     assert np.all(self._is_being_written[old_slots]) and np.all(self._is_being_written[new_slots])
         super()._mark_as_readable(old_slots)
 
     def get(self, block=True, timeout=None, reduce_fn=lambda x: x[0]):
@@ -306,8 +307,8 @@ class LearnerBuffer(ReplayBuffer):
 
         # tracer storage, e.g. n-step return, GAE, V-trace
         # TODO: add other types of trace storage
-        self.v_target = torch.zeros_like(self.rewards, dtype=torch.float32).share_memory_().numpy()
-        self.advantages = torch.zeros_like(self.rewards, dtype=torch.float32).share_memory_().numpy()
+        self.v_target = torch.zeros_like(self._rewards, dtype=torch.float32).share_memory_().numpy()
+        self.advantages = torch.zeros_like(self._rewards, dtype=torch.float32).share_memory_().numpy()
 
         self.trace_lock = mp.Lock()
         self._is_trace_ready = torch.zeros(self.num_slots, dtype=torch.bool).share_memory_().numpy()
@@ -324,8 +325,8 @@ class LearnerBuffer(ReplayBuffer):
         self._global_ptr = torch.zeros((2, ), dtype=torch.int32).share_memory_().numpy()
         with self._read_ready:
             self._is_writable[0] = 0
-            self._is_busy[0] = 1
-            assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
+            self._is_being_written[0] = 1
+            assert np.all(self._is_readable + self._is_being_read + self._is_being_written + self._is_writable == 1)
 
         self.gamma = np.float32(cfg.gamma)
         self.lmbda = np.float32(cfg.gae_lambda)
@@ -414,8 +415,8 @@ class LearnerBuffer(ReplayBuffer):
                 super().close_out(slot_id)
             else:
                 self._is_readable[slot_id] = 1
-                self._is_busy[slot_id] = 0
-                assert np.all(self._is_readable + self._is_busy + self._is_writable == 1)
+                self._is_being_read[slot_id] = 0
+                assert np.all(self._is_readable + self._is_being_read + self._is_being_written + self._is_writable == 1)
 
     def feed_forward_generator(self, slot):
         output_tensors = {}
@@ -428,8 +429,8 @@ class LearnerBuffer(ReplayBuffer):
                 # [T, B, A, D] -> [T * B * A, D]
                 output_tensors[k] = flatten(self.storage[k][slot, :self.episode_length], 3)
 
-        output_tensors['v_target'] = flatten(self.v_target, 3)
-        output_tensors['advantages'] = flatten(self.advantages, 3)
+        output_tensors['v_target'] = flatten(self.v_target[slot], 3)
+        output_tensors['advantages'] = flatten(self.advantages[slot], 3)
 
         # NOTE: following 2 lines are for debuggin only, which WILL SIGNIFICANTLY AFFECT SYSTEM PERFORMANCE
         # for k, v in output_tensors.items():
@@ -463,8 +464,8 @@ class LearnerBuffer(ReplayBuffer):
                 else:
                     output_tensors[k] = _cast(self.storage[k][slot, :self.episode_length])
 
-        output_tensors['v_target'] = _cast(self.v_target)
-        output_tensors['advantages'] = _cast(self.advantages)
+        output_tensors['v_target'] = _cast(self.v_target[slot])
+        output_tensors['advantages'] = _cast(self.advantages[slot])
 
         # NOTE: following 2 lines are for debuggin only, which WILL SIGNIFICANTLY AFFECT SYSTEM PERFORMANCE
         # for k, v in output_tensors.items():
@@ -559,7 +560,7 @@ class SharedPolicyMixin(PolicyMixin):
 
                 # NOTE: following 2 lines for debug only
                 # with self._read_ready:
-                #     assert np.all(self._is_busy[old_slots]) and np.all(self._is_busy[new_slots])
+                #     assert np.all(self._is_being_written[old_slots]) and np.all(self._is_being_written[new_slots])
                 self._mark_as_readable(old_closure_slot_ids)
 
                 if pause:

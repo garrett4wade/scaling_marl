@@ -3,7 +3,7 @@ from utils.timing import Timing
 import time
 
 from queue import Empty
-from utils import log, TaskType
+from utils.utils import log, TaskType
 from numpy import float32
 
 import torch
@@ -49,7 +49,7 @@ class ValueTracer:
         self.trainer_policy_version = trainer_policy_version
         self.local_policy_version = -1
         assert self.trainer_policy_version.is_shared()
-        for k, v in self.shm_state_dict().items():
+        for k, v in self.shm_state_dict.items():
             assert v.is_shared()
         self.param_lock = param_lock
 
@@ -79,9 +79,9 @@ class ValueTracer:
         if self.local_policy_version < self.trainer_policy_version:
             with self.param_lock.r_locked():
                 with timing.time_avg('update_weights/load_state_dict_once'):
-                    subset = {k: v for k, v in self.shm_state_dict.items() if k in self.state_dict_keys}
-                    self.policy.load_state_dict(subset)
-                    self.local_policy_version = self.ps_policy_version.item()
+                    subset = {k.split('.')[-1]: v for k, v in self.shm_state_dict.items() if k.split('.')[-1] in self.state_dict_keys}
+                    self.value_normalizer.load_state_dict(subset)
+                    self.local_policy_version = self.trainer_policy_version.item()
 
             if self.local_policy_version % 100 == 0:
                 log.info('Value Tracer %d of trainer %d --- Update to policy version %d', self.replicate_rank,
@@ -117,6 +117,8 @@ class ValueTracer:
 
         timing = Timing()
 
+        self._init(timing)
+
         try:
             while not self.terminate:
 
@@ -141,11 +143,6 @@ class ValueTracer:
                         self.task_queue.task_done()
                     except Empty:
                         pass
-
-                if self.policy_version % (self.cfg.sample_reuse *
-                                          self.cfg.broadcast_interval) == 0 and self.replicate_rank == 0:
-                    # the first trainer in each node broadcasts weights
-                    self.pack_off_weights()
 
         except RuntimeError as exc:
             log.warning('Error in Value Tracer %d of trainer %d, exception: %s', self.replicate_rank, self.trainer_idx,
