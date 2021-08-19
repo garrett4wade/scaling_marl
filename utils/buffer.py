@@ -4,7 +4,6 @@ import numpy as np
 import multiprocessing as mp
 from queue import Empty
 from algorithms.registries import get_ppo_storage_specs, to_numpy_type, ENV_SUMMARY_KEYS
-from algorithms.utils.modules import compute_gae, masked_normalization
 from utils.utils import log
 from algorithms.utils.transforms import flatten, to_chunk
 from utils.popart import PopArt
@@ -305,6 +304,14 @@ class LearnerBuffer(ReplayBuffer):
 
         super()._init_storage()
 
+        # tracer storage, e.g. n-step return, GAE, V-trace
+        # TODO: add other types of trace storage
+        self.v_target = torch.zeros_like(self.rewards, dtype=torch.float32).share_memory_().numpy()
+        self.advantages = torch.zeros_like(self.rewards, dtype=torch.float32).share_memory_().numpy()
+
+        self.trace_lock = mp.Lock()
+        self._is_trace_ready = torch.zeros(self.num_slots, dtype=torch.bool).share_memory_().numpy()
+
         self._used_times = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
 
         # summary block
@@ -402,6 +409,8 @@ class LearnerBuffer(ReplayBuffer):
             self._used_times[slot_id] += 1
             if self._used_times[slot_id] >= self.sample_reuse:
                 self._used_times[slot_id] = 0
+                with self.trace_lock:
+                    self._is_trace_ready[slot_id] = 0
                 super().close_out(slot_id)
             else:
                 self._is_readable[slot_id] = 1
@@ -411,23 +420,6 @@ class LearnerBuffer(ReplayBuffer):
     def feed_forward_generator(self, slot):
         output_tensors = {}
 
-        if self._use_popart:
-            denormalized_values = self.value_normalizer.denormalize(self.values[slot])
-        else:
-            denormalized_values = self.values[slot]
-
-        # compute value targets and advantages every time learner fetches data, because as the same slot
-        # is reused, we need to recompute values of corresponding observations
-        gae_return = compute_gae(self.rewards[slot], denormalized_values, self.masks[slot], self.fct_masks[slot],
-                                 self.gamma, self.lmbda)
-        v_target, advantage = gae_return.v_target, gae_return.advantage
-
-        if self._use_advantage_normalization:
-            advantage = masked_normalization(advantage, self.active_masks[slot, :-1])
-
-        if self._use_popart:
-            v_target = self.value_normalizer(v_target)
-
         for k in self.storage_keys:
             # we don't need rnn_states/fct_masks/rewards for MLP policy learning
             # fct_masks/rewards are only used in gae computation
@@ -436,8 +428,8 @@ class LearnerBuffer(ReplayBuffer):
                 # [T, B, A, D] -> [T * B * A, D]
                 output_tensors[k] = flatten(self.storage[k][slot, :self.episode_length], 3)
 
-        output_tensors['v_target'] = flatten(v_target, 3)
-        output_tensors['advantages'] = flatten(advantage, 3)
+        output_tensors['v_target'] = flatten(self.v_target, 3)
+        output_tensors['advantages'] = flatten(self.advantages, 3)
 
         # NOTE: following 2 lines are for debuggin only, which WILL SIGNIFICANTLY AFFECT SYSTEM PERFORMANCE
         # for k, v in output_tensors.items():
@@ -453,23 +445,6 @@ class LearnerBuffer(ReplayBuffer):
 
     def recurrent_generator(self, slot):
         output_tensors = {}
-
-        if self._use_popart:
-            denormalized_values = self.value_normalizer.denormalize(self.values[slot])
-        else:
-            denormalized_values = self.values[slot]
-
-        # compute value targets and advantages every time learner fetches data, because as the same slot
-        # is reused, we need to recompute values of corresponding observations
-        gae_return = compute_gae(self.rewards[slot], denormalized_values, self.masks[slot], self.fct_masks[slot],
-                                 self.gamma, self.lmbda)
-        v_target, advantage = gae_return.v_target, gae_return.advantage
-
-        if self._use_advantage_normalization:
-            advantage = masked_normalization(advantage, self.active_masks[slot, :-1])
-
-        if self._use_popart:
-            v_target = self.value_normalizer(v_target)
 
         def _cast(x):
             # [T, B, A, D] -> [T, B * A, D] -> [L, B * A * (T/L), D]
@@ -488,8 +463,8 @@ class LearnerBuffer(ReplayBuffer):
                 else:
                     output_tensors[k] = _cast(self.storage[k][slot, :self.episode_length])
 
-        output_tensors['v_target'] = _cast(v_target)
-        output_tensors['advantages'] = _cast(advantage)
+        output_tensors['v_target'] = _cast(self.v_target)
+        output_tensors['advantages'] = _cast(self.advantages)
 
         # NOTE: following 2 lines are for debuggin only, which WILL SIGNIFICANTLY AFFECT SYSTEM PERFORMANCE
         # for k, v in output_tensors.items():

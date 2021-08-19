@@ -68,8 +68,8 @@ class R_MAPPOPolicy:
                     masks,
                     available_actions=None,
                     deterministic=False):
-        (action_dists, action_reduce_fn, log_prob_reduce_fn, _, _, _, rnn_states, values,
-         rnn_states_critic) = self.actor_critic(obs, rnn_states, masks, available_actions, share_obs, rnn_states_critic)
+        (action_dists, action_reduce_fn, log_prob_reduce_fn, _, _, _, rnn_states, values, rnn_states_critic,
+         _) = self.actor_critic(obs, rnn_states, masks, available_actions, share_obs, rnn_states_critic)
         actions, action_log_probs = get_actions_from_dist(action_dists, action_reduce_fn, log_prob_reduce_fn,
                                                           deterministic)
 
@@ -88,16 +88,18 @@ class R_MAPPOPolicy:
                          rnn_states_critic,
                          actions,
                          masks,
+                         v_target,
                          available_actions=None,
                          active_masks=None,
                          **kwargs):
-        (action_dists, _, log_prob_reduce_fn, action_preprocess_fn, entropy_fn, entropy_reduce_fn, _, values,
-         _) = self.actor_critic(obs, rnn_states, masks, available_actions, share_obs, rnn_states_critic)
+        (action_dists, _, log_prob_reduce_fn, action_preprocess_fn, entropy_fn, entropy_reduce_fn, _, values, _,
+         v_target) = self.actor_critic(obs, rnn_states, masks, available_actions, share_obs, rnn_states_critic,
+                                       v_target)
         action_log_probs, dist_entropy = evaluate_actions_from_dist(action_dists, actions, log_prob_reduce_fn,
                                                                     action_preprocess_fn, entropy_fn, entropy_reduce_fn,
                                                                     active_masks)
 
-        return values, action_log_probs, dist_entropy
+        return values, action_log_probs, dist_entropy, v_target
 
     def act(self, obs, rnn_states, masks, available_actions=None, deterministic=False):
         (action_dists, action_reduce_fn, log_prob_reduce_fn, _, _, _, rnn_states, _,

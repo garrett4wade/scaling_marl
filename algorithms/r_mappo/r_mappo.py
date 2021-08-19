@@ -4,23 +4,25 @@ from utils.utils import get_gard_norm, huber_loss, mse_loss
 
 
 class R_MAPPO:
-    def __init__(self, args, policy):
+    def __init__(self, cfg, policy):
+        self.cfg = cfg
+
         self.device = policy.device
         self.tpdv = dict(dtype=torch.float32, device=self.device)
         self.policy = policy
 
-        self.clip_param = args.clip_param
-        self.entropy_coef = args.entropy_coef
-        self.value_coef = args.value_coef
-        self.max_grad_norm = args.max_grad_norm
+        self.clip_param = cfg.clip_param
+        self.entropy_coef = cfg.entropy_coef
+        self.value_coef = cfg.value_coef
+        self.max_grad_norm = cfg.max_grad_norm
 
-        self._use_max_grad_norm = args.use_max_grad_norm
-        self._use_clipped_value_loss = args.use_clipped_value_loss
-        self._use_huber_loss = args.use_huber_loss
-        self._no_value_active_masks = args.no_value_active_masks
-        self._no_policy_active_masks = args.no_policy_active_masks
+        self._use_max_grad_norm = cfg.use_max_grad_norm
+        self._use_clipped_value_loss = cfg.use_clipped_value_loss
+        self._use_huber_loss = cfg.use_huber_loss
+        self._no_value_active_masks = cfg.no_value_active_masks
+        self._no_policy_active_masks = cfg.no_policy_active_masks
 
-        self.value_loss_fn = lambda x: huber_loss(x, args.huber_delta) if self._use_huber_loss else mse_loss
+        self.value_loss_fn = lambda x: huber_loss(x, cfg.huber_delta) if self._use_huber_loss else mse_loss
 
     def cal_value_loss(self, values, value_preds_batch, v_target_batch, active_masks_batch):
         error_original = v_target_batch - values
@@ -46,7 +48,7 @@ class R_MAPPO:
         assert update_actor, 'currently ppg not supported'
 
         # Reshape to do in a single forward pass for all steps
-        values, action_log_probs, dist_entropy = self.policy.evaluate_actions(**sample)
+        values, action_log_probs, dist_entropy, v_target = self.policy.evaluate_actions(**sample)
 
         # actor update
         imp_weights = torch.exp(action_log_probs - sample['action_log_probs'])
@@ -62,7 +64,7 @@ class R_MAPPO:
             policy_loss = -torch.sum(torch.min(surr1, surr2), dim=-1, keepdim=True).mean()
 
         # critic update
-        value_loss = self.cal_value_loss(values, sample['values'], sample['v_target'], sample['active_masks'])
+        value_loss = self.cal_value_loss(values, sample['values'], v_target, sample['active_masks'])
 
         self.policy.optimizer.zero_grad()
 

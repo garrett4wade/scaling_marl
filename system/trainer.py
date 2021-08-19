@@ -5,7 +5,7 @@ import psutil
 import pathlib
 import numpy as np
 from queue import Queue, Empty
-from utils.utils import log, TaskType
+from utils.utils import log, TaskType, RWLock
 from utils.buffer import LearnerBuffer
 from utils.timing import Timing
 import time
@@ -13,6 +13,10 @@ import torch.multiprocessing as mp
 
 import torch.distributed as dist
 from algorithms.registries import ALGORITHM_SUMMARY_KEYS
+from system.reanalyzer import Reanalyzer
+from system.value_tracer import ValueTracer
+
+from faster_fifo import Queue as MpQueue
 
 
 class Trainer:
@@ -97,10 +101,6 @@ class Trainer:
                                       self.slots_per_update)
         self.train_for_episodes = self.train_for_env_steps // self.transitions_per_batch // self.num_trainers
 
-        self.train_in_background = self.cfg.train_in_background
-        # TODO: add training background thread
-        assert not self.train_in_background
-
         self.training_tik = None
         self.logging_tik = None
 
@@ -124,7 +124,7 @@ class Trainer:
         # policy network
         self.policy_fn = Policy
         self.policy = None
-        self.policy_version = 0
+        self.policy_version = (torch.ones(1, dtype=torch.int32) * (-1)).share_memory_().numpy()
 
         self.consumed_num_steps = 0
         self.received_num_steps = 0
@@ -146,6 +146,15 @@ class Trainer:
         # TODO: modify this when processing tasks
         self.is_executing_task = False
         self.task_queue = Queue(8)
+
+        self.batch_queue = MpQueue(4 * 1000)
+        self.value_tracer_queue = MpQueue(4 * 1000)
+        self.value_tracer_task_queues = [mp.JoinableQueue(1) for _ in range(self.cfg.num_value_tracers_per_trainer)]
+        self.reanalyzer_task_queues = [mp.JoinableQueue(1) for _ in range(self.cfg.num_reanalyzers_per_trainer)]
+        self.param_lock = RWLock()
+
+        self.reanalyzers = []
+        self.value_tracers = []
 
         self.process = mp.Process(target=self._run)
 
@@ -195,6 +204,43 @@ class Trainer:
         if self.model_dir is not None:
             self.restore()
 
+        with self.param_lock.w_locked():
+            self.policy_version += 1
+            self.shm_state_dict = {k: v.detach().cpu().share_memory_() for k, v in self.policy.state_dict().items()}
+
+        for i in range(self.cfg.num_reanalyzers_per_trainer):
+            # TODO: use different GPU rank
+            r_a = Reanalyzer(
+                self.cfg,
+                self.trainer_idx,
+                i,
+                self.gpu_rank,
+                self.buffer,
+                self.value_tracer_queue,
+                self.reanalyzer_task_queues[i],
+                self.shm_state_dict,
+                self.policy_version,
+                self.param_lock,
+            )
+            r_a.start_process()
+            self.reanalyzers.append(r_a)
+
+        for i in range(self.cfg.num_value_tracers_per_trainer):
+            v_t = ValueTracer(
+                self.cfg,
+                self.trainer_idx,
+                i,
+                self.buffer,
+                self.value_tracer_queue,
+                self.batch_queue,
+                self.value_tracer_task_queues[i],
+                self.shm_state_dict,
+                self.policy_version,
+                self.param_lock,
+            )
+            v_t.start_process()
+            self.value_tracers.append(v_t)
+
         self.algorithm = self.algorithm_fn(self.cfg, self.policy)
 
         log.debug('Waiting for all nodes ready...')
@@ -226,6 +272,12 @@ class Trainer:
 
         dist.destroy_process_group()
 
+        for r_a in self.reanalyzers:
+            r_a.close()
+
+        for v_t in self.value_tracers:
+            v_t.close()
+
     def _run(self):
         psutil.Process().nice(self.cfg.default_niceness + 5)
 
@@ -234,10 +286,7 @@ class Trainer:
 
         timing = Timing()
 
-        if self.train_in_background:
-            self.training_thread.start()
-        else:
-            self._init()
+        self._init()
 
         self.training_tik = self.logging_tik = time.time()
 
@@ -263,16 +312,15 @@ class Trainer:
                             #             self.trainer_idx)
                             pass
 
-                if not self.train_in_background:
-                    train_infos = self.training_step(timing)
+                train_infos = self.training_step(timing)
 
-                    self.maybe_save()
+                self.maybe_save()
 
-                    log_infos = self.maybe_log()
+                log_infos = self.maybe_log()
 
-                    self.report({**log_infos, **train_infos})
+                self.report({**log_infos, **train_infos})
 
-                    dist.barrier()
+                dist.barrier()
 
                 if self.policy_version % (self.cfg.sample_reuse *
                                           self.cfg.broadcast_interval) == 0 and self.replicate_rank == 0:
@@ -290,10 +338,6 @@ class Trainer:
             log.exception('Unknown exception in Trainer %d', self.trainer_idx)
             self.terminate = True
 
-        if self.train_in_background:
-            self.experience_buffer_queue.put(None)
-            self.training_thread.join()
-
         self._terminate()
         time.sleep(0.1)
         log.info('GPU Trainer timing: %s', timing)
@@ -304,21 +348,21 @@ class Trainer:
         msg = []
         for k, v in numpy_state_dict.items():
             msg.extend([k.encode('ascii'), v])
-        msg.append(str(self.policy_version).encode('ascii'))
+        msg.append(str(self.policy_version.item()).encode('ascii'))
         self.model_weights_socket.send_multipart(msg)
 
-        if self.policy_version % 10 == 0:
+        if self.policy_version.item() % 100 == 0:
             # print(numpy_state_dict['critic_rnn.rnn.weight_hh_l0'])
-            log.debug('Broadcasting model weights...(ver. {})'.format(self.policy_version))
+            log.debug('Broadcasting model weights...(ver. {})'.format(self.policy_version.item()))
 
     def training_step(self, timing):
         buffer_util = self.buffer.utilization
-        if self.policy_version % 10 == 0:
+        if self.policy_version.item() % 10 == 0:
             log.info('buffer utilization before training step: {}/{}'.format(round(buffer_util * self.buffer.num_slots),
                                                                              self.buffer.num_slots))
 
         if self.use_linear_lr_decay:
-            self.policy.lr_decay(self.policy_version, self.train_for_episodes)
+            self.policy.lr_decay(self.policy_version.item(), self.train_for_episodes)
 
         train_info = {}
 
@@ -330,29 +374,9 @@ class Trainer:
             self.policy.train_mode()
             dist.barrier()
 
-        with timing.add_time('training_step/get_slot'):
+        with timing.add_time('training_step/wait_for_batch'):
             # only train popart parameter in the first epoch
-            slot_id = self.buffer.get()
-
-        with timing.add_time('training_step/reanalyze'):
-            if self.cfg.use_reanalyze:
-                # re-compute values/rnn_states for learning (re-analysis in MuZero, burn-in in R2D2 etc.)
-                with torch.no_grad():
-                    # TODO: deal with MLP (no rnn_states/masks)
-                    # TODO: deal with Hanabi (nonshared case)
-                    share_obs = self.buffer.share_obs[slot_id]
-                    rnn_states_critic = self.buffer.rnn_states_critic[slot_id][0]
-                    masks = self.buffer.masks[slot_id]
-                    reanalyze_inputs = {
-                        'share_obs': share_obs.reshape(self.episode_length + 1, -1, *share_obs.shape[3:]),
-                        'rnn_states_critic': rnn_states_critic.reshape(-1, *rnn_states_critic.shape[2:]).swapaxes(0, 1),
-                        'masks': masks.reshape(self.episode_length + 1, -1, *masks.shape[3:]),
-                    }
-                    for k, v in reanalyze_inputs.items():
-                        reanalyze_inputs[k] = torch.from_numpy(v).to(**self.tpdv)
-
-                    values = self.policy.get_values(**reanalyze_inputs).cpu().numpy()
-                    self.buffer.values[slot_id] = values.reshape(*self.buffer.values[slot_id].shape)
+            slot_id = self.batch_queue.get()
 
         data_generator = self.buffer.recurrent_generator(
             slot_id) if self.cfg.use_recurrent_policy else self.buffer.feed_forward_generator(slot_id)
@@ -387,20 +411,27 @@ class Trainer:
 
         with timing.add_time('training_step/close_out'):
             self.buffer.close_out(slot_id)
-            self.policy_version += 1
+
+            with self.param_lock.w_locked():
+                self.policy_version += 1
+                if self.policy_version.item() % (self.cfg.sample_reuse * self.cfg.broadcast_interval) == 0:
+                    primal_state_dict = {k.replace('module.', ''): v.cpu() for k, v in self.policy.state_dict().items()}
+                    for k, v in self.shm_state_dict.items():
+                        v[:] = primal_state_dict[k]
+
             self.consumed_num_steps += self.transitions_per_batch
 
-        return {**train_info, 'buffer_util': buffer_util, 'iteration': self.policy_version}
+        return {**train_info, 'buffer_util': buffer_util, 'iteration': self.policy_version.item()}
 
     def maybe_save(self):
-        if self.replicate_rank == 0 and (self.policy_version % self.save_interval == 0
-                                         or self.policy_version == self.train_for_episodes - 1):
+        if self.replicate_rank == 0 and (self.policy_version.item() % self.save_interval == 0
+                                         or self.policy_version.item() == self.train_for_episodes - 1):
             self.save()
 
     def maybe_log(self):
         log_infos = {}
         # log information
-        if self.replicate_rank == 0 and self.policy_version % self.log_interval == 0:
+        if self.replicate_rank == 0 and self.policy_version.item() % self.log_interval == 0:
             self.last_received_num_steps = self.received_num_steps
             self.received_num_steps = self.buffer.total_timesteps.item()
 
@@ -424,7 +455,7 @@ class Trainer:
                       "recent rollout FPS {}, global average rollout FPS {}, recent learning FPS {}, "
                       "global average learning FPS {}, recent sample reuse: {:.2f}, "
                       "global average sample reuse: {:.2f}.\n".format(
-                          self.env_name, self.algorithm_name, self.experiment_name, self.policy_version,
+                          self.env_name, self.algorithm_name, self.experiment_name, self.policy_version.item(),
                           self.train_for_episodes, self.consumed_num_steps, self.train_for_env_steps,
                           recent_rollout_fps, global_avg_rollout_fps, recent_learning_fps, global_avg_learning_fps,
                           recent_sample_reuse, global_sample_reuse))

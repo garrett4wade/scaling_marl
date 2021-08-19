@@ -159,6 +159,8 @@ def get_config():
     parser.add_argument('--learner_config', help='learner gpu configuration')
     parser.add_argument('--num_policies', type=int, default=1, help='number of policies to be trained')
     parser.add_argument('--policy2agents', help='dict illustrating subsets of agent ids controlled by each policy')
+    parser.add_argument('--num_reanalyzers_per_trainer', type=int, default=1)
+    parser.add_argument('--num_value_tracers_per_trainer', type=int, default=1)
 
     parser.add_argument('--config', type=str)
     parser.add_argument('--project_name', type=str, default='test')
@@ -229,7 +231,6 @@ def get_config():
                         default=int(1e10),
                         type=int,
                         help='Stop training after this many seconds')
-    parser.add_argument('--train_in_background', action='store_true')
     parser.add_argument('--ddp_init_methods', type=str, nargs='+')
     parser.add_argument('--learner_num_threads', type=int, default=8)
     parser.add_argument('--broadcast_interval', default=1, type=int)
