@@ -131,7 +131,7 @@ def main():
     trainers = []
     shm_state_dicts = []
     for i, gpu_idx in enumerate(local_learner_config.keys()):
-        # inti
+        # initialize a example policy to get a example state dict
         policy_id = cfg.learner_config[str(cfg.learner_node_idx)][str(gpu_idx)]
         example_agent = cfg.policy2agents[str(policy_id)][0]
 
@@ -141,7 +141,7 @@ def main():
         from algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
         example_policy = Policy('cpu', cfg, obs_space, share_obs_space, act_space, is_training=False)
         shm_state_dict = {k: v.detach().cpu().share_memory_() for k, v in example_policy.state_dict().items()}
-        del shm_state_dict
+        del example_policy
 
         tn = Trainer(cfg, int(gpu_idx), nodes_ready_events, trainer_ready_events[i], shm_state_dict)
         tn.start_process()
