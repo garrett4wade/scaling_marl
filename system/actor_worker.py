@@ -53,6 +53,7 @@ class ActorWorker:
         eval_summary_lock,
         eval_episode_cnt,
         eval_finish_event,
+        pause_alignment,
     ):
         self.cfg = cfg
         self.env_fn = env_fn
@@ -97,11 +98,16 @@ class ActorWorker:
         self.envstep_output_semaphore = envstep_output_semaphore
 
         self.phase = ActorWorkerPhase.PAUSE
+        self.summary_phase = ActorWorkerPhase.ROLLOUT
 
         self.eval_summary_block = eval_summary_block
         self.eval_summary_lock = eval_summary_lock
         self.eval_episode_cnt = eval_episode_cnt
         self.eval_finish_event = eval_finish_event
+
+        self.pause_alignment = pause_alignment
+        # just for debugging in some assertion
+        self.debug_ep_steps = np.zeros(self.num_splits)
 
         self.processed_envsteps = 0
         self.process = TorchProcess(target=self._run, daemon=True)
@@ -198,6 +204,7 @@ class ActorWorker:
 
         with timing.add_time('env_step/simulation'), timing.time_avg('env_step/simulation_avg'):
             envstep_outputs = env.step(self.act_shm[split_idx])
+            self.debug_ep_steps[split_idx] += 1
 
         with timing.add_time('env_step/copy_outputs'):
             infos = envstep_outputs['infos']
@@ -222,11 +229,11 @@ class ActorWorker:
             for env_id, (done, info) in enumerate(zip(dones, infos)):
                 if not np.all(done):
                     continue
-                if self.phase == ActorWorkerPhase.ROLLOUT:
+                if self.summary_phase == ActorWorkerPhase.ROLLOUT:
                     with self.buffer.env_summary_lock:
                         for i, sum_key in enumerate(self.env_summary_keys):
                             self.buffer.summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
-                elif self.phase == ActorWorkerPhase.EVALUATION:
+                elif self.summary_phase == ActorWorkerPhase.EVALUATION:
                     with self.eval_summary_lock:
                         if not self.eval_finish_event.is_set():
                             self.eval_episode_cnt += 1
@@ -263,13 +270,13 @@ class ActorWorker:
 
         timing = Timing()
 
-        cur_split = 0
+        cur_split = stop_split = 0
 
         last_report = time.time()
         with torch.no_grad():
             while not self.terminate:
                 try:
-                    if self.initialized and self.phase != ActorWorkerPhase.PAUSE:
+                    if self.initialized and not (self.phase == ActorWorkerPhase.PAUSE and cur_split == stop_split):
                         with timing.add_time('waiting'), timing.time_avg('wait_for_inference'):
                             for i, policy_act_semaphore in enumerate(self.act_semaphore):
                                 if not self.is_policy_act_semaphores_ready[i]:
@@ -282,6 +289,10 @@ class ActorWorker:
                                 self._advance_rollouts(cur_split, timing)
                                 cur_split = (cur_split + 1) % self.num_splits
                                 self.is_policy_act_semaphores_ready[:] = 0
+                    
+                    if self.phase == ActorWorkerPhase.PAUSE and cur_split == stop_split:
+                        assert self.debug_ep_steps[0] == self.debug_ep_steps[1]
+                        self.pause_alignment.set()
 
                     with timing.add_time('get_tasks'):
                         try:
@@ -307,15 +318,20 @@ class ActorWorker:
                                 self._handle_reset()
 
                         if task_type == TaskType.START:
-                            self.phase = ActorWorkerPhase.ROLLOUT
+                            self.phase = self.summary_phase = ActorWorkerPhase.ROLLOUT
 
                         if task_type == TaskType.EVALUATION:
-                            self.phase = ActorWorkerPhase.EVALUATION
+                            self.phase = self.summary_phase = ActorWorkerPhase.EVALUATION
                             with timing.add_time('evaluation_reset'):
                                 self._handle_reset()
 
                         if task_type == TaskType.PAUSE:
                             assert self.initialized
+                            if self.phase == ActorWorkerPhase.EVALUATION:
+                                # after evaluation, we need to reset stop_split and debug_steps to
+                                # align steps of different environment splits
+                                self.debug_ep_steps[:] = 0
+                                stop_split = cur_split
                             self.phase = ActorWorkerPhase.PAUSE
 
                     with timing.add_time('report'):

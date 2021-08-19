@@ -126,6 +126,8 @@ class WorkerTask:
         self.eval_episode_cnt = torch.zeros(1, dtype=torch.int32).share_memory_().numpy()
         self.eval_finish_event = mp.Event()
 
+        self.pause_alignments = [mp.Event() for _ in range(self.num_actors)]
+
         self.env_summary_keys = self.buffer.env_summary_keys
         self.env_summary_idx_hash = {}
         for i, k in enumerate(self.env_summary_keys):
@@ -169,6 +171,7 @@ class WorkerTask:
             self.eval_summary_lock,
             self.eval_episode_cnt,
             self.eval_finish_event,
+            self.pause_alignments[idx],
         )
 
     # noinspection PyProtectedMember
@@ -389,8 +392,6 @@ class WorkerTask:
                 return
 
             log.warning('--- Worker Task {} --- paused due to too much experience data accumulation.'.format(self.task_rank))
-            for pw in itertools.chain.from_iterable(self.policy_workers):
-                pw.pause()
 
             for aw in self.actor_workers:
                 aw.pause()
@@ -403,13 +404,28 @@ class WorkerTask:
             self.eval_episode_cnt[:] = 0
             self.stop_experience_collection_cnt[:] = 0
             self.eval_finish_event.clear()
-            log.info('--- Worker Task %d --- closing rollout...', self.task_rank)
+            for align in self.pause_alignments:
+                align.clear()
 
             if self.phase == WorkerTaskPhase.WORKING:
+                log.info('--- Worker Task %d --- closing rollout...', self.task_rank)
                 # if the previous task is rollout, finish current rollout process and start evaluation
                 # closing experience collection
+                for aw in self.actor_workers:
+                    aw.pause()
+                
+                for align in self.pause_alignments:
+                    align.wait()
+
+                # important! wait for the completion of tail requests in policy workers
+                time.sleep(1)
+
                 for q in itertools.chain(*self.policy_worker_queues):
                     q.put(TaskType.CLOSING_ROLLOUT)
+
+                time.sleep(0.1)
+                for aw in self.actor_workers:
+                    aw.start_rollout()
 
                 self.stop_experience_collection_cond.acquire()
                 while self.stop_experience_collection_cnt.sum() < self.cfg.num_splits * self.num_actors:
@@ -428,6 +444,8 @@ class WorkerTask:
             log.info('--- Worker Task %d --- prepares for evaluation...', self.task_rank)
             for q in itertools.chain(*self.policy_worker_queues):
                 q.put(TaskType.EVALUATION)
+            # important! wait for task change of policy workers
+            time.sleep(0.1)
 
             for actor in self.actor_workers:
                 actor.request_eval()
@@ -440,7 +458,6 @@ class WorkerTask:
                 except Empty:
                     break
 
-            # TODO: we may wait evaluation finish outside this function
             self.eval_finish_event.wait()
 
             with self.buffer.env_summary_lock:
@@ -467,11 +484,16 @@ class WorkerTask:
             # TODO: we may need to send policy version for summary
             self.task_result_socket.send_multipart(msg)
 
-            for pw in itertools.chain.from_iterable(self.policy_workers):
-                pw.pause()
-
             for aw in self.actor_workers:
                 aw.pause()
+
+            # important! wait for the completion of tail requests in policy workers
+            time.sleep(1)
+
+            for pw in itertools.chain.from_iterable(self.policy_workers):
+                pw.start_rollout()
+            # important! wait for task change of policy workers
+            time.sleep(0.1)
 
             self.phase = WorkerTaskPhase.PRIMAL_PAUSE
             log.info('--- Worker Task %d --- evaluation finished!', self.task_rank)

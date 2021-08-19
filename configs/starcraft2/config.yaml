@@ -2,9 +2,9 @@ project_name: scaling
 group_name: performance_benchmark
 algorithm_name: rmappo
 env_name: StarCraft2
-map_name: 27m_vs_30m
+map_name: 3m
 user_name: garrett4wade
-experiment_name: benchmark_27m_vs_30m_eval
+experiment_name: stability_3m
 benchmark: false
 cuda: true
 cuda_deterministic: true
@@ -14,8 +14,8 @@ use_wandb: true
 use_eval: true
 use_render: false
 
-num_env_steps: 200000000
-train_for_env_steps: 200000000
+num_env_steps: 400000000
+train_for_env_steps: 400000000
 train_for_seconds: 10000000000000000
 model_dir: null
 save_dir: './models'
@@ -23,7 +23,7 @@ summary_dir: './logs'
 
 # system parameters
 num_policies: 1
-num_tasks_per_node: 2
+num_tasks_per_node: 4
 learner_config:
   "0":
     "0": 0
@@ -35,30 +35,30 @@ policy2agents:
     - 0
     - 1
     - 2
-    - 3
-    - 4
-    - 5
-    - 6
-    - 7
-    - 8
-    - 9
-    - 10
-    - 11
-    - 12
-    - 13
-    - 14
-    - 15
-    - 16
-    - 17
-    - 18
-    - 19
-    - 20
-    - 21
-    - 22
-    - 23
-    - 24
-    - 25
-    - 26
+    # - 3
+    # - 4
+    # - 5
+    # - 6
+    # - 7
+    # - 8
+    # - 9
+    # - 10
+    # - 11
+    # - 12
+    # - 13
+    # - 14
+    # - 15
+    # - 16
+    # - 17
+    # - 18
+    # - 19
+    # - 20
+    # - 21
+    # - 22
+    # - 23
+    # - 24
+    # - 25
+    # - 26
 ddp_init_methods:
   - tcp://10.0.4.6:6666
 task_dispatcher_addr: tcp://10.0.4.6:8887
@@ -67,7 +67,7 @@ model_weights_addrs:  # every learner has a model_weights_addr and len(model_wei
   - tcp://10.0.4.6:8889
 seg_addrs:  # every worker node has seg_addrs connecting to all learners
   - - tcp://10.0.4.6:12346
-num_actors: 48
+num_actors: 128
 actor_group_size: 1
 envs_per_actor: 2
 min_num_requests: -1

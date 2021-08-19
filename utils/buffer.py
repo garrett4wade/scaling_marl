@@ -531,6 +531,8 @@ class SharedPolicyMixin(PolicyMixin):
             old_closure_slot_ids = prev_slot_ids[closure_choose]
 
             valid_choose = np.logical_not(closure_choose) if pause else np.ones(closure_choose.shape, dtype=np.bool)
+            # if pause and np.any(closure_choose):
+            #     print('closure clients: {}'.format(client_ids[closure_choose]))
 
             # advance 1 timestep
             self._ep_step[client_ids[valid_choose]] += 1
@@ -543,6 +545,7 @@ class SharedPolicyMixin(PolicyMixin):
                 if not pause:
                     self._allocate_many(opening_clients)
                 else:
+                    # print('opening clients: {}'.format(opening_clients))
                     # reset slot_indices and destinations if ready to pause
                     self._destination[slot_ids[opening_choose]] = -1
                     self._prev_slot_indices[opening_clients] = self._slot_indices[opening_clients]

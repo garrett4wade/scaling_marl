@@ -220,6 +220,7 @@ class PolicyWorker:
                 for i, (split_idx, group_idx) in enumerate(organized_requests):
                     if (self.buffer.policy_id == self.policy_id and self.phase == PolicyWorkerPhase.CLOSING
                             and not valid_choose[i]):
+                        # print("stop action copy: {}".format(self.request_clients[i]))
                         with self.stop_experience_collection_cond:
                             # if in the closing phase current buffer slot is filled, ignore copying action to actors,
                             # stop actor experience collection, and prepare to reset actors for evaluation
