@@ -18,6 +18,7 @@ class Reanalyzer:
         gpu_rank,
         buffer,
         value_tracer_queue,
+        batch_queue,
         task_queue,
         shm_state_dict,
         trainer_policy_version,
@@ -55,6 +56,7 @@ class Reanalyzer:
             assert v.is_shared()
         self.param_lock = param_lock
 
+        self.batch_queue = batch_queue
         self.task_queue = task_queue
 
         self.initialized = self.terminate = False
@@ -80,23 +82,29 @@ class Reanalyzer:
         log.debug('Reanalyzer {} of trainer {} waiting for all nodes ready...'.format(
             self.replicate_rank, self.trainer_idx))
 
-        self.maybe_update_weights(timing)
+        with self.param_lock.r_locked():
+            with timing.time_avg('update_weights/load_state_dict_once'):
+                self.policy.load_state_dict(self.shm_state_dict)
+                self.local_policy_version = self.trainer_policy_version.item()
+
+            log.info('Reanalyzer %d of trainer %d --- Update to policy version %d', self.replicate_rank,
+                    self.trainer_idx, self.local_policy_version)
         self.initialized = True
 
     def maybe_update_weights(self, timing):
-        if self.local_policy_version < self.trainer_policy_version:
-            with self.param_lock.r_locked():
+        with self.param_lock.r_locked():
+            if self.local_policy_version + self.cfg.sample_reuse * self.cfg.broadcast_interval <= self.trainer_policy_version:
                 with timing.time_avg('update_weights/load_state_dict_once'):
                     self.policy.load_state_dict(self.shm_state_dict)
                     self.local_policy_version = self.trainer_policy_version.item()
 
-            if self.local_policy_version % 100 == 0:
                 log.info('Reanalyzer %d of trainer %d --- Update to policy version %d', self.replicate_rank,
-                         self.trainer_idx, self.local_policy_version)
+                        self.trainer_idx, self.local_policy_version)
 
     @torch.no_grad()
     def reanalyze_step(self, slot_id, timing):
-        self.maybe_update_weights(timing)
+        if self.cfg.use_reanalyze:
+            self.maybe_update_weights(timing)
 
         with timing.add_time('burn_in'):
             # you can also conduct burn-in like in R2D2 here
@@ -139,18 +147,25 @@ class Reanalyzer:
 
         timing = Timing()
 
+        # this minimal requirement ensures there are at most 1 slot per tracer in the queue
+        # waiting for trace computation
+        min_num_waiting_slots = self.cfg.num_value_tracers_per_trainer
+        # waiting in queues + # reanalyzer + # tracer + 1 in trainer + 1 readable + 1 being written
+        assert min_num_waiting_slots + self.cfg.num_value_tracers_per_trainer + self.cfg.num_reanalyzers_per_trainer + 2 < self.cfg.qsize, 'please increase qsize!'
+
         self._init(timing)
 
         try:
             while not self.terminate:
 
-                with timing.add_time('wait_for_batch'):
-                    slot_id = self.buffer.get(timeout=0.5)
+                if self.value_tracer_queue.qsize() + self.batch_queue.qsize() < min_num_waiting_slots:
+                    with timing.add_time('wait_for_batch'):
+                        slot_id = self.buffer.get(timeout=0.5)
 
-                if slot_id is not None:
-                    self.reanalyze_step(slot_id, timing)
+                    if slot_id is not None:
+                        self.reanalyze_step(slot_id, timing)
 
-                    self.value_tracer_queue.put(slot_id)
+                        self.value_tracer_queue.put(slot_id)
 
                 with timing.add_time('get_tasks'):
                     try:

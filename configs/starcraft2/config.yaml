@@ -2,14 +2,14 @@ project_name: scaling
 group_name: performance_benchmark
 algorithm_name: rmappo
 env_name: StarCraft2
-map_name: 3m
+map_name: 27m_vs_30m
 user_name: garrett4wade
-experiment_name: stability_3m
+experiment_name: stability_27m_vs_30m
 benchmark: false
 cuda: true
 cuda_deterministic: true
 seed: 1
-no_summary: true
+no_summary: false
 use_wandb: true
 use_eval: true
 use_render: false
@@ -22,12 +22,12 @@ save_dir: './models'
 summary_dir: './logs'
 
 # system parameters
-num_tasks_per_node: 1
-num_actors: 24
+num_tasks_per_node: 2
+num_actors: 128
 actor_group_size: 1
 envs_per_actor: 2
 num_policy_workers: 4
-qsize: 8
+qsize: 12
 min_num_requests: -1
 
 ddp_init_methods:
@@ -40,8 +40,8 @@ seg_addrs:  # every worker node has seg_addrs connecting to all learners
   - - tcp://10.0.4.20:12346
 
 num_reanalyzers_per_trainer: 1
-num_value_tracers_per_trainer: 1
-slots_per_update: 16
+num_value_tracers_per_trainer: 4
+slots_per_update: 48
 episode_length: 400
 
 learner_config:
@@ -56,30 +56,30 @@ policy2agents:
     - 0
     - 1
     - 2
-    # - 3
-    # - 4
-    # - 5
-    # - 6
-    # - 7
-    # - 8
-    # - 9
-    # - 10
-    # - 11
-    # - 12
-    # - 13
-    # - 14
-    # - 15
-    # - 16
-    # - 17
-    # - 18
-    # - 19
-    # - 20
-    # - 21
-    # - 22
-    # - 23
-    # - 24
-    # - 25
-    # - 26
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    - 25
+    - 26
 
 # fixed system parameters
 num_splits: 2

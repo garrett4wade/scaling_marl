@@ -156,7 +156,7 @@ class ReplayBuffer:
     @property
     def utilization(self):
         with self._read_ready:
-            available_slots = np.sum(self._is_readable).item()
+            available_slots = np.sum(self._is_readable + self._is_being_read).item()
         return available_slots / self.num_slots
 
     def get(self, block=True, timeout=None, reduce_fn=lambda x: x[0]):

@@ -97,13 +97,15 @@ class ValueHead(nn.Module):
 
     @torch.no_grad()
     def denormalize(self, x):
+        # there exists some problem when computation is conducted on torch.Tensor
+        # since denormalization is only invoked on CPU, we use NumPy array here
         np_input = isinstance(x, np.ndarray)
-        x = torch.from_numpy(x) if np_input else x
+        x = x if np_input else x.numpy()
         assert x.shape[-1:] == self.mean.shape, (
             "trailing dimensions of the input vector " + "are expected to be {} ".format(self.mean.shape) +
             "while the input vector has shape {}".format(x.shape[-1:]))
 
         mean, var = self.debiased_mean_var()
-        out = x * torch.sqrt(var) + mean
+        out = x * np.sqrt(var.numpy()) + mean.numpy()
 
-        return out.numpy() if np_input else out
+        return out if np_input else torch.from_numpy(out)

@@ -171,6 +171,7 @@ def main():
                 trainer.gpu_rank,
                 trainer.buffer,
                 trainer.value_tracer_queue,
+                trainer.batch_queue,
                 trainer.reanalyzer_task_queues[i],
                 shm_state_dicts[t_i],
                 trainer.policy_version,

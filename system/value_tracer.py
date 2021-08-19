@@ -22,7 +22,7 @@ class ValueTracer:
         replicate_rank,
         buffer,
         value_tracer_queue,
-        trainer_queue,
+        batch_queue,
         task_queue,
         shm_state_dict,
         trainer_policy_version,
@@ -39,7 +39,7 @@ class ValueTracer:
         # to receive reanalyzed data
         self.value_tracer_queue = value_tracer_queue
         # to send data to trainer after computing trace
-        self.trainer_queue = trainer_queue
+        self.batch_queue = batch_queue
 
         self.gamma = float32(self.cfg.gamma)
         self.lmbda = float32(self.cfg.gae_lambda)
@@ -72,20 +72,27 @@ class ValueTracer:
         log.debug('Value Tracer {} of trainer {} waiting for all nodes ready...'.format(
             self.replicate_rank, self.trainer_idx))
 
-        self.maybe_update_weights(timing)
+        with self.param_lock.r_locked():
+            with timing.time_avg('update_weights/load_state_dict_once'):
+                subset = {k.split('.')[-1]: v for k, v in self.shm_state_dict.items() if k.split('.')[-1] in self.state_dict_keys}
+                self.value_normalizer.load_state_dict(subset)
+                self.local_policy_version = self.trainer_policy_version.item()
+
+            log.info('Value Tracer %d of trainer %d --- Update to policy version %d', self.replicate_rank,
+                    self.trainer_idx, self.local_policy_version)
+
         self.initialized = True
 
     def maybe_update_weights(self, timing):
-        if self.local_policy_version < self.trainer_policy_version:
-            with self.param_lock.r_locked():
+        with self.param_lock.r_locked():
+            if self.local_policy_version + self.cfg.sample_reuse * self.cfg.broadcast_interval <= self.trainer_policy_version:
                 with timing.time_avg('update_weights/load_state_dict_once'):
                     subset = {k.split('.')[-1]: v for k, v in self.shm_state_dict.items() if k.split('.')[-1] in self.state_dict_keys}
                     self.value_normalizer.load_state_dict(subset)
                     self.local_policy_version = self.trainer_policy_version.item()
 
-            if self.local_policy_version % 100 == 0:
                 log.info('Value Tracer %d of trainer %d --- Update to policy version %d', self.replicate_rank,
-                         self.trainer_idx, self.local_policy_version)
+                        self.trainer_idx, self.local_policy_version)
 
     @torch.no_grad()
     def trace_step(self, slot_id, timing):
@@ -131,7 +138,7 @@ class ValueTracer:
                 if slot_id is not None:
                     self.trace_step(slot_id, timing)
 
-                    self.trainer_queue.put(slot_id)
+                    self.batch_queue.put(slot_id)
 
                 with timing.add_time('get_tasks'):
                     try:
