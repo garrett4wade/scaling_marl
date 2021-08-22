@@ -2,8 +2,8 @@ import gym
 from gym.spaces import Discrete, MultiDiscrete, Tuple
 import numpy as np
 from mujoco_worldgen.util.rotation import mat2quat
-from onpolicy.envs.hns.wrappers.util import update_obs_space
-from onpolicy.envs.hns.util.geometry import dist_pt_to_cuboid
+from envs.hns.wrappers.util import update_obs_space
+from envs.hns.util.geometry import dist_pt_to_cuboid
 from copy import deepcopy
 from itertools import compress
 

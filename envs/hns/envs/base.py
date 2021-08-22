@@ -1,12 +1,12 @@
 import numpy as np
 import logging
 from mujoco_worldgen import Floor, WorldBuilder, WorldParams, Env
-from onpolicy.envs.hns.wrappers.multi_agent import (SplitMultiAgentActions, SplitObservations, SelectKeysWrapper)
-from onpolicy.envs.hns.wrappers.util import DiscretizeActionWrapper, DiscardMujocoExceptionEpisodes
-from onpolicy.envs.hns.wrappers.line_of_sight import AgentAgentObsMask2D
-from onpolicy.envs.hns.modules.agents import Agents
-from onpolicy.envs.hns.modules.walls import RandomWalls
-from onpolicy.envs.hns.modules.objects import Boxes, Ramps
+from envs.hns.wrappers.multi_agent import (SplitMultiAgentActions, SplitObservations, SelectKeysWrapper)
+from envs.hns.wrappers.util import DiscretizeActionWrapper, DiscardMujocoExceptionEpisodes
+from envs.hns.wrappers.line_of_sight import AgentAgentObsMask2D
+from envs.hns.modules.agents import Agents
+from envs.hns.modules.walls import RandomWalls
+from envs.hns.modules.objects import Boxes, Ramps
 
 
 class Base(Env):

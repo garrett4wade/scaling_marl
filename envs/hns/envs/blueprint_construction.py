@@ -1,21 +1,21 @@
 import numpy as np
 import gym
-from onpolicy.envs.hns.wrappers.multi_agent import (SplitMultiAgentActions, SplitObservations, SelectKeysWrapper)
-from onpolicy.envs.hns.wrappers.util import (DiscretizeActionWrapper, MaskActionWrapper, DiscardMujocoExceptionEpisodes,
-                                             SpoofEntityWrapper, AddConstantObservationsWrapper, ConcatenateObsWrapper,
-                                             NumpyArrayRewardWrapper)
-from onpolicy.envs.hns.wrappers.manipulation import (GrabObjWrapper, GrabClosestWrapper, TimeWrapper, LockObjWrapper,
-                                                     LockAllWrapper)
-from onpolicy.envs.hns.wrappers.lidar import Lidar
-from onpolicy.envs.hns.wrappers.team import TeamMembership
-from onpolicy.envs.hns.wrappers.line_of_sight import AgentAgentObsMask2D, AgentGeomObsMask2D
-from onpolicy.envs.hns.envs.base import Base
-from onpolicy.envs.hns.modules.agents import Agents, AgentManipulation
-from onpolicy.envs.hns.modules.construction_sites import ConstructionSites
-from onpolicy.envs.hns.modules.walls import WallScenarios, RandomWalls
-from onpolicy.envs.hns.modules.objects import Boxes, LidarSites
-from onpolicy.envs.hns.modules.world import FloorAttributes, WorldConstants
-from onpolicy.envs.hns.modules.util import (uniform_placement, center_placement, uniform_placement_middle)
+from envs.hns.wrappers.multi_agent import (SplitMultiAgentActions, SplitObservations, SelectKeysWrapper)
+from envs.hns.wrappers.util import (DiscretizeActionWrapper, MaskActionWrapper, DiscardMujocoExceptionEpisodes,
+                                    SpoofEntityWrapper, AddConstantObservationsWrapper, ConcatenateObsWrapper,
+                                    NumpyArrayRewardWrapper)
+from envs.hns.wrappers.manipulation import (GrabObjWrapper, GrabClosestWrapper, TimeWrapper, LockObjWrapper,
+                                            LockAllWrapper)
+from envs.hns.wrappers.lidar import Lidar
+from envs.hns.wrappers.team import TeamMembership
+from envs.hns.wrappers.line_of_sight import AgentAgentObsMask2D, AgentGeomObsMask2D
+from envs.hns.envs.base import Base
+from envs.hns.modules.agents import Agents, AgentManipulation
+from envs.hns.modules.construction_sites import ConstructionSites
+from envs.hns.modules.walls import WallScenarios, RandomWalls
+from envs.hns.modules.objects import Boxes, LidarSites
+from envs.hns.modules.world import FloorAttributes, WorldConstants
+from envs.hns.modules.util import (uniform_placement, center_placement, uniform_placement_middle)
 
 
 class ConstructionDistancesWrapper(gym.ObservationWrapper):

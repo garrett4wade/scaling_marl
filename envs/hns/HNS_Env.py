@@ -1,6 +1,6 @@
 import numpy as np
 from functools import reduce
-from onpolicy.utils.multi_discrete import MultiDiscrete
+from utils.multi_discrete import MultiDiscrete
 from .envs.box_locking import BoxLockingEnv
 from .envs.blueprint_construction import BlueprintConstructionEnv
 from .envs.hide_and_seek import HideAndSeekEnv

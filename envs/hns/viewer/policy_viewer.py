@@ -5,7 +5,7 @@ import numpy as np
 from operator import itemgetter
 from mujoco_py import const, MjViewer
 from mujoco_worldgen.util.types import store_args
-from onpolicy.envs.hns.ma_policy.util import listdict2dictnp
+from envs.hns.ma_policy.util import listdict2dictnp
 # import pdb
 import torch
 
