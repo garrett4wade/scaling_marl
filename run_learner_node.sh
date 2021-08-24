@@ -6,7 +6,7 @@ rm -rf core.* && sleep 0.5
 rm -rf /dev/shm/* && sleep 0.5
 rm -rf /tmp/* && sleep 0.5
 
-config="configs/starcraft2/config.yaml"
+config="configs/hns/config.yaml"
 python run_learner_node.py --config ${config} --learner_node_idx $1
 
 pkill -9 Main_Thread && sleep 0.5
