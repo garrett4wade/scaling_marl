@@ -6,7 +6,6 @@ from queue import Empty
 from algorithms.registries import get_ppo_storage_specs, to_numpy_type, ENV_SUMMARY_KEYS
 from utils.utils import log
 from algorithms.utils.transforms import flatten, to_chunk
-from utils.popart import PopArt
 
 
 class ReplayBuffer:
@@ -335,13 +334,6 @@ class LearnerBuffer(ReplayBuffer):
 
         self.gamma = np.float32(cfg.gamma)
         self.lmbda = np.float32(cfg.gae_lambda)
-
-        # popart
-        self._use_popart = cfg.use_popart
-        if self._use_popart:
-            self.value_normalizer = PopArt((1, ), self.num_trainers)
-        else:
-            self.value_normalizer = None
 
         self._use_advantage_normalization = cfg.use_advantage_normalization
         self._use_recurrent_policy = cfg.use_recurrent_policy
