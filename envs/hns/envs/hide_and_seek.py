@@ -228,12 +228,7 @@ def nearwall_placement(grid, obj_size, metadata, random_state):
     return poses[random_state.randint(0, 2)]
 
 
-def make_env(args):
-    return HideAndSeekEnv(args)
-
-
-def HideAndSeekEnv(args,
-                   n_substeps=15,
+def HideAndSeekEnv(n_substeps=15,
                    horizon=80,
                    deterministic_mode=True,
                    floor_size=6.0,
@@ -292,14 +287,6 @@ def HideAndSeekEnv(args,
                    food_normal_centered=False,
                    food_box_centered=False,
                    n_food_cluster=1):
-
-    scenario = args.scenario_name
-    n_seekers = args.num_seekers
-    n_hiders = args.num_hiders
-    n_boxes = args.num_boxes
-    n_ramps = args.num_ramps
-    n_food = args.num_food
-    floor_size = args.floor_size
 
     grab_radius_multiplier = lock_grab_radius / box_size
     lock_radius_multiplier = lock_grab_radius / box_size
@@ -425,7 +412,7 @@ def HideAndSeekEnv(args,
         env.add_module(FloorAttributes(friction=box_floor_friction))
     env.add_module(WorldConstants(gravity=gravity))
     env.reset()
-    keys_self = ['agent_qpos_qvel', 'hider', 'prep_obs', 'current_step', 'vector_door_obs']
+    keys_self = ['agent_qpos_qvel', 'hider', 'prep_obs', 'current_step']  # , 'vector_door_obs']
     keys_mask_self = ['mask_aa_obs']
     keys_external = ['agent_qpos_qvel']
     keys_copy = ['you_lock', 'team_lock', 'ramp_you_lock', 'ramp_team_lock']
@@ -515,24 +502,24 @@ def HideAndSeekEnv(args,
                                  ['mask_ab_obs'])
     if n_food:
         env = SpoofEntityWrapper(env, n_food, ['food_obs'], ['mask_af_obs'])
-    keys_mask_external += ['mask_ab_obs_spoof', 'mask_af_obs_spoof']
+    keys_mask_external += ['mask_ab_obs_spoof', 'mask_af_obs_spoof', 'mask_aa_obs_spoof']
     if max_n_agents is not None:
         env = SpoofEntityWrapper(env, max_n_agents, ['agent_qpos_qvel', 'hider', 'prep_obs'], ['mask_aa_obs'])
     env = LockAllWrapper(env, remove_object_specific_lock=True)
-    if not grab_out_of_vision and grab_box and n_boxes > 0:
+    if not grab_out_of_vision and grab_box and np.max(n_boxes) > 0:
         env = MaskActionWrapper(env, 'action_pull', ['mask_ab_obs'] + (['mask_ar_obs'] if n_ramps > 0 else []))
-    if not grab_selective and grab_box and n_boxes > 0:
+    if not grab_selective and grab_box and np.max(n_boxes) > 0:
         env = GrabClosestWrapper(env)
     env = NoActionsInPrepPhase(env, np.arange(n_hiders, n_hiders + n_seekers))
     env = DiscardMujocoExceptionEpisodes(env, n_hiders + n_seekers)
-    if n_boxes > 0 and n_ramps > 0:
+    if np.max(n_boxes) > 0 and n_ramps > 0:
         env = ConcatenateObsWrapper(
             env, {
                 'agent_qpos_qvel': ['agent_qpos_qvel', 'hider', 'prep_obs'],
                 'box_obs': ['box_obs', 'you_lock', 'team_lock', 'obj_lock'],
                 'ramp_obs': ['ramp_obs'] + (['ramp_you_lock', 'ramp_team_lock', 'ramp_obj_lock'] if lock_ramp else [])
             })
-    elif n_boxes > 0:
+    elif np.max(n_boxes) > 0:
         env = ConcatenateObsWrapper(
             env, {
                 'agent_qpos_qvel': ['agent_qpos_qvel', 'hider', 'prep_obs'],

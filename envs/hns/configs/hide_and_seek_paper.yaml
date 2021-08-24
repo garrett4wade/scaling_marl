@@ -1,0 +1,18 @@
+horizon: 240
+max_n_agents: 5
+n_boxes:
+  - 3
+  - 9
+n_ramps: 2
+n_elongated_boxes:
+  - 3
+  - 9
+rew_type: 'joint_zero_sum'
+lock_box: true
+grab_box: true
+lock_ramp: true
+lock_type: 'all_lock_team_specific'
+scenario: 'randomwalls'
+n_lidar_per_agent: 30
+visualize_lidar: false
+prep_fraction: 0.4

@@ -1,6 +1,5 @@
 .vscode
 *__pycache__*
-core.*
 *log*
 *wandb*
 models/*
