@@ -21,7 +21,6 @@ class ValueHead(nn.Module):
         self.weight = nn.Parameter(torch.Tensor(output_dim, input_dim))
         self.bias = nn.Parameter(torch.Tensor(output_dim))
 
-        self.stddev = nn.Parameter(torch.ones(output_dim), requires_grad=False)
         self.mean = nn.Parameter(torch.zeros(output_dim), requires_grad=False)
         self.mean_sq = nn.Parameter(torch.zeros(output_dim), requires_grad=False)
         self.debiasing_term = nn.Parameter(torch.zeros(1), requires_grad=False)
@@ -35,7 +34,6 @@ class ValueHead(nn.Module):
             return init(m, init_method, lambda x: nn.init.constant_(x, 0))
 
         init_(self)
-        self.stddev.zero_().add_(1)
         self.mean.zero_()
         self.mean_sq.zero_()
         self.debiasing_term.zero_()
@@ -59,7 +57,8 @@ class ValueHead(nn.Module):
         x = torch.from_numpy(x) if isinstance(x, np.ndarray) else x
         reduce_axes = len(x.shape) - 1
 
-        old_mean, old_stddev = self.mean.data.clone(), self.stddev.data.clone()
+        old_mean, old_var = self.debiased_mean_var()
+        old_std = old_var.sqrt()
 
         batch_mean = x.mean(dim=tuple(range(reduce_axes))) / dist.get_world_size()
         batch_sq_mean = x.square().mean(dim=tuple(range(reduce_axes))) / dist.get_world_size()
@@ -70,10 +69,11 @@ class ValueHead(nn.Module):
         self.mean_sq.mul_(self.beta).add_(batch_sq_mean * (1.0 - self.beta))
         self.debiasing_term.mul_(self.beta).add_(1.0 * (1.0 - self.beta))
 
-        self.stddev.data[:] = (self.mean_sq - self.mean**2).sqrt().clamp(min=1e-4)
+        new_mean, new_var = self.debiased_mean_var()
+        new_std = new_var.sqrt()
 
-        self.weight.data[:] = self.weight * old_stddev / self.stddev
-        self.bias.data[:] = (old_stddev * self.bias + old_mean - self.mean) / self.stddev
+        self.weight.data[:] = self.weight * old_std / new_std
+        self.bias.data[:] = (old_std * self.bias + old_mean - new_mean) / new_std
 
     @torch.no_grad()
     def debiased_mean_var(self):

@@ -1,10 +1,10 @@
 project_name: scaling
-group_name: performance_benchmark
+group_name: stable_performance_benchmark
 algorithm_name: rmappo
 env_name: StarCraft2
 map_name: 27m_vs_30m
 user_name: garrett4wade
-experiment_name: stability_27m_vs_30m
+experiment_name: full_popart_27m_vs_30m
 benchmark: false
 cuda: true
 cuda_deterministic: true
@@ -22,8 +22,8 @@ save_dir: './models'
 summary_dir: './logs'
 
 # system parameters
-num_tasks_per_node: 2
-num_actors: 128
+num_tasks_per_node: 1
+num_actors: 24
 actor_group_size: 1
 envs_per_actor: 2
 num_policy_workers: 4
