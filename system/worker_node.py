@@ -9,8 +9,7 @@ from system.transmitter import Transmitter
 from system.worker_task import WorkerTask
 from utils.buffer import SharedWorkerBuffer
 from utils.timing import Timing
-from utils.utils import (log, set_global_cuda_envvars, RWLock, assert_same_act_dim, assert_same_obs_shape,
-                         get_shape_from_act_space, get_obs_shapes_from_spaces)
+from utils.utils import (log, set_global_cuda_envvars, RWLock, assert_same_act_dim, get_shape_from_act_space)
 
 # TODO: import other type of policies for other algorithms
 from algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
@@ -45,7 +44,7 @@ class WorkerNode:
         num_agents = len(self.cfg.policy2agents[str(policy_id)])
         # shared memory allocation
         buffer = SharedWorkerBuffer(self.cfg, policy_id, num_agents, self.cfg.observation_space[policy_id],
-                                    self.cfg.share_observation_space[policy_id], self.cfg.action_space[policy_id])
+                                    self.cfg.action_space[policy_id])
 
         envs_per_split = self.cfg.envs_per_actor // self.cfg.num_splits
         num_actors_per_task = self.cfg.num_actors // self.cfg.num_tasks_per_node
@@ -55,7 +54,9 @@ class WorkerNode:
         # TODO: initialize env step outputs using config
         # following is just the case of StarCraft2 (policy-sharing environments)
         envstep_output_keys = [
-            'obs', 'share_obs', 'rewards', 'available_actions', 'fct_masks', 'rnn_states', 'rnn_states_critic'
+            'observation_self', 'lidar', 'agent_qpos_qvel', 'box_obs', 'ramp_obs', 'mask_aa_obs', 'mask_ab_obs',
+            'mask_ar_obs', 'mask_aa_obs_spoof', 'mask_ab_obs_spoof', 'mask_ar_obs_spoof', 'rewards',
+            'available_actions', 'fct_masks', 'rnn_states', 'rnn_states_critic'
         ]
 
         # actor workers consume actions and produce envstep_outputs in one shot (in env.step),
@@ -83,22 +84,13 @@ class WorkerNode:
             act_semaphores.append([[mp.Semaphore(0) for _ in range(self.cfg.num_splits)]
                                    for _ in range(num_actors_per_task)])
 
-            assert_same_obs_shape(controlled_agents, self.cfg.observation_space, self.cfg.share_observation_space)
-            obs_shape, share_obs_shape = get_obs_shapes_from_spaces(
-                self.cfg.observation_space[controlled_agents[0]],
-                self.cfg.share_observation_space[controlled_agents[0]])
             num_agents = len(controlled_agents)
 
             for k in envstep_output_keys:
                 if not hasattr(buffer, k):
                     continue
 
-                if k == 'obs':
-                    shape = obs_shape
-                elif k == 'share_obs':
-                    shape = share_obs_shape
-                else:
-                    shape = getattr(buffer, k).shape[4:]
+                shape = getattr(buffer, k).shape[4:]
                 shape = (envs_per_split * self.cfg.actor_group_size, num_agents, *shape)
 
                 envstep_output_shms[k].append([[
@@ -175,7 +167,6 @@ class WorkerNode:
                 example_agent = self.cfg.policy2agents[str(policy_id)][0]
 
                 example_policy = Policy(torch.device('cpu'), self.cfg, self.cfg.observation_space[example_agent],
-                                        self.cfg.share_observation_space[example_agent],
                                         self.cfg.action_space[example_agent], False)
                 self.local_ps[policy_id] = {
                     k: v.detach().share_memory_()

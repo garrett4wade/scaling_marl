@@ -21,6 +21,28 @@ def _t2n(x):
     return x.detach().cpu().numpy()
 
 
+def recurrent_apply(d, fn):
+    for k, v in d.items():
+        if isinstance(v, dict):
+            recurrent_apply(v, fn)
+        else:
+            d[k] = fn(v)
+
+
+def flatten_recurrent(d):
+    result = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            tmp = flatten_recurrent(v)
+            for k in result.keys():
+                assert k not in tmp, k
+            result = {**result, **tmp}
+        else:
+            assert k not in result.keys(), k
+            result[k] = v
+    return result
+
+
 class PolicyWorkerPhase:
     ROLLOUT, CLOSING, EVALUATION, PAUSE = range(4)
 
@@ -33,7 +55,6 @@ class PolicyWorker:
         task_rank,
         replicate_rank,
         obs_space,
-        share_obs_space,
         action_space,
         buffer,
         task_queue,
@@ -64,7 +85,6 @@ class PolicyWorker:
         self.tpdv = dict(device=torch.device(0), dtype=torch.float32)
 
         self.obs_space = obs_space
-        self.share_obs_space = share_obs_space
         self.action_space = action_space
 
         self.num_agents = len(cfg.policy2agents[str(policy_id)])
@@ -135,7 +155,6 @@ class PolicyWorker:
             self.rollout_policy = Policy(0,
                                          self.cfg,
                                          self.obs_space,
-                                         self.share_obs_space,
                                          self.action_space,
                                          is_training=False)
             self.rollout_policy.eval_mode()
@@ -178,21 +197,18 @@ class PolicyWorker:
                 policy_inputs['masks'][:] = 1 - np.all(envstep_outputs['dones'], axis=2, keepdims=True)
 
             with timing.add_time('inference/preprosessing'):
-                shared = policy_inputs['obs'].shape[:3] == (len(organized_requests), self.envs_per_group,
-                                                            self.num_agents)
+                shared = policy_inputs['masks'].shape[:3] == (len(organized_requests), self.envs_per_group,
+                                                              self.num_agents)
                 rollout_bs = len(organized_requests) * self.envs_per_group
                 if shared:
                     # all agents simultaneously advance an environment step, e.g. SMAC and MPE
-                    for k, v in policy_inputs.items():
-                        policy_inputs[k] = v.reshape(rollout_bs * self.num_agents, *v.shape[3:])
+                    recurrent_apply(policy_inputs, lambda x: x.reshape(rollout_bs * self.num_agents, *x.shape[3:]))
                 else:
                     # agent advances an environment step in turn, e.g. card games
-                    for k, v in policy_inputs.items():
-                        policy_inputs[k] = v.reshape(rollout_bs, *v.shape[2:])
+                    recurrent_apply(policy_inputs, lambda x: x.reshape(rollout_bs, *x.shape[2:]))
 
             with timing.add_time('inference/to_device'):
-                for k, v in policy_inputs.items():
-                    policy_inputs[k] = check(v).to(**self.tpdv, non_blocking=True)
+                recurrent_apply(policy_inputs, lambda x: check(x).to(**self.tpdv, non_blocking=True))
 
             with timing.add_time('inference/inference_step'):
                 policy_outputs = self.rollout_policy.get_actions(**policy_inputs,
@@ -202,22 +218,25 @@ class PolicyWorker:
             with timing.add_time('inference/to_cpu_and_postprosessing'):
                 if shared:
                     # all agents simultaneously advance an environment step, e.g. SMAC and MPE
-                    for k, v in policy_outputs.items():
-                        policy_outputs[k] = _t2n(v).reshape(len(self.request_clients), self.envs_per_group,
-                                                            self.num_agents, *v.shape[1:])
+                    recurrent_apply(
+                        policy_outputs, lambda x: _t2n(x).reshape(len(self.request_clients), self.envs_per_group, self.
+                                                                  num_agents, *x.shape[1:]))
                 else:
                     # agent advances an environment step in turn, e.g. card games
-                    for k, v in policy_outputs.items():
-                        policy_outputs[k] = _t2n(v).reshape(len(self.request_clients), self.envs_per_group,
-                                                            *v.shape[1:])
+                    recurrent_apply(
+                        policy_outputs,
+                        lambda x: _t2n(x).reshape(len(self.request_clients), self.envs_per_group, *x.shape[1:]))
 
             with timing.add_time('inference/advance_buffer_indices'):
                 if self.buffer.policy_id == self.policy_id and self.phase != PolicyWorkerPhase.EVALUATION:
-                    insert_data = {k: v for k, v in policy_outputs.items() if 'rnn_states' not in k}
+                    insert_data = {k: v for k, v in flatten_recurrent(policy_outputs).items() if 'rnn_states' not in k}
                     insert_data = {**insert_data, **envstep_outputs}
                     slot_ids, ep_steps, masks, active_masks, valid_choose = self.buffer.advance_indices(
                         timing, self.request_clients, pause=(self.phase == PolicyWorkerPhase.CLOSING), **insert_data)
                     insert_data.pop('dones')
+                    insert_data['masks'] = masks
+                    if active_masks is not None:
+                        insert_data['active_masks'] = active_masks
 
             with timing.add_time('inference/copy_actions'):
                 for i, (split_idx, group_idx) in enumerate(organized_requests):
@@ -260,13 +279,7 @@ class PolicyWorker:
 
             with timing.add_time('inference/insert'):
                 if self.buffer.policy_id == self.policy_id and self.phase != PolicyWorkerPhase.EVALUATION:
-                    self.buffer.insert(timing,
-                                       slot_ids,
-                                       ep_steps,
-                                       valid_choose,
-                                       masks=masks,
-                                       active_masks=active_masks,
-                                       **insert_data)
+                    self.buffer.insert(timing, slot_ids, ep_steps, valid_choose, **insert_data)
 
         self.request_clients = []
         self.total_num_samples += rollout_bs

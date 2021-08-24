@@ -674,11 +674,11 @@ class DummyVecEnv(ShareVecEnv):
                     obs[k][i] = obs_reset[k]
 
         self.actions = None
-        return obs, rews, dones, infos
+        return {'obs': obs, 'rewards': rews, 'dones': dones, 'infos': infos}
 
     def reset(self):
         obs_lis = [env.reset() for env in self.envs]
-        return {k: np.stack([v[k] for v in obs_lis]) for k in obs_lis[0].keys()}
+        return {'obs': {k: np.stack([v[k] for v in obs_lis]) for k in obs_lis[0].keys()}}
 
     def close(self):
         for env in self.envs:

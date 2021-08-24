@@ -11,7 +11,21 @@ from utils.timing import Timing
 from utils.utils import log, memory_consumption_mb, join_or_kill, set_process_cpu_affinity, safe_put, \
     TaskType, set_gpus_for_process, drain_semaphore
 
-from envs.env_wrappers import ShareDummyVecEnv
+from envs.env_wrappers import DummyVecEnv
+
+
+def flatten_recurrent(d):
+    result = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            tmp = flatten_recurrent(v)
+            for k in result.keys():
+                assert k not in tmp, k
+            result = {**result, **tmp}
+        else:
+            assert k not in result.keys(), k
+            result[k] = v
+    return result
 
 
 class ActorWorkerPhase:
@@ -134,7 +148,7 @@ class ActorWorker:
         self.env_runners = []
         for i in range(self.num_splits):
             self.env_runners.append(
-                ShareDummyVecEnv([
+                DummyVecEnv([
                     lambda: self.env_fn(self.worker_idx * self.envs_per_actor + i * self.envs_per_split + j, self.cfg)
                     for j in range(self.envs_per_split)
                 ]))
@@ -167,6 +181,7 @@ class ActorWorker:
             policy_inputs['rewards'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
             policy_inputs['dones'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
             policy_inputs['fct_masks'] = np.ones((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
+            policy_inputs = flatten_recurrent(policy_inputs)
             for k, shms in self.envstep_output_shm.items():
                 # new rnn states is updated after each inference step
                 if 'rnn_states' not in k:
@@ -204,12 +219,12 @@ class ActorWorker:
         env = self.env_runners[split_idx]
 
         with timing.add_time('env_step/simulation'), timing.time_avg('env_step/simulation_avg'):
-            envstep_outputs = env.step(self.act_shm[split_idx])
+            envstep_outputs = flatten_recurrent(env.step(self.act_shm[split_idx]))
             self.debug_ep_steps[split_idx] += 1
 
         with timing.add_time('env_step/copy_outputs'):
             infos = envstep_outputs['infos']
-            force_terminations = np.array([[[agent_info.get('force_termination', 0)] for agent_info in info]
+            force_terminations = np.array([[[info.get('force_termination', 0)] for _ in range(self.num_agents)]
                                            for info in infos])
             envstep_outputs['fct_masks'] = 1 - force_terminations
             for k, shms in self.envstep_output_shm.items():
@@ -233,13 +248,13 @@ class ActorWorker:
                 if self.summary_phase == ActorWorkerPhase.ROLLOUT:
                     with self.buffer.env_summary_lock:
                         for i, sum_key in enumerate(self.env_summary_keys):
-                            self.buffer.summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
+                            self.buffer.summary_block[split_idx, self.summary_offset + env_id, i] = info[sum_key]
                 elif self.summary_phase == ActorWorkerPhase.EVALUATION:
                     with self.eval_summary_lock:
                         if not self.eval_finish_event.is_set():
                             self.eval_episode_cnt += 1
                             for i, sum_key in enumerate(self.env_summary_keys):
-                                self.eval_summary_block[split_idx, self.summary_offset + env_id, i] = info[0][sum_key]
+                                self.eval_summary_block[split_idx, self.summary_offset + env_id, i] = info[sum_key]
                             if self.eval_episode_cnt >= self.cfg.eval_episodes:
                                 self.eval_finish_event.set()
                 else:

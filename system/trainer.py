@@ -46,11 +46,9 @@ class Trainer:
         example_agent = self.cfg.policy2agents[str(self.policy_id)][0]
 
         self.obs_space = self.cfg.observation_space[example_agent]
-        self.share_obs_space = self.cfg.share_observation_space[example_agent]
         self.act_space = self.cfg.action_space[example_agent]
 
-        self.buffer = LearnerBuffer(self.cfg, self.policy_id, self.num_agents, self.obs_space, self.share_obs_space,
-                                    self.act_space)
+        self.buffer = LearnerBuffer(self.cfg, self.policy_id, self.num_agents, self.obs_space, self.act_space)
 
         self.trainer_ready_event = trainer_ready_event
 
@@ -193,7 +191,6 @@ class Trainer:
         self.policy = self.policy_fn(self.gpu_rank,
                                      self.cfg,
                                      self.obs_space,
-                                     self.share_obs_space,
                                      self.act_space,
                                      is_training=True)
         self.policy.train_mode()

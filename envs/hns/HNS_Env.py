@@ -36,7 +36,6 @@ class HNSEnv:
 
         self.action_space = []
         self.observation_space = []
-        self.share_observation_space = []
         self.action_movement_dim = []
 
         for agent_id in range(self.num_agents):
@@ -65,6 +64,10 @@ class HNSEnv:
                     space = tuple(self.env.observation_space[key].shape)
                     obs_space[key] = (1, *space) if len(space) < 2 else tuple(space)
             self.observation_space.append(obs_space)
+
+        while len(self.action_space) < self.max_n_agents:
+            self.action_space.append(self.action_space[0])
+            self.observation_space.append(self.observation_space[0])
 
     def seed(self, seed=None):
         if seed is None:
@@ -115,8 +118,9 @@ class HNSEnv:
 
         info['force_termination'] = info.get('discard_episode', False)
         rewards = np.append(rewards, np.zeros((self.max_n_agents - self.num_agents), dtype=np.float32))
+        dones = np.array([[done] for _ in range(self.max_n_agents)], dtype=np.float32)
 
-        return self._pad_agent(dict_obs), rewards, done, info
+        return self._pad_agent(dict_obs), rewards, dones, info
 
     def close(self):
         self.env.close()

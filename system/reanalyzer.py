@@ -37,7 +37,6 @@ class Reanalyzer:
         example_agent = self.cfg.policy2agents[str(self.policy_id)][0]
 
         self.obs_space = self.cfg.observation_space[example_agent]
-        self.share_obs_space = self.cfg.share_observation_space[example_agent]
         self.act_space = self.cfg.action_space[example_agent]
 
         from algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
@@ -71,12 +70,7 @@ class Reanalyzer:
         torch.cuda.set_device(self.gpu_rank)
 
         # policy network
-        self.policy = self.policy_fn(self.gpu_rank,
-                                     self.cfg,
-                                     self.obs_space,
-                                     self.share_obs_space,
-                                     self.act_space,
-                                     is_training=False)
+        self.policy = self.policy_fn(self.gpu_rank, self.cfg, self.obs_space, self.act_space, is_training=False)
         self.policy.eval_mode()
 
         log.debug('Reanalyzer {} of trainer {} waiting for all nodes ready...'.format(
@@ -88,18 +82,19 @@ class Reanalyzer:
                 self.local_policy_version = self.trainer_policy_version.item()
 
             log.info('Reanalyzer %d of trainer %d --- Update to policy version %d', self.replicate_rank,
-                    self.trainer_idx, self.local_policy_version)
+                     self.trainer_idx, self.local_policy_version)
         self.initialized = True
 
     def maybe_update_weights(self, timing):
         with self.param_lock.r_locked():
-            if self.local_policy_version + self.cfg.sample_reuse * self.cfg.broadcast_interval <= self.trainer_policy_version:
+            if (self.local_policy_version + self.cfg.sample_reuse * self.cfg.broadcast_interval <=
+                    self.trainer_policy_version):
                 with timing.time_avg('update_weights/load_state_dict_once'):
                     self.policy.load_state_dict(self.shm_state_dict)
                     self.local_policy_version = self.trainer_policy_version.item()
 
                 log.info('Reanalyzer %d of trainer %d --- Update to policy version %d', self.replicate_rank,
-                        self.trainer_idx, self.local_policy_version)
+                         self.trainer_idx, self.local_policy_version)
 
     @torch.no_grad()
     def reanalyze_step(self, slot_id, timing):
@@ -151,7 +146,8 @@ class Reanalyzer:
         # waiting for trace computation
         min_num_waiting_slots = self.cfg.num_value_tracers_per_trainer
         # waiting in queues + # reanalyzer + # tracer + 1 in trainer + 1 readable + 1 being written
-        assert min_num_waiting_slots + self.cfg.num_value_tracers_per_trainer + self.cfg.num_reanalyzers_per_trainer + 2 < self.cfg.qsize, 'please increase qsize!'
+        assert (min_num_waiting_slots + self.cfg.num_value_tracers_per_trainer + self.cfg.num_reanalyzers_per_trainer +
+                2 < self.cfg.qsize), 'please increase qsize!'
 
         self._init(timing)
 

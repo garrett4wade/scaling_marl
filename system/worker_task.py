@@ -48,7 +48,6 @@ class WorkerTask:
         self.num_actors = self.cfg.num_actors // self.cfg.num_tasks_per_node
 
         self.obs_space = cfg.observation_space[self.controlled_agents[0]]
-        self.share_obs_space = cfg.share_observation_space[self.controlled_agents[0]]
         self.action_space = cfg.action_space[self.controlled_agents[0]]
 
         self.env_fn = env_fn
@@ -277,7 +276,6 @@ class WorkerTask:
                     self.task_rank,
                     i,
                     self.cfg.observation_space[policy_id],
-                    self.cfg.share_observation_space[policy_id],
                     self.cfg.action_space[policy_id],
                     self.buffer,
                     self.policy_worker_queues[policy_id][i],

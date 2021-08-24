@@ -10,7 +10,7 @@ from utils.popart import PopArt
 
 
 class ReplayBuffer:
-    def __init__(self, cfg, policy_id, num_agents, obs_space, share_obs_space, act_space):
+    def __init__(self, cfg, policy_id, num_agents, obs_space, act_space):
         self.cfg = cfg
         self.policy_id = policy_id
 
@@ -24,7 +24,6 @@ class ReplayBuffer:
         self.available_dsts = np.array(self.available_dsts, dtype=np.int32)
 
         self.obs_space = obs_space
-        self.share_obs_space = share_obs_space
         self.act_space = act_space
 
         # system configuration
@@ -51,8 +50,8 @@ class ReplayBuffer:
     def _init_storage(self):
         # initialize storage
         # TODO: replace get_ppo_storage_specs with get_${algorithm}_storage_specs
-        self.storage_specs, self.policy_input_keys, self.policy_output_keys = get_ppo_storage_specs(
-            self.cfg, self.obs_space, self.share_obs_space, self.act_space)
+        (self.storage_specs, self.policy_input_keys,
+         self.policy_output_keys) = get_ppo_storage_specs(self.cfg, self.obs_space, self.act_space)
         self.storage_keys = [storage_spec.name for storage_spec in self.storage_specs]
 
         self.shapes_and_dtypes = {}
@@ -109,7 +108,10 @@ class ReplayBuffer:
                 self._is_writable[slot_id] = 0
             else:
                 readable_slots = np.nonzero(self._is_readable)[0]
-                assert len(readable_slots) > 0, 'please increase qsize! slots being read: {}, slots being written: {}, total number of slots: {}'.format(np.nonzero(self._is_being_read)[0], np.nonzero(self._is_being_written)[0], self.num_slots)
+                assert len(readable_slots) > 0, ("please increase qsize! slots being read: {}, "
+                                                 "slots being written: {}, total number of slots: {}").format(
+                                                     np.nonzero(self._is_being_read)[0],
+                                                     np.nonzero(self._is_being_written)[0], self.num_slots)
                 # replace the oldest readable slot, in a FIFO pattern
                 slot_id = readable_slots[np.argsort(self._time_stamp[readable_slots])[0]]
                 # readable -> busy
@@ -130,7 +132,10 @@ class ReplayBuffer:
             if len(slot_ids) < num_slots_to_allocate:
                 res = num_slots_to_allocate - len(slot_ids)
                 readable_slots = np.nonzero(self._is_readable)[0]
-                assert len(readable_slots) >= res, 'please increase qsize! slots being read: {}, slots being written: {}, total number of slots: {}'.format(np.nonzero(self._is_being_read)[0], np.nonzero(self._is_being_written)[0], self.num_slots)
+                assert len(readable_slots) > 0, ("please increase qsize! slots being read: {}, "
+                                                 "slots being written: {}, total number of slots: {}").format(
+                                                     np.nonzero(self._is_being_read)[0],
+                                                     np.nonzero(self._is_being_written)[0], self.num_slots)
                 # replace the oldest readable slot, in a FIFO pattern
                 res_slots = readable_slots[np.argsort(self._time_stamp[readable_slots])[:res]]
                 # readable -> busy
@@ -204,10 +209,10 @@ class ReplayBuffer:
 
 
 class WorkerBuffer(ReplayBuffer):
-    def __init__(self, cfg, policy_id, num_agents, obs_space, share_obs_space, act_space):
+    def __init__(self, cfg, policy_id, num_agents, obs_space, act_space):
         # NOTE: value target computation is deferred to centralized trainer in consistent with off-policy correction
         # e.g. V-trace and Retrace
-        super().__init__(cfg, policy_id, num_agents, obs_space, share_obs_space, act_space)
+        super().__init__(cfg, policy_id, num_agents, obs_space, act_space)
         self.target_num_slots = 1
         self.num_consumers_to_notify = 1
 
@@ -287,8 +292,8 @@ class WorkerBuffer(ReplayBuffer):
 
 
 class LearnerBuffer(ReplayBuffer):
-    def __init__(self, cfg, policy_id, num_agents, obs_space, share_obs_space, act_space):
-        super().__init__(cfg, policy_id, num_agents, obs_space, share_obs_space, act_space)
+    def __init__(self, cfg, policy_id, num_agents, obs_space, act_space):
+        super().__init__(cfg, policy_id, num_agents, obs_space, act_space)
 
         # each trainer has its own buffer
         self.target_num_slots = self.num_consumers_to_notify = 1
@@ -575,28 +580,22 @@ class SharedPolicyMixin(PolicyMixin):
                slot_ids,
                ep_steps,
                valid_choose,
-               obs,
-               share_obs,
                rewards,
-               masks,
                active_masks=None,
                fct_masks=None,
                available_actions=None,
                **policy_outputs_and_input_rnn_states):
         with timing.add_time('inference/insert/copy_data'), timing.time_avg('inference/insert/copy_data_once'):
             # env step returns
-            self.share_obs[slot_ids, ep_steps] = share_obs[valid_choose]
-            self.obs[slot_ids, ep_steps] = obs[valid_choose]
             self.rewards[slot_ids[ep_steps >= 1], ep_steps[ep_steps >= 1] - 1] = rewards[valid_choose][ep_steps >= 1]
-            self.masks[slot_ids, ep_steps] = masks[valid_choose]
 
-            if hasattr(self, 'available_actions') and available_actions is not None:
+            if hasattr(self, 'available_actions'):
                 self.available_actions[slot_ids, ep_steps] = available_actions[valid_choose]
 
             if hasattr(self, 'active_masks'):
                 self.active_masks[slot_ids, ep_steps] = active_masks[valid_choose]
 
-            if hasattr(self, 'fct_masks') and fct_masks is not None:
+            if hasattr(self, 'fct_masks'):
                 self.fct_masks[slot_ids, ep_steps] = fct_masks[valid_choose]
 
             # model inference returns
@@ -608,7 +607,7 @@ class SharedPolicyMixin(PolicyMixin):
                         self.storage[k][
                             slot_ids[selected_idx], ep_steps[selected_idx] //
                             self.data_chunk_length] = policy_outputs_and_input_rnn_states[k][valid_choose][selected_idx]
-                else:
+                elif k != 'rewards':
                     self.storage[k][slot_ids, ep_steps] = policy_outputs_and_input_rnn_states[k][valid_choose]
 
         self.total_timesteps += len(slot_ids)

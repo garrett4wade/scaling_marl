@@ -6,73 +6,26 @@ import torch
 import itertools
 import multiprocessing as mp
 from config import get_config
-from envs.starcraft2.StarCraft2_Env import StarCraft2Env
-from envs.env_wrappers import ShareDummyVecEnv, ShareSubprocVecEnv
-from envs.starcraft2.smac_maps import get_map_params
+from envs.hns.HNS_Env import HNSEnv
+from copy import deepcopy
 from system.receiver import Receiver
 from system.trainer import Trainer
 from system.reanalyzer import Reanalyzer
 from system.value_tracer import ValueTracer
 from utils.utils import log
-"""Train script for SMAC."""
-
-
-def parse_args(args, parser):
-    parser.add_argument('--map_name', type=str, default='3m', help="Which smac map to run on")
-    parser.add_argument("--add_move_state", action='store_true', default=False)
-    parser.add_argument("--add_local_obs", action='store_true', default=False)
-    parser.add_argument("--add_distance_state", action='store_true', default=False)
-    parser.add_argument("--add_enemy_action_state", action='store_true', default=False)
-    parser.add_argument("--add_agent_id", action='store_true', default=False)
-    parser.add_argument("--add_visible_state", action='store_true', default=False)
-    parser.add_argument("--add_xy_state", action='store_true', default=False)
-    parser.add_argument("--use_state_agent", action='store_true', default=False)
-    parser.add_argument("--use_mustalive", action='store_false', default=True)
-    parser.add_argument("--add_center_xy", action='store_true', default=False)
-
-    cfg = parser.parse_known_args(args)[0]
-
-    return cfg
 
 
 def make_example_env(cfg):
-    def get_env_fn(rank):
-        def init_env():
-            if cfg.env_name == "StarCraft2":
-                env = StarCraft2Env(cfg)
-            else:
-                print("Can not support the " + cfg.env_name + "environment.")
-                raise NotImplementedError
-            env.seed(cfg.seed + rank * 10000)
-            return env
-
-        return init_env
-
-    return ShareDummyVecEnv([get_env_fn(0)])
-
-
-def make_eval_env(trainer_id, cfg):
-    def get_env_fn(rank):
-        def init_env():
-            if cfg.env_name == "StarCraft2":
-                env = StarCraft2Env(cfg)
-            else:
-                print("Can not support the " + cfg.env_name + "environment.")
-                raise NotImplementedError
-            env.seed(cfg.seed * 50000 + rank * 10000 + 12345 * trainer_id)
-            return env
-
-        return init_env
-
-    if cfg.n_eval_rollout_threads == 1:
-        return ShareDummyVecEnv([get_env_fn(0)])
-    else:
-        return ShareSubprocVecEnv([get_env_fn(i) for i in range(cfg.n_eval_rollout_threads)])
+    assert cfg.env_name == "HideAndSeek"
+    env_config = deepcopy(yaml.load(open('./envs/hns/configs/hide_and_seek_paper.yaml', 'r'), Loader=yaml.FullLoader))
+    env_config['n_hiders'] = 3
+    env_config['n_seekers'] = 3
+    return HNSEnv('HideAndSeek', env_config)
 
 
 def main():
     parser = get_config()
-    cfg = parse_args(sys.argv[1:], parser)
+    cfg = parser.parse_known_args(sys.argv[1:])[0]
     # overwrite default configuration using yaml file
     if cfg.config is not None:
         with open(cfg.config) as f:
@@ -115,7 +68,7 @@ def main():
     example_env.close()
     del example_env
 
-    cfg.num_agents = get_map_params(cfg.map_name)["n_agents"]
+    cfg.num_agents = 6
 
     if cfg.learner_node_idx == 0:
         from system.task_dispatcher import TaskDispatcher
@@ -136,10 +89,9 @@ def main():
         example_agent = cfg.policy2agents[str(policy_id)][0]
 
         obs_space = cfg.observation_space[example_agent]
-        share_obs_space = cfg.share_observation_space[example_agent]
         act_space = cfg.action_space[example_agent]
         from algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
-        example_policy = Policy('cpu', cfg, obs_space, share_obs_space, act_space, is_training=False)
+        example_policy = Policy('cpu', cfg, obs_space, act_space, is_training=False)
         shm_state_dict = {k: v.detach().cpu().share_memory_() for k, v in example_policy.state_dict().items()}
         del example_policy
 
@@ -151,9 +103,7 @@ def main():
     for e in trainer_ready_events:
         e.wait()
 
-    recievers = [
-        Receiver(cfg, i, trainers, nodes_ready_events[i]) for i in range(num_worker_nodes)
-    ]
+    recievers = [Receiver(cfg, i, trainers, nodes_ready_events[i]) for i in range(num_worker_nodes)]
     for r in recievers:
         r.start_proess()
 
@@ -204,7 +154,7 @@ def main():
 
     for r_a in itertools.chain(*all_reanalyzers):
         r_a.close()
-    
+
     for v_t in itertools.chain(*all_value_tracers):
         v_t.close()
 
