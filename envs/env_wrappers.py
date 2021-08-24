@@ -663,22 +663,22 @@ class DummyVecEnv(ShareVecEnv):
 
     def step_wait(self):
         results = [env.step(a) for (a, env) in zip(self.actions, self.envs)]
-        obs, rews, dones, infos = map(np.array, zip(*results))
+        obs_lis, rews_lis, dones_lis, infos_lis = zip(*results)
+        obs = {k: np.stack([v[k] for v in obs_lis]) for k in obs_lis[0].keys()}
+        rews, dones, infos = np.stack(rews_lis), np.stack(dones_lis), np.stack(infos_lis)
 
         for (i, done) in enumerate(dones):
-            if 'bool' in done.__class__.__name__:
-                if done:
-                    obs[i] = self.envs[i].reset()
-            else:
-                if np.all(done):
-                    obs[i] = self.envs[i].reset()
+            if done:
+                obs_reset = self.envs[i].reset()
+                for k in obs_reset.keys():
+                    obs[k][i] = obs_reset[k]
 
         self.actions = None
         return obs, rews, dones, infos
 
     def reset(self):
-        obs = [env.reset() for env in self.envs]
-        return np.array(obs)
+        obs_lis = [env.reset() for env in self.envs]
+        return {k: np.stack([v[k] for v in obs_lis]) for k in obs_lis[0].keys()}
 
     def close(self):
         for env in self.envs:

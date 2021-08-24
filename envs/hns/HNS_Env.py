@@ -1,4 +1,5 @@
 import numpy as np
+from copy import deepcopy
 from utils.multi_discrete import MultiDiscrete
 from .envs.box_locking import BoxLockingEnv
 from .envs.blueprint_construction import BlueprintConstructionEnv
@@ -7,24 +8,25 @@ from .envs.hide_and_seek import HideAndSeekEnv
 
 class HNSEnv:
     def __init__(self, map_name, env_config):
-        self.max_n_agents = env_config['max_n_agents'] + 1  # max others + self
+        self.env_config = deepcopy(env_config)
+        self.max_n_agents = self.env_config['max_n_agents'] + 1  # max others + self
         if map_name == "BoxLocking":
-            self.num_agents = env_config['n_agents']
-            self.env = BoxLockingEnv(**env_config)
+            self.num_agents = self.env_config['n_agents']
+            self.env = BoxLockingEnv(**self.env_config)
             self.ordered_obs_keys = ['agent_qpos_qvel', 'box_obs', 'ramp_obs', 'observation_self']
             self.ordered_obs_mask_keys = ['mask_aa_obs', 'mask_ab_obs', 'mask_ar_obs', None]
         elif map_name == "BlueprintConstruction":
-            self.num_agents = env_config['n_agents']
-            self.env = BlueprintConstructionEnv(**env_config)
+            self.num_agents = self.env_config['n_agents']
+            self.env = BlueprintConstructionEnv(**self.env_config)
             self.ordered_obs_keys = [
                 'agent_qpos_qvel', 'box_obs', 'ramp_obs', 'construction_site_obs', 'observation_self'
             ]
             self.ordered_obs_mask_keys = [None, None, None, None, None]
         elif map_name == "HideAndSeek":
-            self.num_seekers = env_config['n_seekers']
-            self.num_hiders = env_config['n_hiders']
-            self.env = HideAndSeekEnv(**env_config)
-            self.num_agents = env_config['n_seekers'] + env_config['n_hiders']
+            self.num_seekers = self.env_config['n_seekers']
+            self.num_hiders = self.env_config['n_hiders']
+            self.env = HideAndSeekEnv(**self.env_config)
+            self.num_agents = self.env_config['n_seekers'] + self.env_config['n_hiders']
             self.ordered_obs_keys = [
                 'agent_qpos_qvel', 'box_obs', 'ramp_obs', 'foodict_obsbs', 'observation_self', 'lidar'
             ]
@@ -70,7 +72,7 @@ class HNSEnv:
         else:
             self.env.seed(seed)
 
-    def _pad_dict_obs(self, dict_obs):
+    def _pad_agent(self, dict_obs):
         if self.max_n_agents == self.num_agents:
             return dict_obs
         else:
@@ -82,7 +84,12 @@ class HNSEnv:
 
     def reset(self):
         dict_obs = self.env.reset()
-        return self._pad_dict_obs(dict_obs)
+        if 'lidar' in dict_obs.keys():
+            dict_obs['lidar'] = np.transpose(dict_obs['lidar'], (0, 2, 1))
+        dict_obs = {
+            **dict_obs, 'mask_ar_obs_spoof': np.ones((self.num_agents, self.env_config['n_ramps']), dtype=np.float32)
+        }
+        return self._pad_agent(dict_obs)
 
     def step(self, actions):
         action_movement = []
@@ -100,10 +107,16 @@ class HNSEnv:
         actions_env = {'action_movement': action_movement, 'action_pull': action_pull, 'action_glueall': action_glueall}
 
         dict_obs, rewards, done, info = self.env.step(actions_env)
+        if 'lidar' in dict_obs.keys():
+            dict_obs['lidar'] = np.transpose(dict_obs['lidar'], (0, 2, 1))
+        dict_obs = {
+            **dict_obs, 'mask_ar_obs_spoof': np.ones((self.num_agents, self.env_config['n_ramps']), dtype=np.float32)
+        }
 
         info['force_termination'] = info.get('discard_episode', False)
+        rewards = np.append(rewards, np.zeros((self.max_n_agents - self.num_agents), dtype=np.float32))
 
-        return self._pad_dict_obs(dict_obs), rewards, done, info
+        return self._pad_agent(dict_obs), rewards, done, info
 
     def close(self):
         self.env.close()
