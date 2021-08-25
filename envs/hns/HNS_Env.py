@@ -76,6 +76,12 @@ class HNSEnv:
 
         self.episode_return = 0
         self.elapsed_episodes = 0
+        self.hide_and_seek_return = 0
+        self.summary_keys = [
+            'max_box_move_prep', 'max_box_move', 'num_box_lock_prep', 'num_box_lock', 'max_ramp_move_prep', 'max_ramp_move',
+            'num_ramp_lock_prep', 'num_ramp_lock'
+        ]
+        self.accumulated_summaries = {k: 0.0 for k in self.summary_keys}
 
     def seed(self, seed=None):
         if seed is None:
@@ -119,10 +125,17 @@ class HNSEnv:
 
         dict_obs, rewards, done, info = self.env.step(actions_env)
         self.episode_return += rewards[0]
+        clipped_reward = rewards[0] if rewards[0] > -10 else rewards[0] + 10
+        assert -0.1 - 1e-4 <= clipped_reward <= 0.1 + 1e-4
+        self.hide_and_seek_return += clipped_reward
         if done:
+            for k in self.accumulated_summaries.keys():
+                self.accumulated_summaries[k] += info[k]
+                info[k] = self.accumulated_summaries[k]
             self.elapsed_episodes += 1
             info['episode_return'] = self.episode_return
             info['elapsed_episodes'] = self.elapsed_episodes
+            info['hide_and_seek_return'] = self.hide_and_seek_return
         if 'lidar' in dict_obs.keys():
             dict_obs['lidar'] = np.transpose(dict_obs['lidar'], (0, 2, 1))
         dict_obs = {

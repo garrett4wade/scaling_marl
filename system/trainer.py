@@ -462,6 +462,27 @@ class Trainer:
                         'train_episode_return': avg_return,
                         'train_episode_length': avg_ep_len
                     }
+            elif self.cfg.env_name == 'HideAndSeek':
+                with self.buffer.env_summary_lock:
+                    summary_info = self.buffer.summary_block.sum(axis=(0, 1))
+                env_summaries = {}
+                elapsed_episodes = summary_info[self.env_summary_idx_hash['elapsed_episodes']]
+
+                recent_elapsed_episodes = elapsed_episodes - self.last_elapsed_episodes
+
+                if recent_elapsed_episodes > 0:
+                    summary_str = ""
+                    for k in self.env_summary_keys:
+                        if k !=  'elapsed_episodes':
+                            env_summaries[k] = (summary_info[self.env_summary_idx_hash[k]] - getattr(self, 'last_' + k)) / recent_elapsed_episodes
+                            setattr(self, 'last_' + k, summary_info[self.env_summary_idx_hash[k]])
+                            summary_str += ', {}: {:.2f}'.format(k.replace('_', ' ').title(), env_summaries[k])
+
+                    log.debug('Map: %s%s. (%d)', self.cfg.map_name, summary_str, int(recent_elapsed_episodes))
+
+                    self.last_elapsed_episodes = elapsed_episodes
+
+                    log_infos = {**log_infos, **env_summaries}
             else:
                 raise NotImplementedError
 

@@ -43,7 +43,7 @@ ENV_SUMMARY_KEYS = {
     'Hanabi': ['elapsed_episodes', 'episode_return', 'episode_length'],
     'HideAndSeek': [
         'max_box_move_prep', 'max_box_move', 'num_box_lock_prep', 'num_box_lock', 'max_ramp_move_prep', 'max_ramp_move',
-        'num_ramp_lock_prep', 'num_ramp_lock', 'episode_return', 'elapsed_episodes'
+        'num_ramp_lock_prep', 'num_ramp_lock', 'episode_return', 'elapsed_episodes', 'hide_and_seek_return'
     ],
 }
 
