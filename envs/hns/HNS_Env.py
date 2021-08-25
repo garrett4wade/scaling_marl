@@ -59,15 +59,23 @@ class HNSEnv:
 
             # deal with dict obs space
             obs_space = {}
-            for key in self.ordered_obs_keys:
+            for key in self.ordered_obs_keys + ['mask_aa_obs', 'mask_ab_obs', 'mask_ar_obs', 'mask_aa_obs_spoof', 'mask_ab_obs_spoof']:
                 if key in self.env.observation_space.spaces.keys():
                     space = tuple(self.env.observation_space[key].shape)
-                    obs_space[key] = (1, *space) if len(space) < 2 else tuple(space)
+                    if 'mask' not in key:
+                        obs_space[key] = (1, *space) if len(space) < 2 else tuple(space)
+                    else:
+                        obs_space[key] = tuple(space)
+            obs_space['lidar'] = (obs_space['lidar'][1], obs_space['lidar'][0])
+            obs_space['mask_ar_obs_spoof'] = obs_space['mask_ar_obs']
             self.observation_space.append(obs_space)
 
         while len(self.action_space) < self.max_n_agents:
             self.action_space.append(self.action_space[0])
             self.observation_space.append(self.observation_space[0])
+
+        self.episode_return = 0
+        self.elapsed_episodes = 0
 
     def seed(self, seed=None):
         if seed is None:
@@ -110,6 +118,11 @@ class HNSEnv:
         actions_env = {'action_movement': action_movement, 'action_pull': action_pull, 'action_glueall': action_glueall}
 
         dict_obs, rewards, done, info = self.env.step(actions_env)
+        self.episode_return += rewards[0]
+        if done:
+            self.elapsed_episodes += 1
+            info['episode_return'] = self.episode_return
+            info['elapsed_episodes'] = self.elapsed_episodes
         if 'lidar' in dict_obs.keys():
             dict_obs['lidar'] = np.transpose(dict_obs['lidar'], (0, 2, 1))
         dict_obs = {
@@ -118,6 +131,7 @@ class HNSEnv:
 
         info['force_termination'] = info.get('discard_episode', False)
         rewards = np.append(rewards, np.zeros((self.max_n_agents - self.num_agents), dtype=np.float32))
+        rewards = np.expand_dims(rewards, -1)
         dones = np.array([[done] for _ in range(self.max_n_agents)], dtype=np.float32)
 
         return self._pad_agent(dict_obs), rewards, dones, info

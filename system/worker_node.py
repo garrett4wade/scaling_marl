@@ -56,7 +56,7 @@ class WorkerNode:
         envstep_output_keys = [
             'observation_self', 'lidar', 'agent_qpos_qvel', 'box_obs', 'ramp_obs', 'mask_aa_obs', 'mask_ab_obs',
             'mask_ar_obs', 'mask_aa_obs_spoof', 'mask_ab_obs_spoof', 'mask_ar_obs_spoof', 'rewards',
-            'available_actions', 'fct_masks', 'rnn_states', 'rnn_states_critic'
+            'fct_masks', 'rnn_states', 'rnn_states_critic'
         ]
 
         # actor workers consume actions and produce envstep_outputs in one shot (in env.step),
@@ -67,7 +67,7 @@ class WorkerNode:
         assert_same_act_dim(self.cfg.action_space)
         act_dim = get_shape_from_act_space(self.cfg.action_space[0])
         act_shms = [[
-            torch.zeros((envs_per_split, self.cfg.num_agents, act_dim), dtype=torch.float32).share_memory_().numpy()
+            torch.zeros((envs_per_split, self.cfg.num_agents, act_dim), dtype=torch.int32).share_memory_().numpy()
             for _ in range(self.cfg.num_splits)
         ] for _ in range(num_actors_per_task)]
 

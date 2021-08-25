@@ -31,13 +31,13 @@ qsize: 12
 min_num_requests: -1
 
 ddp_init_methods:
-  - tcp://10.0.4.20:6666
-task_dispatcher_addr: tcp://10.0.4.20:8887
-task_result_addr: tcp://10.0.4.20:8886
+  - tcp://10.0.4.35:6666
+task_dispatcher_addr: tcp://10.0.4.35:8887
+task_result_addr: tcp://10.0.4.35:8886
 model_weights_addrs:  # every learner has a model_weights_addr and len(model_weights_adddrs) == num_policies == num_leraners
-  - tcp://10.0.4.20:8889
+  - tcp://10.0.4.35:8889
 seg_addrs:  # every worker node has seg_addrs connecting to all learners
-  - - tcp://10.0.4.20:12346
+  - - tcp://10.0.4.35:12346
 
 num_reanalyzers_per_trainer: 1
 num_value_tracers_per_trainer: 1
@@ -114,8 +114,8 @@ use_ReLU: true
 use_advantage_normalization: true
 use_centralized_V: false
 use_clipped_value_loss: true
-no_value_active_masks: false
-no_policy_active_masks: false
+no_value_active_masks: true
+no_policy_active_masks: true
 
 # setup configs, use absolute dir
 cwd: "/workspace/workspace/scaling_marl"
@@ -138,7 +138,7 @@ total_rounds: 100000000 # debug
 interval: 3
 # first node is head
 nodes: learner0,worker0
-puller_address: "10.0.4.20"
+puller_address: "10.0.4.35"
 puller_port: 4321
 
 verbose: false

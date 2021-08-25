@@ -655,7 +655,7 @@ class DummyVecEnv(ShareVecEnv):
     def __init__(self, env_fns):
         self.envs = [fn() for fn in env_fns]
         env = self.envs[0]
-        ShareVecEnv.__init__(self, len(env_fns), env.observation_space, env.share_observation_space, env.action_space)
+        ShareVecEnv.__init__(self, len(env_fns), env.observation_space, None, env.action_space)
         self.actions = None
 
     def step_async(self, actions):
@@ -668,7 +668,7 @@ class DummyVecEnv(ShareVecEnv):
         rews, dones, infos = np.stack(rews_lis), np.stack(dones_lis), np.stack(infos_lis)
 
         for (i, done) in enumerate(dones):
-            if done:
+            if np.all(done):
                 obs_reset = self.envs[i].reset()
                 for k in obs_reset.keys():
                     obs[k][i] = obs_reset[k]

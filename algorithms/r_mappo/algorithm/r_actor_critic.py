@@ -38,11 +38,9 @@ class R_Actor_Critic(nn.Module):
             if compute_critic:
                 critic_features, critic_rnn_states = self.critic_rnn(critic_features, critic_rnn_states, masks)
 
-        (action_dists, action_reduce_fn, log_prob_reduce_fn, action_preprocess_fn, entropy_fn,
-         entropy_reduce_fn) = self.act(actor_features, None)
+        action_dists = self.act(actor_features, None)
 
         if compute_critic:
             values, v_target = self.v_out(critic_features, unnormalized_v_target)
 
-        return (action_dists, action_reduce_fn, log_prob_reduce_fn, action_preprocess_fn, entropy_fn, entropy_reduce_fn,
-                actor_rnn_states, values, critic_rnn_states, v_target)
+        return (action_dists, actor_rnn_states, values, critic_rnn_states, v_target)

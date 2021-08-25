@@ -282,7 +282,7 @@ class Trainer:
                 dist.barrier()
 
                 if self.policy_version % (self.cfg.sample_reuse *
-                                          self.cfg.broadcast_interval) == 0 and self.replicate_rank == 0:
+                                            self.cfg.broadcast_interval) == 0 and self.replicate_rank == 0:
                     # the first trainer in each node broadcasts weights
                     self.pack_off_weights()
 
@@ -359,9 +359,9 @@ class Trainer:
                     train_info[k] += locals()[k].item()
 
         with timing.add_time('training_step/logging/other_records'):
-            train_info["average_step_rewards"] = np.mean(self.buffer.rewards[slot_id])
-            train_info['dead_ratio'] = 1 - self.buffer.active_masks[slot_id].sum() / np.prod(
-                self.buffer.active_masks[slot_id].shape)
+            # train_info["average_step_rewards"] = np.mean(self.buffer.rewards[slot_id])
+            # train_info['dead_ratio'] = 1 - self.buffer.active_masks[slot_id].sum() / np.prod(
+            #     self.buffer.active_masks[slot_id].shape)
 
             reduce_factor = self.num_mini_batch * self.num_trainers
 

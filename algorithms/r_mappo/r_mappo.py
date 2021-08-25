@@ -24,7 +24,7 @@ class R_MAPPO:
 
         self.value_loss_fn = lambda x: huber_loss(x, cfg.huber_delta) if self._use_huber_loss else mse_loss
 
-    def cal_value_loss(self, values, value_preds_batch, v_target_batch, active_masks_batch):
+    def cal_value_loss(self, values, value_preds_batch, v_target_batch, active_masks_batch=None):
         error_original = v_target_batch - values
         value_loss_original = self.value_loss_fn(error_original)
 
@@ -64,7 +64,7 @@ class R_MAPPO:
             policy_loss = -torch.sum(torch.min(surr1, surr2), dim=-1, keepdim=True).mean()
 
         # critic update
-        value_loss = self.cal_value_loss(values, sample['values'], v_target, sample['active_masks'])
+        value_loss = self.cal_value_loss(values, sample['values'], v_target, sample.get('active_masks'))
 
         self.policy.optimizer.zero_grad()
 

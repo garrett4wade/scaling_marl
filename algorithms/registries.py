@@ -33,7 +33,7 @@ def get_ppo_storage_specs(args, obs_space, act_space):
     if args.use_fct_masks:
         ppo_storage_specs.append(StorageSpec('fct_masks', (1, ), torch.float32, True, 1))
 
-    policy_input_keys = [*obs_shape.keys(), 'masks', 'rnn_states', 'rnn_states_critic']
+    policy_input_keys = [*obs_space.keys(), 'masks', 'rnn_states', 'rnn_states_critic']
     policy_output_keys = ['actions', 'action_log_probs', 'values', 'rnn_states', 'rnn_states_critic']
     return ppo_storage_specs, policy_input_keys, policy_output_keys
 

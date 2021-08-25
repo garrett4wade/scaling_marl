@@ -59,28 +59,26 @@ class R_MAPPOPolicy:
     def lr_decay(self, episode, episodes):
         update_linear_schedule(self.optimizer, episode, episodes, self.lr)
 
-    def get_actions(self, obs, rnn_states, rnn_states_critic, masks, deterministic=False):
-        (action_dists, action_reduce_fn, log_prob_reduce_fn, _, _, _, rnn_states, values, rnn_states_critic,
-         _) = self.actor_critic(obs, rnn_states, masks, rnn_states_critic)
-        actions, action_log_probs = get_actions_from_dist(action_dists, action_reduce_fn, log_prob_reduce_fn,
-                                                          deterministic)
+    def get_actions(self, rnn_states, rnn_states_critic, masks, deterministic=False, **obs):
+        (action_dists, rnn_states, values, rnn_states_critic, _) = self.actor_critic(obs, rnn_states, masks, rnn_states_critic)
+        actions = [action_dist.sample() if deterministic else action_dist.mode() for action_dist in action_dists]
+        action_log_probs = [action_dist.log_probs(action) for action_dist, action in zip(action_dists, actions)]
 
         return {
             'values': values,
-            'actions': actions,
-            'action_log_probs': action_log_probs,
+            'actions': torch.cat(actions, dim=-1),
+            'action_log_probs': torch.cat(action_log_probs, dim=-1),
             'rnn_states': rnn_states,
             'rnn_states_critic': rnn_states_critic
         }
 
-    def evaluate_actions(self, obs, rnn_states, rnn_states_critic, actions, masks, v_target, **kwargs):
-        (action_dists, _, log_prob_reduce_fn, action_preprocess_fn, entropy_fn, entropy_reduce_fn, _, values, _,
-         v_target) = self.actor_critic(obs, rnn_states, masks, rnn_states_critic, v_target)
-        action_log_probs, dist_entropy = evaluate_actions_from_dist(action_dists, actions, log_prob_reduce_fn,
-                                                                    action_preprocess_fn, entropy_fn, entropy_reduce_fn,
-                                                                    None)
+    def evaluate_actions(self, rnn_states, rnn_states_critic, actions, masks, v_target, **obs):
+        (action_dists, _, values, _, v_target) = self.actor_critic(obs, rnn_states, masks, rnn_states_critic, v_target)
+        actions = torch.split(actions, 1, dim=-1)
+        action_log_probs = [action_dist.log_probs(action) for action_dist, action in zip(action_dists, actions)]
+        dist_entropy = [action_dist.entropy().mean() for action_dist in action_dists]
 
-        return values, action_log_probs, dist_entropy, v_target
+        return values, torch.cat(action_log_probs, -1), sum(dist_entropy) / len(dist_entropy), v_target
 
     def state_dict(self):
         return self.actor_critic.state_dict()

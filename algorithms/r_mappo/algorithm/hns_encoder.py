@@ -15,7 +15,7 @@ class HNSEncoder(nn.Module):
         self.ordered_other_obs_keys = ['agent_qpos_qvel', 'box_obs', 'ramp_obs']
         self.ordered_obs_mask_keys = ['mask_aa_obs', 'mask_ab_obs', 'mask_ar_obs']
 
-        self_dim = obs_space['observation_self'][-1] + obs_space['lidar'][0]
+        self_dim = obs_space['observation_self'][-1] + obs_space['lidar'][-1]
         others_shape_dict = deepcopy(obs_space)
         others_shape_dict.pop('observation_self')
         others_shape_dict.pop('lidar')
@@ -32,7 +32,9 @@ class HNSEncoder(nn.Module):
 
     def forward(self, inputs):
         lidar = inputs['lidar']
-        x_lidar = self.lidar_conv(lidar).reshape(*lidar.shape[:-2], -1)
+        if len(lidar.shape) == 4:
+            lidar = lidar.view(-1, *lidar.shape[2:])
+        x_lidar = self.lidar_conv(lidar).reshape(*inputs['lidar'].shape[:-2], -1)
         x_self = torch.cat([inputs['observation_self'], x_lidar], dim=-1)
 
         x_other = {k: inputs[k] for k in self.ordered_other_obs_keys}
@@ -65,7 +67,8 @@ class CatSelfEmbedding(nn.Module):
         self.others_keys = sorted(self.others_shape_dict.keys())
         self.self_embedding = get_layer(self_dim, d_embedding)
         for k in self.others_keys:
-            setattr(self, k + '_fc', get_layer(others_shape_dict[k][-1] + self_dim, d_embedding))
+            if 'mask' not in k:
+                setattr(self, k + '_fc', get_layer(others_shape_dict[k][-1] + self_dim, d_embedding))
 
     def forward(self, self_vec, **inputs):
         other_embeddings = []
@@ -86,9 +89,9 @@ def ScaledDotProductAttention(q, k, v, d_k, mask=None, dropout=None):
     scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(d_k)
     if mask is not None:
         mask = mask.unsqueeze(-2).unsqueeze(-1)
-        scores = scores.masked_fill(mask == 0, -1e9)
+        scores = scores - (1- mask) * 1e10
     # in case of overflow
-    scores -= scores.max()
+    scores = scores - scores.max()
     scores = F.softmax(scores, dim=-1)
 
     if dropout is not None:

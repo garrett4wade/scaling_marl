@@ -28,4 +28,6 @@ def masked_adv_normalization(buffer, slot_id, eps=np.float32(1e-5)):
     if hasattr(buffer, 'active_masks'):
         adv = buffer.advantages[slot_id].copy()
         adv[buffer.active_masks[slot_id, :-1] == 0] = np.nan
+    else:
+        adv = buffer.advantages[slot_id]
     buffer.advantages[slot_id] = (buffer.advantages[slot_id] - np.nanmean(adv)) / (np.nanstd(adv) + eps)

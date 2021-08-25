@@ -40,6 +40,7 @@ class ACTLayer(nn.Module):
                 DiagGaussian(inputs_dim, continous_dim, use_orthogonal, gain),
                 Categorical(inputs_dim, discrete_dim, use_orthogonal, gain)
             ])
+        assert self.multi_discrete, 'for hide and seek only!'
 
     def forward(self, x, available_actions=None):
         """
@@ -52,70 +53,7 @@ class ACTLayer(nn.Module):
         :return actions: (torch.Tensor) actions to take.
         :return action_log_probs: (torch.Tensor) log probabilities of taken actions.
         """
-        if self.mixed_action:
-            action_dists = [action_out(x) for action_out in self.action_outs]
+        assert self.multi_discrete
+        action_dists = [action_out(x) for action_out in self.action_outs]
 
-            def action_reduce_fn(x):
-                return torch.cat(x, -1)
-
-            def log_prob_reduce_fn(x):
-                return torch.sum(torch.cat(x, -1), -1, keepdim=True)
-
-            def action_preprocess_fn(x):
-                a, b = x.split((2, 1), -1)
-                b = b.long()
-                return [a, b]
-
-            def entropy_fn(action_dist, active_masks=None):
-                if active_masks is not None:
-                    if len(action_dist.entropy().shape) == len(active_masks.shape):
-                        x = (action_dist.entropy() * active_masks).sum() / active_masks.sum()
-                    else:
-                        x = (action_dist.entropy() * active_masks.squeeze(-1)).sum() / active_masks.sum()
-                else:
-                    x = action_dist.entropy().mean()
-                return x
-
-            def entropy_reduce_fn(dist_entropy):
-                return dist_entropy[0] / 2.0 + dist_entropy[1] / 0.98  # ! dosen't make sense
-
-        elif self.multi_discrete:
-            action_dists = [action_out(x) for action_out in self.action_outs]
-
-            def action_reduce_fn(x):
-                return torch.cat(x, -1)
-
-            log_prob_reduce_fn = action_reduce_fn
-
-            def action_preprocess_fn(x):
-                return torch.transpose(x, 0, 1)
-
-            def entropy_fn(action_dist, active_masks=None):
-                if active_masks is not None:
-                    x = (action_dist.entropy() * active_masks.squeeze(-1)).sum() / active_masks.sum()
-                else:
-                    x = action_dist.entropy().mean()
-                return x
-
-            def entropy_reduce_fn(dist_entropy):
-                return torch.tensor(dist_entropy).mean()
-
-        else:
-            action_dists = [self.action_out(x, available_actions)]
-
-            def action_reduce_fn(x):
-                return x[0]
-
-            def action_preprocess_fn(x):
-                return [x]
-
-            def entropy_fn(action_dist, active_masks=None):
-                if active_masks is not None:
-                    x = (action_dist.entropy() * active_masks.squeeze(-1)).sum() / active_masks.sum()
-                else:
-                    x = action_dist.entropy().mean()
-                return x
-
-            entropy_reduce_fn = log_prob_reduce_fn = action_reduce_fn
-
-        return action_dists, action_reduce_fn, log_prob_reduce_fn, action_preprocess_fn, entropy_fn, entropy_reduce_fn
+        return action_dists
