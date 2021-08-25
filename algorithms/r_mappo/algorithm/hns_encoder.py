@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from copy import deepcopy
 from algorithms.utils.util import init
+from algorithms.utils.running_normalization import RunningNormalization
 
 
 class HNSEncoder(nn.Module):
@@ -14,6 +15,8 @@ class HNSEncoder(nn.Module):
         self.self_obs_keys = ['observation_self', 'lidar']
         self.ordered_other_obs_keys = ['agent_qpos_qvel', 'box_obs', 'ramp_obs']
         self.ordered_obs_mask_keys = ['mask_aa_obs', 'mask_ab_obs', 'mask_ar_obs']
+        for key in self.self_obs_keys + self.ordered_other_obs_keys:
+            setattr(self, key + '_normalization', RunningNormalization((obs_space[key][-1], ), beta=1-1e-5))
 
         self_dim = obs_space['observation_self'][-1] + obs_space['lidar'][-1]
         others_shape_dict = deepcopy(obs_space)
@@ -30,7 +33,10 @@ class HNSEncoder(nn.Module):
 
         self.dense = nn.Sequential(init_(nn.Linear(256, 256)), nn.ReLU(), nn.LayerNorm(256))
 
-    def forward(self, inputs):
+    def forward(self, inputs, train_normalization=False):
+        for k, v in inputs.items():
+            if hasattr(self, k + '_normalization'):
+                inputs[k] = getattr(self, k + '_normalization')(v, train=train_normalization)
         lidar = inputs['lidar']
         if len(lidar.shape) == 4:
             lidar = lidar.view(-1, *lidar.shape[2:])
@@ -88,11 +94,14 @@ class CatSelfEmbedding(nn.Module):
 def ScaledDotProductAttention(q, k, v, d_k, mask=None, dropout=None):
     scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(d_k)
     if mask is not None:
-        mask = mask.unsqueeze(-2).unsqueeze(-1)
+        mask = mask.unsqueeze(-2).unsqueeze(-2)
         scores = scores - (1- mask) * 1e10
     # in case of overflow
-    scores = scores - scores.max()
+    scores = scores - scores.max(dim=-1, keepdim=True)[0]
     scores = F.softmax(scores, dim=-1)
+    if mask is not None:
+        # for stablity
+        scores = scores * mask
 
     if dropout is not None:
         scores = dropout(scores)

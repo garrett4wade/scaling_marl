@@ -60,7 +60,7 @@ class R_MAPPOPolicy:
         update_linear_schedule(self.optimizer, episode, episodes, self.lr)
 
     def get_actions(self, rnn_states, rnn_states_critic, masks, deterministic=False, **obs):
-        (action_dists, rnn_states, values, rnn_states_critic, _) = self.actor_critic(obs, rnn_states, masks, rnn_states_critic)
+        (action_dists, rnn_states, values, rnn_states_critic, _) = self.actor_critic(obs, rnn_states, masks, rnn_states_critic, train_normalization=False)
         actions = [action_dist.sample() if deterministic else action_dist.mode() for action_dist in action_dists]
         action_log_probs = [action_dist.log_probs(action) for action_dist, action in zip(action_dists, actions)]
 
@@ -73,7 +73,7 @@ class R_MAPPOPolicy:
         }
 
     def evaluate_actions(self, rnn_states, rnn_states_critic, actions, masks, v_target, **obs):
-        (action_dists, _, values, _, v_target) = self.actor_critic(obs, rnn_states, masks, rnn_states_critic, v_target)
+        (action_dists, _, values, _, v_target) = self.actor_critic(obs, rnn_states, masks, rnn_states_critic, v_target, train_normalization=True)
         actions = torch.split(actions, 1, dim=-1)
         action_log_probs = [action_dist.log_probs(action) for action_dist, action in zip(action_dists, actions)]
         dist_entropy = [action_dist.entropy().mean() for action_dist in action_dists]

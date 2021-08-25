@@ -7,7 +7,7 @@ from algorithms.utils.util import init
 
 
 class ValueHead(nn.Module):
-    def __init__(self, input_dim, output_dim, use_orthogonal, use_popart, beta=0.999, epsilon=1e-5):
+    def __init__(self, input_dim, output_dim, use_orthogonal, use_popart, beta=1-1e-5, epsilon=1e-5):
         super().__init__()
         self.beta = beta
         self.epsilon = epsilon

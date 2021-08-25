@@ -25,13 +25,13 @@ class R_Actor_Critic(nn.Module):
         self.act = ACTLayer(act_space, self.hidden_size, self._use_orthogonal, self._gain)
         self.v_out = ValueHead(self.hidden_size, 1, self._use_orthogonal, args.use_popart)
 
-    def forward(self, obs, actor_rnn_states, masks, critic_rnn_states=None, unnormalized_v_target=None):
+    def forward(self, obs, actor_rnn_states, masks, critic_rnn_states=None, unnormalized_v_target=None, train_normalization=False):
         compute_critic = critic_rnn_states is not None
         values = None
 
-        actor_features = self.actor_base(obs)
+        actor_features = self.actor_base(obs, train_normalization)
         if compute_critic:
-            critic_features = self.critic_base(obs)
+            critic_features = self.critic_base(obs, train_normalization)
 
         if self._use_recurrent_policy:
             actor_features, actor_rnn_states = self.actor_rnn(actor_features, actor_rnn_states, masks)

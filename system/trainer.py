@@ -490,7 +490,7 @@ class Trainer:
 
     def save(self):
         """Save policy's actor and critic networks."""
-        torch.save(self.policy.state_dict(), str(self.save_dir) + "/model.pt")
+        torch.save(self.policy.state_dict(), str(self.save_dir) + "/model_{}.pt".format(self.policy_version.item()))
 
     def restore(self):
         """Restore policy's networks from a saved model."""

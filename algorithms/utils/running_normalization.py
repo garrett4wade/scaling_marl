@@ -1,10 +1,12 @@
 import numpy as np
 import torch
 import torch.distributed as dist
+import torch.nn as nn
 
 
-class RunningNormalization:
-    def __init__(self, input_shape, beta=0.999, epsilon=1e-5, device=torch.device('cpu')):
+class RunningNormalization(nn.Module):
+    def __init__(self, input_shape, beta=1-1e-5, epsilon=1e-5):
+        super().__init__()
         self.epsilon = epsilon
         self.beta = beta
 
@@ -12,9 +14,9 @@ class RunningNormalization:
         self.input_shape = input_shape
 
         # make PopArt accessible for every training process
-        self.running_mean = torch.zeros(input_shape, dtype=torch.float32, device=device)
-        self.running_mean_sq = torch.zeros(input_shape, dtype=torch.float32, device=device)
-        self.debiasing_term = torch.zeros(1, dtype=torch.float32, device=device)
+        self.running_mean = nn.Parameter(torch.zeros(input_shape, dtype=torch.float32), requires_grad=False)
+        self.running_mean_sq = nn.Parameter(torch.zeros(input_shape, dtype=torch.float32), requires_grad=False)
+        self.debiasing_term = nn.Parameter(torch.zeros(1, dtype=torch.float32), requires_grad=False)
 
     def reset_parameters(self):
         self.running_mean[:] = 0
@@ -27,11 +29,9 @@ class RunningNormalization:
         debiased_var = (debiased_mean_sq - debiased_mean**2).clip(min=1e-2)
         return debiased_mean, debiased_var
 
-    def __call__(self, x, train=True):
+    @torch.no_grad()
+    def forward(self, x, train=True):
         # called before computing loss, to normalize target values and to update running mean/std
-        np_input = isinstance(x, np.ndarray)
-        x = torch.from_numpy(x) if np_input else x
-        x = x.to(self.running_mean)
         assert x.shape[-self.remaining_axes:] == self.input_shape, (
             "trailing dimensions of the input vector " + "are expected to be {} ".format(self.input_shape) +
             "while the input vector has shape {}".format(x.shape[-self.remaining_axes:]))
@@ -43,26 +43,20 @@ class RunningNormalization:
             dist.all_reduce(batch_mean)
             dist.all_reduce(batch_sq_mean)
 
-            self.running_mean = self.beta * self.running_mean + batch_mean * (1.0 - self.beta)
-            self.running_mean_sq = self.beta * self.running_mean_sq + batch_sq_mean * (1.0 - self.beta)
-            self.debiasing_term = self.beta * self.debiasing_term + 1.0 - self.beta
+            self.running_mean.data[:] = self.beta * self.running_mean.data[:] + batch_mean * (1.0 - self.beta)
+            self.running_mean_sq.data[:] = self.beta * self.running_mean_sq.data[:] + batch_sq_mean * (1.0 - self.beta)
+            self.debiasing_term.data[:] = self.beta * self.debiasing_term.data[:] + 1.0 - self.beta
 
         mean, var = self.debiased_mean_var()
-        out = (x - mean) / var.sqrt()
+        return (x - mean) / var.sqrt()
 
-        return out.cpu().numpy() if np_input else out
-
+    @torch.no_grad()
     def denormalize(self, x):
         # called when closing an episode and computing returns,
         # to denormalize values during rollout inference
-        np_input = isinstance(x, np.ndarray)
-        x = torch.from_numpy(x) if np_input else x
-        x = x.to(self.running_mean)
         assert x.shape[-self.remaining_axes:] == self.input_shape, (
             "trailing dimensions of the input vector " + "are expected to be {} ".format(self.input_shape) +
             "while the input vector has shape {}".format(x.shape[-self.remaining_axes:]))
 
         mean, var = self.debiased_mean_var()
-        out = x * var.sqrt() + mean
-
-        return out.cpu().numpy() if np_input else out
+        return x * var.sqrt() + mean
