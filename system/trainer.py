@@ -92,7 +92,7 @@ class Trainer:
         self.train_for_env_steps = self.cfg.train_for_env_steps
         self.train_for_seconds = self.cfg.train_for_seconds
         self.transitions_per_batch = (self.episode_length * self.cfg.actor_group_size * self.envs_per_split *
-                                      self.slots_per_update)
+                                      self.slots_per_update * self.num_agents)
         self.train_for_episodes = self.train_for_env_steps // self.transitions_per_batch // self.num_trainers
 
         self.training_tik = None
