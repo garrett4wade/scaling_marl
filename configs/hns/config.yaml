@@ -23,11 +23,11 @@ summary_dir: './logs'
 
 # system parameters
 num_tasks_per_node: 1
-num_actors: 10
+num_actors: 128
 actor_group_size: 1
 envs_per_actor: 8
 num_policy_workers: 4
-qsize: 12
+qsize: 5
 min_num_requests: -1
 
 ddp_init_methods:

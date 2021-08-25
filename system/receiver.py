@@ -50,7 +50,8 @@ class Receiver:
 
     def _unpack_msg(self, timing, msg):
         self.recv_cnt += 1
-        msg = msg[2:]
+        num_valid_agents = int(msg[2].decode('ascii'))
+        msg = msg[3:]
         assert len(msg) % 2 == 0
         buffer = self.buffers[int(msg[-1].decode('ascii'))]
 
@@ -65,7 +66,7 @@ class Receiver:
                 decompressed = blosc.decompress(v)
             decompression_time += time.time() - tik
 
-            array = np.frombuffer(decompressed, dtype=np.float32).reshape(*shape)
+            array = np.frombuffer(decompressed, dtype=np.float32).reshape(shape[0], int(shape[1] // self.cfg.num_agents * num_valid_agents), *shape[2:])
             seg_dict[k] = array
 
         socket_ident, summary_info = msg[-4:-2]

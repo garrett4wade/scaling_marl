@@ -95,7 +95,7 @@ class HNSEnv:
         else:
             padded_obs = {}
             for k, v in dict_obs.items():
-                pad = [(self.max_n_agents - v.shape[0], 0)] + [(0, 0) for _ in range(len(v.shape) - 1)]
+                pad = [(0, self.max_n_agents - v.shape[0])] + [(0, 0) for _ in range(len(v.shape) - 1)]
                 padded_obs[k] = np.pad(v, pad)
             return padded_obs
 

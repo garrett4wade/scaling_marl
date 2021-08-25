@@ -64,9 +64,15 @@ class Transmitter:
         msg = []
         mem_data = {}
         total_mem = 0
+        num_valid_agents = int(self.buffers[buffer_id].mask_aa_obs_spoof[slot, 0, 0, 0].sum().item()) + 1
+        msg.append(str(num_valid_agents).encode('ascii'))
+        tmp_valid_agents = self.buffers[buffer_id].mask_aa_obs_spoof[slot, np.random.randint(0, self.cfg.episode_length), np.random.randint(0, self.cfg.envs_per_actor // self.cfg.num_splits), np.random.randint(0, num_valid_agents)].sum()
+        assert tmp_valid_agents == num_valid_agents - 1, (tmp_valid_agents, num_valid_agents, self.buffers[buffer_id].mask_aa_obs_spoof[slot, 0, 0])
         for k, data in self.buffers[buffer_id].storage.items():
+            valid_data = data[slot, :, :, :num_valid_agents]
+            valid_data = valid_data.reshape(valid_data.shape[0], -1, *valid_data.shape[3:])
             # lz4 is the most cost-efficient compression choice, ~7.5x compression in ~1.5s in 27m_vs_30m env
-            compressed = blosc.compress(data[slot].tobytes(), typesize=4, cname='lz4')
+            compressed = blosc.compress(valid_data.tobytes(), typesize=4, cname='lz4')
             mem_data[k] = mem = getsizeof(compressed) / 1024**2
             total_mem += mem
             msg.extend([k.encode('ascii'), compressed])

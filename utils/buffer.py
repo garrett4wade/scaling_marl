@@ -46,7 +46,7 @@ class ReplayBuffer:
         # TODO: support n-step bootstrap
         # self.bootstrap_step = bootstrap_step = cfg.bootstrap_step
 
-    def _init_storage(self):
+    def _init_storage(self, is_learner=False):
         # initialize storage
         # TODO: replace get_ppo_storage_specs with get_${algorithm}_storage_specs
         (self.storage_specs, self.policy_input_keys,
@@ -59,7 +59,10 @@ class ReplayBuffer:
             t = self.episode_length if not select else self.episode_length // self.data_chunk_length
             t = t + 1 if bootstrap else t
             bs = self.envs_per_seg if per_seg else self.envs_per_slot
-            return (self.num_slots, t, bs, self.num_agents)
+            if not is_learner:
+                return (self.num_slots, t, bs, self.num_agents)
+            else:
+                return (self.num_slots, t, bs * self.num_agents)
 
         for storage_spec in self.storage_specs:
             name, shape, dtype, bootstrap, init_value = storage_spec
@@ -307,7 +310,7 @@ class LearnerBuffer(ReplayBuffer):
 
         self.sample_reuse = cfg.sample_reuse
 
-        super()._init_storage()
+        super()._init_storage(is_learner=True)
 
         # tracer storage, e.g. n-step return, GAE, V-trace
         # TODO: add other types of trace storage
@@ -369,24 +372,32 @@ class LearnerBuffer(ReplayBuffer):
 
     def put(self, seg_dict):
         # move pointer forward without waiting for the completion of copying
+        bs = seg_dict['rewards'].shape[1]
         with self._ptr_lock:
             slot_id = self._global_ptr[0].item()
             position_id = self._global_ptr[1].item()
-            if position_id == self.slots_per_update - 1:
+            overflow = position_id + bs >= self.rewards.shape[2]
+            if overflow:
                 self._allocate()
+                self._global_ptr[1] = position_id + bs - self.rewards.shape[2]
+                new_slot_id = self._global_ptr[0].item()
             else:
-                self._global_ptr[1] += 1
+                self._global_ptr[1] += bs
 
         # copy data into main storage
-        batch_slice = slice(position_id * self.envs_per_seg, (position_id + 1) * self.envs_per_seg)
+        if overflow:
+            remaining = position_id + bs - self.rewards.shape[2]
+            for k, v in seg_dict.items():
+                self.storage[k][slot_id, :, position_id:] = v[:, :self.rewards.shape[2] - position_id]
+                self.storage[k][new_slot_id, :, :remaining] = v[:, self.rewards.shape[2] - position_id:]
+        else:
+            for k, v in seg_dict.items():
+                self.storage[k][slot_id, :, position_id: position_id + bs] = v
 
-        for k, v in seg_dict.items():
-            self.storage[k][slot_id, :, batch_slice] = v
-
-        self.total_timesteps += self.envs_per_seg * self.episode_length
+        self.total_timesteps += bs * self.episode_length
 
         # mark the slot as readable if needed
-        if position_id == self.slots_per_update - 1:
+        if overflow:
             with self._read_ready:
                 self._used_times[slot_id] = 0
                 super()._mark_as_readable(slot_id)
@@ -424,10 +435,10 @@ class LearnerBuffer(ReplayBuffer):
             if 'rnn_states' not in k and k != 'fct_masks' and k != 'rewards':
                 # flatten first 3 dims
                 # [T, B, A, D] -> [T * B * A, D]
-                output_tensors[k] = flatten(self.storage[k][slot, :self.episode_length], 3)
+                output_tensors[k] = flatten(self.storage[k][slot, :self.episode_length], 2)
 
-        output_tensors['v_target'] = flatten(self.v_target[slot], 3)
-        output_tensors['advantages'] = flatten(self.advantages[slot], 3)
+        output_tensors['v_target'] = flatten(self.v_target[slot], 2)
+        output_tensors['advantages'] = flatten(self.advantages[slot], 2)
 
         # NOTE: following 2 lines are for debuggin only, which WILL SIGNIFICANTLY AFFECT SYSTEM PERFORMANCE
         # for k, v in output_tensors.items():
@@ -445,13 +456,12 @@ class LearnerBuffer(ReplayBuffer):
         output_tensors = {}
 
         def _cast(x):
-            # [T, B, A, D] -> [T, B * A, D] -> [L, B * A * (T/L), D]
-            x = x.reshape(x.shape[0], -1, *x.shape[3:])
+            # [T, B, D] -> [L, B * (T/L), D]
             return to_chunk(x, self.num_chunks)
 
         def _cast_h(h):
-            # [T/L, B, A, rN, D] -> [T/L * B * A, rN, D] -> [rN, T/L * B * A, D]
-            return h.reshape(-1, *h.shape[3:]).swapaxes(0, 1)
+            # [T/L, B, rN, D] -> [T/L * B, rN, D] -> [rN, T/L * B, D]
+            return h.reshape(-1, *h.shape[2:]).swapaxes(0, 1)
 
         for k in self.storage_keys:
             # we don't need fct_masks/rewards for policy learning, because they are used in v_target computation

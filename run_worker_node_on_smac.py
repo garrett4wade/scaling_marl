@@ -11,13 +11,16 @@ from envs.hns.HNS_Env import HNSEnv
 from system.worker_node import WorkerNode
 
 
-def build_actor_env(rank, cfg):
+def build_actor_env(rank, seed_idx, cfg):
     assert cfg.env_name == "HideAndSeek"
     env_config = deepcopy(yaml.load(open('./envs/hns/configs/hide_and_seek_paper.yaml', 'r'), Loader=yaml.FullLoader))
+    np.random.seed(seed_idx)
     env_config['n_hiders'] = np.random.randint(1, 4)
     env_config['n_seekers'] = np.random.randint(1, 4)
+    # print(f'seed idx {seed_idx}, hiders {env_config["n_hiders"]}, seekers {env_config["n_seekers"]}')
     env = HNSEnv('HideAndSeek', env_config)
     env.seed(cfg.seed + rank * 10000)
+    np.random.seed(cfg.seed)
     return env
 
 

@@ -144,9 +144,9 @@ class Reanalyzer:
 
         # this minimal requirement ensures there are at most 1 slot per tracer in the queue
         # waiting for trace computation
-        min_num_waiting_slots = self.cfg.num_value_tracers_per_trainer
+        min_num_waiting_slots = 1
         # waiting in queues + # reanalyzer + # tracer + 1 in trainer + 1 readable + 1 being written
-        assert (min_num_waiting_slots + self.cfg.num_value_tracers_per_trainer + self.cfg.num_reanalyzers_per_trainer +
+        assert (self.cfg.num_value_tracers_per_trainer + self.cfg.num_reanalyzers_per_trainer +
                 2 < self.cfg.qsize), 'please increase qsize!'
 
         self._init(timing)

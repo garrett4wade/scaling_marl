@@ -149,7 +149,7 @@ class ActorWorker:
         for i in range(self.num_splits):
             self.env_runners.append(
                 DummyVecEnv([
-                    lambda: self.env_fn(self.worker_idx * self.envs_per_actor + i * self.envs_per_split + j, self.cfg)
+                    lambda: self.env_fn(self.worker_idx * self.envs_per_actor + i * self.envs_per_split + j, self.worker_idx * self.envs_per_actor + i * self.envs_per_split, self.cfg)
                     for j in range(self.envs_per_split)
                 ]))
             safe_put(self.report_queue, dict(initialized_env=(self.local_rank, i)), queue_name='report')
