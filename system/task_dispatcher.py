@@ -173,7 +173,7 @@ class TaskDispatcher:
             policy_version = infos['iteration']
             self.policy_version[policy_id] = policy_version
             self.consumed_num_steps[policy_id] = policy_version * self.transitions_per_batch
-            self.accumulated_too_much_experience[policy_id] = infos['buffer_util'] >= 0.75
+            self.accumulated_too_much_experience[policy_id] = infos['buffer_util'] >= 1.1
             self.accumulated_too_few_experience[policy_id] = infos['buffer_util'] <= 0.25
 
         if 'workertask' in msg[0].decode('ascii'):
