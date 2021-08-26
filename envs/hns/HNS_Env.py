@@ -1,9 +1,6 @@
 import numpy as np
 from copy import deepcopy
 from utils.multi_discrete import MultiDiscrete
-from .envs.box_locking import BoxLockingEnv
-from .envs.blueprint_construction import BlueprintConstructionEnv
-from .envs.hide_and_seek import HideAndSeekEnv
 
 
 class HNSEnv:
@@ -12,12 +9,14 @@ class HNSEnv:
         self.max_n_agents = self.env_config['max_n_agents'] + 1  # max others + self
         if map_name == "BoxLocking":
             self.num_agents = self.env_config['n_agents']
-            self.env = BoxLockingEnv(**self.env_config)
+            from envs.hns.envs.box_locking import make_env
+            self.env = make_env(**self.env_config)
             self.ordered_obs_keys = ['agent_qpos_qvel', 'box_obs', 'ramp_obs', 'observation_self']
             self.ordered_obs_mask_keys = ['mask_aa_obs', 'mask_ab_obs', 'mask_ar_obs', None]
         elif map_name == "BlueprintConstruction":
             self.num_agents = self.env_config['n_agents']
-            self.env = BlueprintConstructionEnv(**self.env_config)
+            from envs.hns.envs.blueprint_construction import make_env
+            self.env = make_env(**self.env_config)
             self.ordered_obs_keys = [
                 'agent_qpos_qvel', 'box_obs', 'ramp_obs', 'construction_site_obs', 'observation_self'
             ]
@@ -25,7 +24,8 @@ class HNSEnv:
         elif map_name == "HideAndSeek":
             self.num_seekers = self.env_config['n_seekers']
             self.num_hiders = self.env_config['n_hiders']
-            self.env = HideAndSeekEnv(**self.env_config)
+            from envs.hns.envs.hide_and_seek import make_env
+            self.env = make_env(**self.env_config)
             self.num_agents = self.env_config['n_seekers'] + self.env_config['n_hiders']
             self.ordered_obs_keys = [
                 'agent_qpos_qvel', 'box_obs', 'ramp_obs', 'foodict_obsbs', 'observation_self', 'lidar'
@@ -59,7 +59,9 @@ class HNSEnv:
 
             # deal with dict obs space
             obs_space = {}
-            for key in self.ordered_obs_keys + ['mask_aa_obs', 'mask_ab_obs', 'mask_ar_obs', 'mask_aa_obs_spoof', 'mask_ab_obs_spoof']:
+            for key in self.ordered_obs_keys + [
+                    'mask_aa_obs', 'mask_ab_obs', 'mask_ar_obs', 'mask_aa_obs_spoof', 'mask_ab_obs_spoof'
+            ]:
                 if key in self.env.observation_space.spaces.keys():
                     space = tuple(self.env.observation_space[key].shape)
                     if 'mask' not in key:
@@ -76,10 +78,9 @@ class HNSEnv:
 
         self.episode_return = 0
         self.elapsed_episodes = 0
-        self.hide_and_seek_return = 0
         self.summary_keys = [
-            'max_box_move_prep', 'max_box_move', 'num_box_lock_prep', 'num_box_lock', 'max_ramp_move_prep', 'max_ramp_move',
-            'num_ramp_lock_prep', 'num_ramp_lock'
+            'max_box_move_prep', 'max_box_move', 'num_box_lock_prep', 'num_box_lock', 'max_ramp_move_prep',
+            'max_ramp_move', 'num_ramp_lock_prep', 'num_ramp_lock'
         ]
         self.accumulated_summaries = {k: 0.0 for k in self.summary_keys}
 
@@ -125,9 +126,6 @@ class HNSEnv:
 
         dict_obs, rewards, done, info = self.env.step(actions_env)
         self.episode_return += rewards[0]
-        clipped_reward = rewards[0] if rewards[0] > -10 else rewards[0] + 10
-        assert -0.1 - 1e-4 <= clipped_reward <= 0.1 + 1e-4
-        self.hide_and_seek_return += clipped_reward
         if done:
             for k in self.accumulated_summaries.keys():
                 self.accumulated_summaries[k] += info[k]
@@ -135,7 +133,6 @@ class HNSEnv:
             self.elapsed_episodes += 1
             info['episode_return'] = self.episode_return
             info['elapsed_episodes'] = self.elapsed_episodes
-            info['hide_and_seek_return'] = self.hide_and_seek_return
         if 'lidar' in dict_obs.keys():
             dict_obs['lidar'] = np.transpose(dict_obs['lidar'], (0, 2, 1))
         dict_obs = {

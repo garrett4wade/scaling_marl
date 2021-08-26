@@ -13,7 +13,7 @@ class Agents(EnvModule):
         Add Agents to the environment.
         Args:
             n_agents (int): number of agents
-            placement_fn (fn or list of fns): See mae_envs.modules.util:rejection_placement for
+            placement_fn (fn or list of fns): See envs.hns.modules.util:rejection_placement for
                 spec. If list of functions, then it is assumed there is one function given
                 per agent
             color (tuple or list of tuples): rgba for agent. If list of tuples, then it is
@@ -67,6 +67,7 @@ class Agents(EnvModule):
     def observation_step(self, env, sim):
         qpos = sim.data.qpos.copy()
         qvel = sim.data.qvel.copy()
+
         agent_qpos = qpos[self.agent_qpos_idxs]
         agent_qvel = qvel[self.agent_qvel_idxs]
         agent_angle = agent_qpos[:, [-1]] - np.pi / 2  # Rotate the angle to match visual front
@@ -76,13 +77,14 @@ class Agents(EnvModule):
             agent_qpos = np.concatenate([agent_qpos[:, :-1], polar_angle], -1)
         agent_angle = normalize_angles(agent_angle)
         obs = {'agent_qpos_qvel': agent_qpos_qvel, 'agent_angle': agent_angle, 'agent_pos': agent_qpos[:, :3]}
+
         return obs
 
 
 class AgentManipulation(EnvModule):
     '''
         Adding this module is necessary for the grabbing mechanic implemented in GrabObjWrapper
-        (found in mae_envs/wrappers/manipulation.py) to work correctly.
+        (found in envs.hns/wrappers/manipulation.py) to work correctly.
     '''
     @store_args
     def __init__(self):

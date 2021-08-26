@@ -17,7 +17,7 @@ class Boxes(EnvModule):
             n_elongated_boxes (int or (int, int)): Number of elongated boxes. If tuple of ints,
                 every episode the number of elongated boxes is drawn uniformly from
                 range(n_elongated_boxes[0], min(curr_n_boxes, n_elongated_boxes[1]) + 1)
-            placement_fn (fn or list of fns): See mae_envs.modules.util:rejection_placement for spec
+            placement_fn (fn or list of fns): See envs.hns.modules.util:rejection_placement for spec
                 If list of functions, then it is assumed there is one function given per box
             box_size (float): box size
             box_mass (float): box mass
@@ -148,7 +148,7 @@ class Ramps(EnvModule):
     Add moveable ramps to the environment.
         Args:
             n_ramps (int): number of ramps
-            placement_fn (fn or list of fns): See mae_envs.modules.util:rejection_placement for spec
+            placement_fn (fn or list of fns): See envs.hns.modules.util:rejection_placement for spec
                 If list of functions, then it is assumed there is one function given per ramp
             friction (float): ramp friction
             polar_obs (bool): Give observations about rotation in polar coordinates
@@ -227,7 +227,7 @@ class Cylinders(EnvModule):
                 (Note that all cylinders within an episode still share the same height)
             make_static (bool): Makes the cylinders static, preventing them from moving. Note that
                 the observations (and observation keys) are different when make_static=True
-            placement_fn (fn or list of fns): See mae_envs.modules.util:rejection_placement for spec
+            placement_fn (fn or list of fns): See envs.hns.modules.util:rejection_placement for spec
                 If list of functions, then it is assumed there is one function given per cylinder
             rgba ([float, float, float, float]): Determines cylinder color.
     '''

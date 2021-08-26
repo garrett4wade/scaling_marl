@@ -315,7 +315,6 @@ class RandomWalls(EnvModule):
     '''
     @store_args
     def __init__(self,
-                 n_agents,
                  grid_size,
                  num_rooms,
                  min_room_size,
@@ -327,7 +326,6 @@ class RandomWalls(EnvModule):
                  gen_door_obs=True,
                  prob_outside_walls=1.0,
                  low_outside_walls=False):
-        self.n_agents = n_agents
         pass
 
     def build_world_step(self, env, floor, floor_size):
@@ -362,21 +360,14 @@ class RandomWalls(EnvModule):
         # Convert doors into mujoco frame
         if self.gen_door_obs:
             self.door_obs = construct_door_obs(np.array(doors), floor_size, self.grid_size)
-        else:
-            self.door_obs = None
 
         walls_to_mujoco(floor, floor_size, self.grid_size, walls, friction=self.friction)
         add_walls_to_grid(env.placement_grid, walls)
         return True
 
     def observation_step(self, env, sim):
-        if self.door_obs is not None:
-            one_door_dim = self.door_obs[0].shape[-1]
-            vector_door_obs = np.zeros((1, self.max_num_doors * one_door_dim))
-            current_door_dim = self.door_obs.reshape(1, -1).shape[-1]
-            vector_door_obs[0][:current_door_dim] = self.door_obs.reshape(1, -1).copy()
-            vector_door_obs = vector_door_obs.repeat(self.n_agents, axis=0)
-            obs = {'door_obs': self.door_obs, 'vector_door_obs': vector_door_obs}
+        if self.gen_door_obs:
+            obs = {'door_obs': self.door_obs}
         else:
             obs = {}
 
@@ -403,15 +394,7 @@ class WallScenarios(EnvModule):
                 This is just used for pretty rendering
     '''
     @store_args
-    def __init__(self,
-                 n_agents,
-                 grid_size,
-                 door_size,
-                 scenario,
-                 friction=None,
-                 p_door_dropout=0.0,
-                 low_outside_walls=False):
-        self.n_agents = n_agents
+    def __init__(self, grid_size, door_size, scenario, friction=None, p_door_dropout=0.0, low_outside_walls=False):
         assert scenario in ['var_quadrant', 'quadrant', 'half', 'var_tri', 'empty']
 
     def build_world_step(self, env, floor, floor_size):
@@ -431,7 +414,6 @@ class WallScenarios(EnvModule):
                 walls_to_split = [new_walls[wall_to_split]]
             else:
                 walls_to_split = new_walls
-            self.max_num_doors = len(new_walls)
         elif self.scenario == 'half':
             walls_to_split += [Wall([self.grid_size - 1, self.grid_size // 2], [0, self.grid_size // 2])]
         elif self.scenario == 'var_tri':
@@ -484,7 +466,6 @@ class WallScenarios(EnvModule):
 
         # Add doors
         new_walls, doors = split_walls(walls_to_split, self.door_size, random_state=env._random_state)
-
         walls += new_walls
 
         env.metadata['doors'] = np.array(doors)
@@ -501,12 +482,8 @@ class WallScenarios(EnvModule):
 
     def observation_step(self, env, sim):
         if self.door_obs is not None:
-            one_door_dim = self.door_obs[0].shape[-1]
-            vector_door_obs = np.zeros((1, self.max_num_doors * one_door_dim))
-            current_door_dim = self.door_obs.reshape(1, -1).shape[-1]
-            vector_door_obs[0][:current_door_dim] = self.door_obs.reshape(1, -1).copy()
-            vector_door_obs = vector_door_obs.repeat(self.n_agents, axis=0)
-            obs = {'door_obs': self.door_obs, 'vector_door_obs': vector_door_obs}
+            obs = {'door_obs': self.door_obs}
         else:
             obs = {}
+
         return obs

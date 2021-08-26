@@ -4,3 +4,4 @@
 *wandb*
 models/*
 *.pyc
+env_test.py

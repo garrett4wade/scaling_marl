@@ -2,12 +2,10 @@ import gym
 import numpy as np
 from copy import deepcopy
 from envs.hns.envs.base import Base
-from envs.hns.wrappers.multi_agent import SplitMultiAgentActions, SplitObservations, SelectKeysWrapper
-# from envs.hns.wrappers.multi_agent import JoinMultiAgentActions
+from envs.hns.wrappers.multi_agent import (SplitMultiAgentActions, SplitObservations, SelectKeysWrapper)
 from envs.hns.wrappers.util import (DiscretizeActionWrapper, ConcatenateObsWrapper, MaskActionWrapper,
                                     SpoofEntityWrapper, DiscardMujocoExceptionEpisodes, AddConstantObservationsWrapper)
-from envs.hns.wrappers.manipulation import (GrabObjWrapper, GrabClosestWrapper, LockObjWrapper, LockAllWrapper,
-                                            TimeWrapper)
+from envs.hns.wrappers.manipulation import (GrabObjWrapper, GrabClosestWrapper, LockObjWrapper, LockAllWrapper)
 from envs.hns.wrappers.lidar import Lidar
 from envs.hns.wrappers.line_of_sight import (AgentAgentObsMask2D, AgentGeomObsMask2D, AgentSiteObsMask2D)
 from envs.hns.wrappers.prep_phase import (PreparationPhase, NoActionsInPrepPhase, MaskPrepPhaseAction)
@@ -106,7 +104,7 @@ class HideAndSeekRewardWrapper(gym.Wrapper):
                     Seekers recieve 1.0 if any seeker sees a hider.
             reward_scale (float): scales the reward by this factor
     '''
-    def __init__(self, env, n_hiders, n_seekers, rew_type='selfish', reward_scale=0.1):
+    def __init__(self, env, n_hiders, n_seekers, rew_type='selfish', reward_scale=1.0):
         super().__init__(env)
         self.n_agents = self.unwrapped.n_agents
         self.rew_type = rew_type
@@ -120,11 +118,11 @@ class HideAndSeekRewardWrapper(gym.Wrapper):
 
         # Agent names are used to plot agent-specific rewards on tensorboard
         self.unwrapped.agent_names = [f'hider{i}' for i in range(self.n_hiders)] + \
-                                     [f'seeker{i}' for i in range(
-                                         self.n_seekers)]
+                                     [f'seeker{i}' for i in range(self.n_seekers)]
 
     def step(self, action):
         obs, rew, done, info = self.env.step(action)
+
         this_rew = np.ones((self.n_agents, ))
         this_rew[:self.n_hiders][np.any(obs['mask_aa_obs'][self.n_hiders:, :self.n_hiders], 0)] = -1.0
         this_rew[self.n_hiders:][~np.any(obs['mask_aa_obs'][self.n_hiders:, :self.n_hiders], 1)] = -1.0
@@ -213,80 +211,65 @@ def outside_quadrant_placement(grid, obj_size, metadata, random_state):
     return poses[random_state.randint(0, 3)]
 
 
-def nearwall_placement(grid, obj_size, metadata, random_state):
-    '''
-        Places object outside of the bottom right quadrant of the playing field
-    '''
-    grid_size = len(grid)
-    qsize = metadata['quadrant_size']
-    # left down corner is [1,1]([x,y],x is x-axis is y-axis)
-    poses = [
-        np.array([random_state.randint(grid_size - qsize, grid_size - obj_size[0] - 1), qsize + obj_size[0]]),
-        np.array([grid_size - qsize - obj_size[0],
-                  random_state.randint(1, qsize - obj_size[1] - 1)]),
-    ]
-    return poses[random_state.randint(0, 2)]
-
-
-def HideAndSeekEnv(n_substeps=15,
-                   horizon=80,
-                   deterministic_mode=True,
-                   floor_size=6.0,
-                   grid_size=30,
-                   door_size=2,
-                   n_hiders=2,
-                   n_seekers=2,
-                   max_n_agents=None,
-                   n_boxes=2,
-                   n_ramps=1,
-                   n_elongated_boxes=0,
-                   rand_num_elongated_boxes=False,
-                   n_min_boxes=None,
-                   box_size=2.0,
-                   boxid_obs=False,
-                   box_only_z_rot=True,
-                   rew_type='joint_zero_sum',
-                   lock_box=True,
-                   grab_box=True,
-                   lock_ramp=False,
-                   lock_type='all_lock_team_specific',
-                   lock_grab_radius=0.25,
-                   lock_out_of_vision=True,
-                   grab_exclusive=False,
-                   grab_out_of_vision=False,
-                   grab_selective=False,
-                   box_floor_friction=0.2,
-                   other_friction=0.01,
-                   gravity=[0, 0, -50],
-                   action_lims=(-0.9, 0.9),
-                   polar_obs=True,
-                   scenario='quadrant',
-                   quadrant_game_hider_uniform_placement=False,
-                   p_door_dropout=0.0,
-                   n_rooms=4,
-                   random_room_number=True,
-                   prob_outside_walls=1.0,
-                   n_lidar_per_agent=0,
-                   visualize_lidar=False,
-                   compress_lidar_scale=None,
-                   hiders_together_radius=None,
-                   seekers_together_radius=None,
-                   prep_fraction=0.4,
-                   prep_obs=True,
-                   team_size_obs=False,
-                   restrict_rect=[0.1, 0.1, 5.9, 5.9],
-                   penalize_objects_out=True,
-                   n_food=0,
-                   food_radius=None,
-                   food_respawn_time=None,
-                   max_food_health=1,
-                   food_together_radius=None,
-                   food_rew_type='selfish',
-                   eat_when_caught=False,
-                   food_reward_scale=1.0,
-                   food_normal_centered=False,
-                   food_box_centered=False,
-                   n_food_cluster=1):
+def make_env(n_substeps=15,
+             horizon=80,
+             deterministic_mode=False,
+             floor_size=6.0,
+             grid_size=30,
+             door_size=2,
+             n_hiders=1,
+             n_seekers=1,
+             max_n_agents=None,
+             n_boxes=2,
+             n_ramps=1,
+             n_elongated_boxes=0,
+             rand_num_elongated_boxes=False,
+             n_min_boxes=None,
+             box_size=0.5,
+             boxid_obs=False,
+             box_only_z_rot=True,
+             rew_type='joint_zero_sum',
+             lock_box=True,
+             grab_box=True,
+             lock_ramp=True,
+             lock_type='any_lock_specific',
+             lock_grab_radius=0.25,
+             lock_out_of_vision=True,
+             grab_exclusive=False,
+             grab_out_of_vision=False,
+             grab_selective=False,
+             box_floor_friction=0.2,
+             other_friction=0.01,
+             gravity=[0, 0, -50],
+             action_lims=(-0.9, 0.9),
+             polar_obs=True,
+             scenario='quadrant',
+             quadrant_game_hider_uniform_placement=False,
+             p_door_dropout=0.0,
+             n_rooms=4,
+             random_room_number=True,
+             prob_outside_walls=1.0,
+             n_lidar_per_agent=0,
+             visualize_lidar=False,
+             compress_lidar_scale=None,
+             hiders_together_radius=None,
+             seekers_together_radius=None,
+             prep_fraction=0.4,
+             prep_obs=False,
+             team_size_obs=False,
+             restrict_rect=None,
+             penalize_objects_out=False,
+             n_food=0,
+             food_radius=None,
+             food_respawn_time=None,
+             max_food_health=1,
+             food_together_radius=None,
+             food_rew_type='selfish',
+             eat_when_caught=False,
+             food_reward_scale=1.0,
+             food_normal_centered=False,
+             food_box_centered=False,
+             n_food_cluster=1):
 
     grab_radius_multiplier = lock_grab_radius / box_size
     lock_radius_multiplier = lock_grab_radius / box_size
@@ -301,8 +284,7 @@ def HideAndSeekEnv(n_substeps=15,
 
     if scenario == 'randomwalls':
         env.add_module(
-            RandomWalls(n_agents=n_hiders + n_seekers,
-                        grid_size=grid_size,
+            RandomWalls(grid_size=grid_size,
                         num_rooms=n_rooms,
                         random_room_number=random_room_number,
                         min_room_size=6,
@@ -311,7 +293,7 @@ def HideAndSeekEnv(n_substeps=15,
                         gen_door_obs=False))
         box_placement_fn = uniform_placement
         ramp_placement_fn = uniform_placement
-        cell_size = env.floor_size / grid_size
+        cell_size = floor_size / grid_size
 
         first_hider_placement = uniform_placement
         if hiders_together_radius is not None:
@@ -322,8 +304,7 @@ def HideAndSeekEnv(n_substeps=15,
             close_to_first_hider_placement = close_to_other_object_placement("agent", 0, "hiders_together_radius")
 
             agent_placement_fn = [first_hider_placement] + \
-                                 [close_to_first_hider_placement] * \
-                (n_hiders - 1)
+                                 [close_to_first_hider_placement] * (n_hiders - 1)
         else:
             agent_placement_fn = [first_hider_placement] * n_hiders
 
@@ -338,24 +319,21 @@ def HideAndSeekEnv(n_substeps=15,
                                                                               "seekers_together_radius")
 
             agent_placement_fn += [first_seeker_placement] + \
-                                  [close_to_first_seeker_placement] * \
-                (n_seekers - 1)
+                                  [close_to_first_seeker_placement] * (n_seekers - 1)
         else:
             agent_placement_fn += [first_seeker_placement] * (n_seekers)
 
     elif scenario == 'quadrant':
         env.add_module(
-            WallScenarios(n_agents=n_hiders + n_seekers,
-                          grid_size=grid_size,
+            WallScenarios(grid_size=grid_size,
                           door_size=door_size,
                           scenario=scenario,
                           friction=other_friction,
                           p_door_dropout=p_door_dropout))
         box_placement_fn = quadrant_placement
-        ramp_placement_fn = nearwall_placement  # uniform_placement
+        ramp_placement_fn = uniform_placement
         hider_placement = uniform_placement if quadrant_game_hider_uniform_placement else quadrant_placement
-        agent_placement_fn = [hider_placement] * \
-            n_hiders + [outside_quadrant_placement] * n_seekers
+        agent_placement_fn = [hider_placement] * n_hiders + [outside_quadrant_placement] * n_seekers
     else:
         raise ValueError(f"Scenario {scenario} not supported.")
     env.add_module(
@@ -392,7 +370,7 @@ def HideAndSeekEnv(n_substeps=15,
         else:
             first_food_placement = uniform_placement
         if food_together_radius is not None:
-            cell_size = env.floor_size / grid_size
+            cell_size = floor_size / grid_size
             ftr_in_cells = np.ceil(food_together_radius / cell_size).astype(int)
 
             env.metadata['food_together_radius'] = ftr_in_cells
@@ -412,7 +390,7 @@ def HideAndSeekEnv(n_substeps=15,
         env.add_module(FloorAttributes(friction=box_floor_friction))
     env.add_module(WorldConstants(gravity=gravity))
     env.reset()
-    keys_self = ['agent_qpos_qvel', 'hider', 'prep_obs', 'current_step']  # , 'vector_door_obs']
+    keys_self = ['agent_qpos_qvel', 'hider', 'prep_obs']
     keys_mask_self = ['mask_aa_obs']
     keys_external = ['agent_qpos_qvel']
     keys_copy = ['you_lock', 'team_lock', 'ramp_you_lock', 'ramp_team_lock']
@@ -425,7 +403,6 @@ def HideAndSeekEnv(n_substeps=15,
     hider_obs = np.array([[1]] * n_hiders + [[0]] * n_seekers)
     env = AddConstantObservationsWrapper(env, new_obs={'hider': hider_obs})
     env = HideAndSeekRewardWrapper(env, n_hiders=n_hiders, n_seekers=n_seekers, rew_type=rew_type)
-    env = TimeWrapper(env, horizon)
     if restrict_rect is not None:
         env = RestrictAgentsRect(env, restrict_rect=restrict_rect, penalize_objects_out=penalize_objects_out)
     env = PreparationPhase(env, prep_fraction=prep_fraction)
@@ -496,46 +473,26 @@ def HideAndSeekEnv(n_substeps=15,
 
     if prep_obs:
         env = TrackStatWrapper(env, np.max(n_boxes), n_ramps, n_food)
-    env = SplitObservations(env, keys_self + keys_mask_self, keys_copy=keys_copy)
-    if n_boxes:
-        env = SpoofEntityWrapper(env, np.max(n_boxes), ['box_obs', 'you_lock', 'team_lock', 'obj_lock'],
-                                 ['mask_ab_obs'])
+    env = SplitObservations(env, keys_self + keys_mask_self, keys_copy=keys_copy, keys_self_matrices=keys_mask_self)
+    env = SpoofEntityWrapper(env, np.max(n_boxes), ['box_obs', 'you_lock', 'team_lock', 'obj_lock'], ['mask_ab_obs'])
     if n_food:
         env = SpoofEntityWrapper(env, n_food, ['food_obs'], ['mask_af_obs'])
-    keys_mask_external += ['mask_ab_obs_spoof', 'mask_af_obs_spoof', 'mask_aa_obs_spoof']
+    keys_mask_external += ['mask_ab_obs_spoof', 'mask_af_obs_spoof']
     if max_n_agents is not None:
         env = SpoofEntityWrapper(env, max_n_agents, ['agent_qpos_qvel', 'hider', 'prep_obs'], ['mask_aa_obs'])
+        keys_mask_self.append('mask_aa_obs_spoof')
     env = LockAllWrapper(env, remove_object_specific_lock=True)
-    if not grab_out_of_vision and grab_box and np.max(n_boxes) > 0:
+    if not grab_out_of_vision and grab_box:
         env = MaskActionWrapper(env, 'action_pull', ['mask_ab_obs'] + (['mask_ar_obs'] if n_ramps > 0 else []))
-    if not grab_selective and grab_box and np.max(n_boxes) > 0:
+    if not grab_selective and grab_box:
         env = GrabClosestWrapper(env)
     env = NoActionsInPrepPhase(env, np.arange(n_hiders, n_hiders + n_seekers))
-    env = DiscardMujocoExceptionEpisodes(env, n_hiders + n_seekers)
-    if np.max(n_boxes) > 0 and n_ramps > 0:
-        env = ConcatenateObsWrapper(
-            env, {
-                'agent_qpos_qvel': ['agent_qpos_qvel', 'hider', 'prep_obs'],
-                'box_obs': ['box_obs', 'you_lock', 'team_lock', 'obj_lock'],
-                'ramp_obs': ['ramp_obs'] + (['ramp_you_lock', 'ramp_team_lock', 'ramp_obj_lock'] if lock_ramp else [])
-            })
-    elif np.max(n_boxes) > 0:
-        env = ConcatenateObsWrapper(
-            env, {
-                'agent_qpos_qvel': ['agent_qpos_qvel', 'hider', 'prep_obs'],
-                'box_obs': ['box_obs', 'you_lock', 'team_lock', 'obj_lock']
-            })
-    elif n_ramps > 0:
-        env = ConcatenateObsWrapper(
-            env, {
-                'agent_qpos_qvel': ['agent_qpos_qvel', 'hider', 'prep_obs'],
-                'ramp_obs': ['ramp_obs'] + (['ramp_you_lock', 'ramp_team_lock', 'ramp_obj_lock'] if lock_ramp else [])
-            })
-    else:
-        env = ConcatenateObsWrapper(env, {'agent_qpos_qvel': ['agent_qpos_qvel', 'hider', 'prep_obs']})
-    env = SelectKeysWrapper(env,
-                            keys_self=keys_self,
-                            keys_external=keys_external,
-                            keys_mask=keys_mask_self + keys_mask_external,
-                            flatten=False)
+    env = DiscardMujocoExceptionEpisodes(env)
+    env = ConcatenateObsWrapper(
+        env, {
+            'agent_qpos_qvel': ['agent_qpos_qvel', 'hider', 'prep_obs'],
+            'box_obs': ['box_obs', 'you_lock', 'team_lock', 'obj_lock'],
+            'ramp_obs': ['ramp_obs'] + (['ramp_you_lock', 'ramp_team_lock', 'ramp_obj_lock'] if lock_ramp else [])
+        })
+    env = SelectKeysWrapper(env, keys_self=keys_self, keys_other=keys_external + keys_mask_self + keys_mask_external)
     return env

@@ -6,15 +6,18 @@ from envs.hns.wrappers.util import update_obs_space
 
 
 class Lidar(gym.ObservationWrapper):
-    """Creates LIDAR-type observations based on Mujoco raycast
+    '''
+        Creates LIDAR-type observations based on Mujoco raycast
 
-    Args:
-        n_lidar_per_agent (int): Number of concentric lidar rays per agent
-        lidar_range (float): Maximum range of lidar
-        compress_lidar_scale (float): Scale for non-linear compression of lidar range
-        visualize_lidar (bool): If true, visualize lidar using thin cylinders representing lidar rays
-                                (requires environment to create corresponding sites)
-    """
+        Args:
+            n_lidar_per_agent (int): Number of concentric lidar rays per agent
+            lidar_range (float): Maximum range of lidar
+            compress_lidar_scale (float): Scale for non-linear compression of
+                lidar range
+            visualize_lidar (bool): If true, visualize lidar using thin cylinders
+                representing lidar rays (requires environment to create corresponding
+                sites)
+    '''
     def __init__(self, env, n_lidar_per_agent=30, lidar_range=6.0, compress_lidar_scale=None, visualize_lidar=False):
         super().__init__(env)
         self.n_lidar_per_agent = n_lidar_per_agent

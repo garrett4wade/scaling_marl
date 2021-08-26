@@ -5,8 +5,7 @@ from mujoco_worldgen.util.geometry import raycast
 from envs.hns.wrappers.multi_agent import (SplitMultiAgentActions, SplitObservations, SelectKeysWrapper)
 from envs.hns.wrappers.util import (DiscretizeActionWrapper, MaskActionWrapper, DiscardMujocoExceptionEpisodes,
                                     SpoofEntityWrapper, AddConstantObservationsWrapper, ConcatenateObsWrapper)
-from envs.hns.wrappers.manipulation import (GrabObjWrapper, GrabClosestWrapper, TimeWrapper, LockObjWrapper,
-                                            LockAllWrapper)
+from envs.hns.wrappers.manipulation import (GrabObjWrapper, GrabClosestWrapper, LockObjWrapper, LockAllWrapper)
 from envs.hns.wrappers.lidar import Lidar
 from envs.hns.wrappers.team import TeamMembership
 from envs.hns.wrappers.line_of_sight import AgentAgentObsMask2D, AgentGeomObsMask2D
@@ -55,59 +54,50 @@ class ShelterRewardWrapper(gym.Wrapper):
     def step(self, action):
         obs, rew, done, info = self.env.step(action)
         target_geom = obs['static_cylinder_geom_idxs'][0, 0]
-        rew = rew + np.zeros((self.unwrapped.n_agents, ))
+        rew = rew + np.zeros((self.unwrapped.n_agents, 1))
         for pt in self.ray_start_points:
             _, collision_geom = raycast(self.sim, pt1=pt, geom2_id=target_geom)
             if collision_geom == target_geom:
                 rew -= 1
+
         rew *= self.reward_scale
         return obs, rew, done, info
 
 
-def make_env(args):
-    return ShelterConstructionEnv(args)
-
-
-def ShelterConstructionEnv(args,
-                           n_substeps=15,
-                           horizon=80,
-                           deterministic_mode=True,
-                           floor_size=6.0,
-                           grid_size=30,
-                           n_agents=1,
-                           objective_diameter=[1, 1],
-                           objective_placement='center',
-                           num_rays_per_side=25,
-                           shelter_reward_scale=1,
-                           n_boxes=2,
-                           n_elongated_boxes=0,
-                           box_size=0.5,
-                           box_only_z_rot=False,
-                           lock_box=True,
-                           grab_box=True,
-                           grab_selective=False,
-                           lock_grab_radius=0.25,
-                           lock_type='any_lock_specific',
-                           grab_exclusive=False,
-                           grab_out_of_vision=False,
-                           lock_out_of_vision=True,
-                           box_floor_friction=0.2,
-                           other_friction=0.01,
-                           gravity=[0, 0, -50],
-                           action_lims=(-0.9, 0.9),
-                           polar_obs=True,
-                           n_lidar_per_agent=0,
-                           visualize_lidar=False,
-                           compress_lidar_scale=None,
-                           boxid_obs=True,
-                           boxsize_obs=True,
-                           team_size_obs=False,
-                           additional_obs={}):
-
-    n_agents = args.num_agents
-    objective_placement = args.objective_placement
-    floor_size = args.floor_size
-    assert n_agents == 1, ("only 1 agents is supported, check the config.py.")
+def make_env(n_substeps=15,
+             horizon=80,
+             deterministic_mode=False,
+             floor_size=6.0,
+             grid_size=30,
+             n_agents=1,
+             objective_diameter=[1, 1],
+             objective_placement='center',
+             num_rays_per_side=25,
+             shelter_reward_scale=1,
+             n_boxes=2,
+             n_elongated_boxes=0,
+             box_size=0.5,
+             box_only_z_rot=False,
+             lock_box=True,
+             grab_box=True,
+             grab_selective=False,
+             lock_grab_radius=0.25,
+             lock_type='any_lock_specific',
+             grab_exclusive=False,
+             grab_out_of_vision=False,
+             lock_out_of_vision=True,
+             box_floor_friction=0.2,
+             other_friction=0.01,
+             gravity=[0, 0, -50],
+             action_lims=(-0.9, 0.9),
+             polar_obs=True,
+             n_lidar_per_agent=0,
+             visualize_lidar=False,
+             compress_lidar_scale=None,
+             boxid_obs=True,
+             boxsize_obs=True,
+             team_size_obs=False,
+             additional_obs={}):
 
     grab_radius_multiplier = lock_grab_radius / box_size
     lock_radius_multiplier = lock_grab_radius / box_size
@@ -120,8 +110,7 @@ def ShelterConstructionEnv(args,
                action_lims=action_lims,
                deterministic_mode=deterministic_mode)
 
-    env.add_module(
-        WallScenarios(n_agents=n_agents, grid_size=grid_size, door_size=2, scenario='empty', friction=other_friction))
+    env.add_module(WallScenarios(grid_size=grid_size, door_size=2, scenario='empty', friction=other_friction))
 
     if objective_placement == 'center':
         objective_placement_fn = center_placement
@@ -160,9 +149,9 @@ def ShelterConstructionEnv(args,
         env.add_module(FloorAttributes(friction=box_floor_friction))
     env.add_module(WorldConstants(gravity=gravity))
     env.reset()
-    keys_self = ['agent_qpos_qvel', 'current_step']
+    keys_self = ['agent_qpos_qvel', 'hider', 'prep_obs']
     keys_mask_self = ['mask_aa_obs']
-    keys_external = ['agent_qpos_qvel', 'vector_door_obs']
+    keys_external = ['agent_qpos_qvel']
     keys_copy = ['you_lock', 'team_lock', 'ramp_you_lock', 'ramp_team_lock']
     keys_mask_external = []
 
@@ -207,26 +196,22 @@ def ShelterConstructionEnv(args,
                     compress_lidar_scale=compress_lidar_scale)
         keys_copy += ['lidar']
         keys_external += ['lidar']
-    env = TimeWrapper(env, horizon)
+
     env = SplitObservations(env, keys_self + keys_mask_self, keys_copy=keys_copy)
     if n_agents == 1:
-        env = SpoofEntityWrapper(env, 2, ['agent_qpos_qvel'], ['mask_aa_obs'])
+        env = SpoofEntityWrapper(env, 2, ['agent_qpos_qvel', 'hider', 'prep_obs'], ['mask_aa_obs'])
     env = SpoofEntityWrapper(env, n_boxes, ['box_obs', 'you_lock', 'team_lock', 'obj_lock'], ['mask_ab_obs'])
     keys_mask_external += ['mask_ab_obs_spoof']
     env = LockAllWrapper(env, remove_object_specific_lock=True)
     if not grab_out_of_vision and grab_box:
-        # Can only pull if in vision
-        env = MaskActionWrapper(env, 'action_pull', ['mask_ab_obs'])
+        env = MaskActionWrapper(env, 'action_pull', ['mask_ab_obs'])  # Can only pull if in vision
     if not grab_selective and grab_box:
         env = GrabClosestWrapper(env)
-    env = DiscardMujocoExceptionEpisodes(env, n_agents)
-    env = ConcatenateObsWrapper(env, {
-        'agent_qpos_qvel': ['agent_qpos_qvel'],
-        'box_obs': ['box_obs', 'you_lock', 'team_lock', 'obj_lock']
-    })
-    env = SelectKeysWrapper(env,
-                            keys_self=keys_self,
-                            keys_external=keys_external,
-                            keys_mask=keys_mask_self + keys_mask_external,
-                            flatten=False)
+    env = DiscardMujocoExceptionEpisodes(env)
+    env = ConcatenateObsWrapper(
+        env, {
+            'agent_qpos_qvel': ['agent_qpos_qvel', 'hider', 'prep_obs'],
+            'box_obs': ['box_obs', 'you_lock', 'team_lock', 'obj_lock']
+        })
+    env = SelectKeysWrapper(env, keys_self=keys_self, keys_other=keys_external + keys_mask_self + keys_mask_external)
     return env

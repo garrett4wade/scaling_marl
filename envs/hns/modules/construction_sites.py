@@ -12,7 +12,7 @@ class ConstructionSites(EnvModule):
             n_sites (int or (int, int)): Number of construction sites. If tuple of ints, every
                 episode the number of sites is drawn uniformly from
                 range(n_sites[0], n_sites[1] + 1)
-            placement_fn (fn or list of fns): See mae_envs.modules.util:rejection_placement for spec
+            placement_fn (fn or list of fns): See envs.hns.modules.util:rejection_placement for spec
                 If list of functions, then it is assumed there is one function given per agent
             site_name (str): Name for the sites.
             site_size (float): Site size

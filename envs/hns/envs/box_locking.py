@@ -3,8 +3,7 @@ import numpy as np
 from envs.hns.wrappers.multi_agent import (SplitMultiAgentActions, SplitObservations, SelectKeysWrapper)
 from envs.hns.wrappers.util import (DiscretizeActionWrapper, MaskActionWrapper, DiscardMujocoExceptionEpisodes,
                                     AddConstantObservationsWrapper, SpoofEntityWrapper, ConcatenateObsWrapper)
-from envs.hns.wrappers.manipulation import (GrabObjWrapper, GrabClosestWrapper, TimeWrapper, LockObjWrapper,
-                                            LockAllWrapper)
+from envs.hns.wrappers.manipulation import (GrabObjWrapper, GrabClosestWrapper, LockObjWrapper, LockAllWrapper)
 from envs.hns.wrappers.lidar import Lidar
 from envs.hns.wrappers.line_of_sight import AgentAgentObsMask2D, AgentGeomObsMask2D
 from envs.hns.wrappers.team import TeamMembership
@@ -15,7 +14,7 @@ from envs.hns.modules.objects import Boxes, Ramps, LidarSites
 from envs.hns.modules.world import FloorAttributes, WorldConstants
 from envs.hns.modules.util import uniform_placement, center_placement
 from envs.hns.envs.base import Base
-from envs.hns.envs.hide_and_seek import quadrant_placement  # , outside_quadrant_placement
+from envs.hns.envs.hide_and_seek import quadrant_placement
 
 
 class LockObjectsTask(gym.Wrapper):
@@ -75,7 +74,7 @@ class LockObjectsTask(gym.Wrapper):
         if self.need_return:
             self.task = self.task.replace('-return', '')
         self.n_agents = self.unwrapped.n_agents
-        # assert self.n_agents == 1, 'The locking tasks only support 1 agent'
+        assert self.n_agents == 1, 'The locking tasks only support 1 agent'
         self.agent_key = agent_pos_key
         self.obj_order = list(range(self.n_objs))
         self.fixed_order = fixed_order
@@ -86,7 +85,6 @@ class LockObjectsTask(gym.Wrapper):
         self.unlock_penalty = unlock_penalty
         self.shaped_reward_scale = shaped_reward_scale
         self.success_reward = success_reward
-        self.success = False
         self.objs_locked = np.zeros((n_objs, ), dtype=np.int8)
         self.spawn_pos = None
         self.spawn_pos_dist = None
@@ -100,10 +98,9 @@ class LockObjectsTask(gym.Wrapper):
         self.objs_locked[:] = 0
         self.unlocked_objs = self.obj_order
         obs = self.env.reset()
-        self.spawn_pos = obs[self.agent_key][:, :2]  # support multi-agent
+        self.spawn_pos = obs[self.agent_key][0, :2]
         self.spawn_pos_dist = 0
         self.next_obj, self.next_obj_dist = self._get_next_obj(obs)
-        self.success = False
         return obs
 
     def _get_next_obj(self, obs):
@@ -139,8 +136,7 @@ class LockObjectsTask(gym.Wrapper):
         '''
         rew = 0
         if (self.next_obj is not None) and (new_next_obj == self.next_obj):
-            rew += (self.next_obj_dist - new_next_obj_dist) * \
-                self.shaped_reward_scale
+            rew += (self.next_obj_dist - new_next_obj_dist) * self.shaped_reward_scale
         elif ((self.next_obj is not None) and (new_next_obj != self.next_obj)):
             if self.objs_locked[self.next_obj] == 1:
                 # previous target object locked
@@ -154,8 +150,7 @@ class LockObjectsTask(gym.Wrapper):
         elif (self.next_obj is None) and (new_next_obj is None):
             if self.need_return:
                 # all objects locked; agent is rewarded for returning to its spawning point
-                rew += (self.spawn_pos_dist - new_spawn_pos_dist) * \
-                    self.shaped_reward_scale
+                rew += (self.spawn_pos_dist - new_spawn_pos_dist) * self.shaped_reward_scale
 
         return rew
 
@@ -175,24 +170,20 @@ class LockObjectsTask(gym.Wrapper):
         self.objs_locked = curr_objs_locked
         self.unlocked_objs = [i for i in self.obj_order if self.objs_locked[i] == 0]
 
+        new_next_obj, new_next_obj_dist = self._get_next_obj(obs)
         agent_pos = obs[self.agent_key][:, :2]
-        new_spawn_pos_dist = max(np.linalg.norm(agent_pos - self.spawn_pos, axis=1))
-
-        if self.n_agents == 1:
-            new_next_obj, new_next_obj_dist = self._get_next_obj(obs)
-            rew += self._get_shaped_reward(new_next_obj, new_next_obj_dist, new_spawn_pos_dist)
-            self.next_obj_dist = new_next_obj_dist
-            self.next_obj = new_next_obj
+        new_spawn_pos_dist = np.linalg.norm(agent_pos - self.spawn_pos)
+        rew += self._get_shaped_reward(new_next_obj, new_next_obj_dist, new_spawn_pos_dist)
 
         self.spawn_pos_dist = new_spawn_pos_dist
+        self.next_obj_dist = new_next_obj_dist
+        self.next_obj = new_next_obj
+
         n_unlocked = len(self.unlocked_objs)
         if n_unlocked == 0 and ((not self.need_return) or self.spawn_pos_dist <= self.return_threshold):
             # reward for successfully completing the task
             rew += self.success_reward
-            self.success = True
 
-        info['success'] = self.success
-        info['lock_rate'] = 1 - n_unlocked / self.n_objs
         return obs, rew, done, info
 
 
@@ -233,62 +224,50 @@ def rotate_tri_placement(grid, obj_size, metadata, random_state):
     return tri_placement(next_room)(grid, obj_size, metadata, random_state)
 
 
-def make_env(args):
-    return BoxLockingEnv(args)
-
-
-def BoxLockingEnv(
-        args,
+def make_env(
         n_substeps=15,
-        horizon=120,
-        deterministic_mode=True,
+        horizon=80,
+        deterministic_mode=False,
         floor_size=6.0,
         grid_size=30,
         door_size=2,
-        n_agents=2,
+        n_agents=1,
         fixed_agent_spawn=False,
         lock_box=True,
         grab_box=True,
         grab_selective=False,
-        lock_type='all_lock_team_specific',
+        lock_type='any_lock_specific',
         lock_grab_radius=0.25,
         grab_exclusive=False,
         grab_out_of_vision=False,
-        lock_out_of_vision=False,
+        lock_out_of_vision=True,
         box_floor_friction=0.2,
         other_friction=0.01,
         gravity=[0, 0, -50],
         action_lims=(-0.9, 0.9),
         polar_obs=True,
         scenario='quadrant',
-        p_door_dropout=0.5,
-        n_rooms=2,
-        random_room_number=False,
+        p_door_dropout=0.0,
+        n_rooms=4,
+        random_room_number=True,
         n_lidar_per_agent=0,
         visualize_lidar=False,
         compress_lidar_scale=None,
-        n_boxes=3,
+        n_boxes=2,
         box_size=0.5,
-        box_only_z_rot=True,
-        boxid_obs=False,
+        box_only_z_rot=False,
+        boxid_obs=True,
         boxsize_obs=True,
         pad_ramp_size=True,
         additional_obs={},
         # lock-box task
-        task_type='order-return',
+        task_type='all',
         lock_reward=5.0,
-        unlock_penalty=5.0,
-        shaped_reward_scale=0.5,
+        unlock_penalty=7.0,
+        shaped_reward_scale=0.25,
         return_threshold=0.1,
         # ramps
         n_ramps=0):
-
-    scenario = args.scenario_name
-    n_agents = args.num_agents
-    task_type = args.task_type
-    n_boxes = args.num_boxes
-    floor_size = args.floor_size
-    # assert n_agents==1, ("only 1 agents is supported, check the config.py.")
 
     grab_radius_multiplier = lock_grab_radius / box_size
     lock_radius_multiplier = lock_grab_radius / box_size
@@ -303,8 +282,7 @@ def BoxLockingEnv(
 
     if scenario == 'randomwalls':
         env.add_module(
-            RandomWalls(n_agents=n_agents,
-                        grid_size=grid_size,
+            RandomWalls(grid_size=grid_size,
                         num_rooms=n_rooms,
                         random_room_number=random_room_number,
                         min_room_size=6,
@@ -315,8 +293,7 @@ def BoxLockingEnv(
         agent_placement_fn = uniform_placement if not fixed_agent_spawn else center_placement
     elif scenario == 'quadrant':
         env.add_module(
-            WallScenarios(n_agents=n_agents,
-                          grid_size=grid_size,
+            WallScenarios(grid_size=grid_size,
                           door_size=door_size,
                           scenario=scenario,
                           friction=other_friction,
@@ -325,12 +302,12 @@ def BoxLockingEnv(
         ramp_placement_fn = uniform_placement
         agent_placement_fn = quadrant_placement if not fixed_agent_spawn else center_placement
     elif scenario == 'empty':
-        env.add_module(WallScenarios(n_agents=n_agents, grid_size=grid_size, door_size=2, scenario='empty'))
+        env.add_module(WallScenarios(grid_size=grid_size, door_size=2, scenario='empty'))
         box_placement_fn = uniform_placement
         ramp_placement_fn = uniform_placement
         agent_placement_fn = center_placement
     elif 'var_tri' in scenario:
-        env.add_module(WallScenarios(n_agents=n_agents, grid_size=grid_size, door_size=door_size, scenario='var_tri'))
+        env.add_module(WallScenarios(grid_size=grid_size, door_size=door_size, scenario='var_tri'))
         ramp_placement_fn = [tri_placement(i % 3) for i in range(n_ramps)]
         agent_placement_fn = center_placement if fixed_agent_spawn else \
             (uniform_placement if 'uniform' in scenario else rotate_tri_placement)
@@ -372,10 +349,7 @@ def BoxLockingEnv(
         env.add_module(FloorAttributes(friction=box_floor_friction))
     env.add_module(WorldConstants(gravity=gravity))
     env.reset()
-    if 'var_tri' in scenario or "randomwalls" in scenario:
-        keys_self = ['agent_qpos_qvel', 'current_step']
-    else:
-        keys_self = ['agent_qpos_qvel', 'current_step', 'vector_door_obs']
+    keys_self = ['agent_qpos_qvel', 'hider', 'prep_obs']
     keys_mask_self = ['mask_aa_obs']
     keys_external = ['agent_qpos_qvel']
     keys_copy = ['you_lock', 'team_lock']
@@ -386,7 +360,7 @@ def BoxLockingEnv(
     env = AgentAgentObsMask2D(env)
     env = DiscretizeActionWrapper(env, 'action_movement')
     env = NumpyArrayRewardWrapper(env)
-    env = TimeWrapper(env, horizon)
+
     if np.max(n_boxes) > 0:
         env = AgentGeomObsMask2D(env,
                                  pos_obs_key='box_pos',
@@ -422,8 +396,7 @@ def BoxLockingEnv(
 
     if grab_box and np.max(n_boxes) > 0:
         body_names = ([f'moveable_box{i}' for i in range(n_boxes)] + [f"ramp{i}:ramp" for i in range(n_ramps)])
-        obj_in_game_meta_keys = ['curr_n_boxes'] + \
-            (['curr_n_ramps'] if n_ramps > 0 else [])
+        obj_in_game_meta_keys = ['curr_n_boxes'] + (['curr_n_ramps'] if n_ramps > 0 else [])
         env = GrabObjWrapper(env,
                              body_names=body_names,
                              radius_multiplier=grab_radius_multiplier,
@@ -465,7 +438,7 @@ def BoxLockingEnv(
     keys_mask_external += ['mask_ab_obs_spoof']
 
     if n_agents < 2:
-        env = SpoofEntityWrapper(env, 1, ['agent_qpos_qvel'], ['mask_aa_obs'])
+        env = SpoofEntityWrapper(env, 1, ['agent_qpos_qvel', 'hider', 'prep_obs'], ['mask_aa_obs'])
 
     env = LockAllWrapper(env, remove_object_specific_lock=True)
     if not grab_out_of_vision and grab_box:
@@ -474,24 +447,13 @@ def BoxLockingEnv(
         env = MaskActionWrapper(env, action_key='action_pull', mask_keys=mask_keys)
     if not grab_selective and grab_box:
         env = GrabClosestWrapper(env)
-    env = DiscardMujocoExceptionEpisodes(env, n_agents)
-    if n_ramps > 0:
-        env = ConcatenateObsWrapper(
-            env, {
-                'agent_qpos_qvel': ['agent_qpos_qvel'],
-                'box_obs': ['box_obs', 'you_lock', 'team_lock', 'obj_lock'],
-                'ramp_obs': ['ramp_obs', 'ramp_you_lock', 'ramp_team_lock', 'ramp_obj_lock']
-            })
-    else:
-        env = ConcatenateObsWrapper(env, {
-            'agent_qpos_qvel': ['agent_qpos_qvel'],
-            'box_obs': ['box_obs', 'you_lock', 'team_lock', 'obj_lock']
+    env = DiscardMujocoExceptionEpisodes(env)
+    env = ConcatenateObsWrapper(
+        env, {
+            'agent_qpos_qvel': ['agent_qpos_qvel', 'hider', 'prep_obs'],
+            'box_obs': ['box_obs', 'you_lock', 'team_lock', 'obj_lock'],
+            'ramp_obs': ['ramp_obs', 'ramp_you_lock', 'ramp_team_lock', 'ramp_obj_lock']
         })
-
-    env = SelectKeysWrapper(env,
-                            keys_self=keys_self,
-                            keys_external=keys_external,
-                            keys_mask=keys_mask_self + keys_mask_external,
-                            flatten=False)
+    env = SelectKeysWrapper(env, keys_self=keys_self, keys_other=keys_external + keys_mask_self + keys_mask_external)
 
     return env
