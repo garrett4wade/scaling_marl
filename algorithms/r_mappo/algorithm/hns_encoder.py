@@ -10,7 +10,7 @@ from algorithms.utils.running_normalization import RunningNormalization
 def masked_avg_pooling(scores, mask):
     assert mask.shape[-1] == scores.shape[-2]
     masked_scores = scores * mask.unsqueeze(-1)
-    return masked_scores.sum(-2) / (mask.sum(-1) + 1e-5)
+    return masked_scores.sum(-2) / (mask.sum(-1, keepdim=True) + 1e-5)
 
 
 class HNSEncoder(nn.Module):
