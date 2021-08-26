@@ -37,7 +37,7 @@ class HNSEncoder(nn.Module):
         def init_(m):
             return init(m, init_method, lambda x: nn.init.constant_(x, 0), gain=nn.init.calculate_gain('relu'))
 
-        self.dense = nn.Sequential(init_(nn.Linear(256, 256)), nn.ReLU(), nn.LayerNorm(256))
+        self.dense = nn.Sequential(init_(nn.Linear(256, 256)), nn.ReLU(inplace=True), nn.LayerNorm(256))
 
     def forward(self, inputs, train_normalization=False):
         for k, v in inputs.items():
@@ -75,7 +75,7 @@ class CatSelfEmbedding(nn.Module):
             return init(m, init_method, lambda x: nn.init.constant_(x, 0), gain=nn.init.calculate_gain('relu'))
 
         def get_layer(input_dim, output_dim):
-            return nn.Sequential(init_(nn.Linear(input_dim, output_dim)), nn.ReLU(), nn.LayerNorm(output_dim))
+            return nn.Sequential(init_(nn.Linear(input_dim, output_dim)), nn.ReLU(inplace=True), nn.LayerNorm(output_dim))
 
         self.others_keys = sorted(self.others_shape_dict.keys())
         self.self_embedding = get_layer(self_dim, d_embedding)
@@ -133,7 +133,8 @@ class MultiHeadSelfAttention(nn.Module):
         self.q_linear = init_(nn.Linear(input_dim, self.d_model))
         self.v_linear = init_(nn.Linear(input_dim, self.d_model))
         self.k_linear = init_(nn.Linear(input_dim, self.d_model))
-        self.attn_dropout = nn.Dropout(dropout)
+        # self.attn_dropout = nn.Dropout(dropout)
+        self.attn_dropout = None
 
     def forward(self, x, mask):
         # perform linear operation and split into h heads
@@ -159,11 +160,13 @@ class ResidualMultiHeadSelfAttention(nn.Module):
         def init_(m):
             return init(m, init_method, lambda x: nn.init.constant_(x, 0), gain=nn.init.calculate_gain('relu'))
 
-        self.dense = nn.Sequential(init_(nn.Linear(self.d_model, self.d_model)), nn.ReLU())
+        self.dense = nn.Sequential(init_(nn.Linear(self.d_model, self.d_model)), nn.ReLU(inplace=True))
         self.residual_norm = nn.LayerNorm(self.d_model)
-        self.dropout_after_attn = nn.Dropout(dropout)
+        # self.dropout_after_attn = nn.Dropout(dropout)
+        self.dropout_after_attn = None
 
     def forward(self, x, mask):
-        scores = self.attn(x, mask)
-        x = x + self.dropout_after_attn(self.dense(scores))
-        return self.residual_norm(x)
+        scores = self.dense(self.attn(x, mask))
+        if self.dropout_after_attn is not None:
+            scores = self.dropout_after_attn(scores)
+        return self.residual_norm(x + scores)

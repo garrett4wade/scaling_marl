@@ -9,7 +9,7 @@ benchmark: false
 cuda: true
 cuda_deterministic: true
 seed: 1
-no_summary: false
+no_summary: true
 use_wandb: true
 use_eval: false
 use_render: false
@@ -38,7 +38,7 @@ model_weights_addrs:  # every learner has a model_weights_addr and len(model_wei
   - tcp://10.0.4.29:8889
 seg_addrs:  # every worker node has seg_addrs connecting to all learners
   - - tcp://10.0.4.29:12346
-  - - tcp://10.0.4.35:12346
+  # - - tcp://10.0.4.35:12346
 
 num_reanalyzers_per_trainer: 1
 num_value_tracers_per_trainer: 1
@@ -48,8 +48,8 @@ episode_length: 160
 learner_config:
   "0":
     "0": 0
-  "1":
-    "0": 0
+  # "1":
+  #   "0": 0
 num_policies: 1
 policy2agents:
   "0":

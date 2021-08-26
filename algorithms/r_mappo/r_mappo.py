@@ -66,7 +66,9 @@ class R_MAPPO:
         # critic update
         value_loss = self.cal_value_loss(values, sample['values'], v_target, sample.get('active_masks'))
 
-        self.policy.optimizer.zero_grad()
+        # self.policy.optimizer.zero_grad()
+        for p in self.policy.actor_critic.parameters():
+            p.grad = None
 
         (policy_loss + value_loss * self.value_coef - dist_entropy * self.entropy_coef).backward()
 
