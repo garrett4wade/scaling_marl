@@ -7,6 +7,12 @@ from algorithms.utils.util import init
 from algorithms.utils.running_normalization import RunningNormalization
 
 
+def masked_avg_pooling(scores, mask):
+    assert mask.shape[-1] == scores.shape[-2]
+    masked_scores = scores * mask.unsqueeze(-1)
+    return masked_scores.sum(-2) / (mask.sum(-1) + 1e-5)
+
+
 class HNSEncoder(nn.Module):
     # special design for reproducing hide-and-seek paper
     def __init__(self, obs_space, omniscient, use_orthogonal):
@@ -16,7 +22,7 @@ class HNSEncoder(nn.Module):
         self.ordered_other_obs_keys = ['agent_qpos_qvel', 'box_obs', 'ramp_obs']
         self.ordered_obs_mask_keys = ['mask_aa_obs', 'mask_ab_obs', 'mask_ar_obs']
         for key in self.self_obs_keys + self.ordered_other_obs_keys:
-            setattr(self, key + '_normalization', RunningNormalization((obs_space[key][-1], ), beta=1-1e-5))
+            setattr(self, key + '_normalization', RunningNormalization((obs_space[key][-1], ), beta=1 - 1e-5))
 
         self_dim = obs_space['observation_self'][-1] + obs_space['lidar'][-1]
         others_shape_dict = deepcopy(obs_space)
@@ -51,7 +57,8 @@ class HNSEncoder(nn.Module):
         else:
             mask = torch.cat([inputs[k] for k in self.ordered_obs_mask_keys], -1)
         attn_other = self.attn(x_other, mask)
-        x = torch.cat([x_self, attn_other.mean(-2)], dim=-1)
+        pooled_attn_other = masked_avg_pooling(attn_other, mask)
+        x = torch.cat([x_self, pooled_attn_other], dim=-1)
         return self.dense(x)
 
 
@@ -81,11 +88,11 @@ class CatSelfEmbedding(nn.Module):
         self_embedding = self.self_embedding(self_vec)
         self_vec_ = self_vec.unsqueeze(-2)
         for k, x in inputs.items():
-            if k in self.others_keys:
-                expand_shape = [-1 for _ in range(len(x.shape))]
-                expand_shape[-2] = x.shape[-2]
-                x_ = torch.cat([self_vec_.expand(*expand_shape), x], -1)
-                other_embeddings.append(getattr(self, k + '_fc')(x_))
+            assert k in self.others_keys and 'mask' not in k
+            expand_shape = [-1 for _ in range(len(x.shape))]
+            expand_shape[-2] = x.shape[-2]
+            x_ = torch.cat([self_vec_.expand(*expand_shape), x], -1)
+            other_embeddings.append(getattr(self, k + '_fc')(x_))
 
         other_embeddings = torch.cat(other_embeddings, dim=-2)
         return self_embedding, other_embeddings
@@ -95,7 +102,7 @@ def ScaledDotProductAttention(q, k, v, d_k, mask=None, dropout=None):
     scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(d_k)
     if mask is not None:
         mask = mask.unsqueeze(-2).unsqueeze(-2)
-        scores = scores - (1- mask) * 1e10
+        scores = scores - (1 - mask) * 1e10
     # in case of overflow
     scores = scores - scores.max(dim=-1, keepdim=True)[0]
     scores = F.softmax(scores, dim=-1)
