@@ -50,8 +50,9 @@ class Receiver:
 
     def _unpack_msg(self, timing, msg):
         self.recv_cnt += 1
-        num_valid_agents = int(msg[2].decode('ascii'))
-        msg = msg[3:]
+        rollout_policy_version = int(msg[2].decode('ascii'))
+        num_valid_agents = int(msg[3].decode('ascii'))
+        msg = msg[4:]
         assert len(msg) % 2 == 0
         buffer = self.buffers[int(msg[-1].decode('ascii'))]
 
@@ -66,7 +67,8 @@ class Receiver:
                 decompressed = blosc.decompress(v)
             decompression_time += time.time() - tik
 
-            array = np.frombuffer(decompressed, dtype=np.float32).reshape(shape[0], int(shape[1] // self.cfg.num_agents * num_valid_agents), *shape[2:])
+            dtype = np.uint8 if 'mask' in k else np.float32
+            array = np.frombuffer(decompressed, dtype=dtype).reshape(shape[0], int(shape[1] // self.cfg.num_agents * num_valid_agents), *shape[2:])
             seg_dict[k] = array
 
         socket_ident, summary_info = msg[-4:-2]
@@ -78,7 +80,7 @@ class Receiver:
 
         tik = time.time()
         with timing.add_time('put_buffer'):
-            buffer.put(seg_dict)
+            buffer.put(seg_dict, rollout_policy_version)
 
             with buffer.env_summary_lock:
                 buffer.summary_block[worker_node_idx, task_rank] = summary_info

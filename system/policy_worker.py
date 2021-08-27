@@ -232,7 +232,7 @@ class PolicyWorker:
                     insert_data = {k: v for k, v in flatten_recurrent(policy_outputs).items() if 'rnn_states' not in k}
                     insert_data = {**insert_data, **envstep_outputs}
                     slot_ids, ep_steps, masks, active_masks, valid_choose = self.buffer.advance_indices(
-                        timing, self.request_clients, pause=(self.phase == PolicyWorkerPhase.CLOSING), **insert_data)
+                        timing, self.request_clients, self.local_policy_version, pause=(self.phase == PolicyWorkerPhase.CLOSING), **insert_data)
                     insert_data.pop('dones')
                     insert_data['masks'] = masks
                     if active_masks is not None:

@@ -23,7 +23,7 @@ summary_dir: './logs'
 
 # system parameters
 num_tasks_per_node: 1
-num_actors: 48
+num_actors: 128
 actor_group_size: 1
 envs_per_actor: 8
 num_policy_workers: 4

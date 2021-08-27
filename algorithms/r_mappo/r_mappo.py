@@ -84,4 +84,4 @@ class R_MAPPO:
         self.policy.scaler.step(self.policy.optimizer)
         self.policy.scaler.update()
 
-        return value_loss, policy_loss, dist_entropy, grad_norm
+        return value_loss.detach(), policy_loss.detach(), dist_entropy.detach(), grad_norm.detach()

@@ -15,7 +15,7 @@ def get_ppo_storage_specs(args, obs_space, act_space):
     act_dim = get_shape_from_act_space(act_space)
 
     ppo_storage_specs = [
-        StorageSpec('masks', (1, ), torch.float32, True, 1),
+        StorageSpec('masks', (1, ), torch.uint8, True, 1),
         StorageSpec('rewards', (1, ), torch.float32, False, 0),
         StorageSpec('actions', (act_dim, ), torch.float32, False, 0),
         StorageSpec('action_log_probs', (act_dim, ), torch.float32, False, 0),
@@ -28,10 +28,11 @@ def get_ppo_storage_specs(args, obs_space, act_space):
         if k == 'observation_self':
             ppo_storage_specs.append(StorageSpec(k, (obs_shape[-1], ), torch.float32, True, 0))
         else:
-            ppo_storage_specs.append(StorageSpec(k, obs_shape, torch.float32, True, 0))
+            dtype = torch.uint8 if 'mask' in k else torch.float32
+            ppo_storage_specs.append(StorageSpec(k, obs_shape, dtype, True, 0))
 
     if args.use_fct_masks:
-        ppo_storage_specs.append(StorageSpec('fct_masks', (1, ), torch.float32, True, 1))
+        ppo_storage_specs.append(StorageSpec('fct_masks', (1, ), torch.uint8, True, 1))
 
     policy_input_keys = [*obs_space.keys(), 'masks', 'rnn_states', 'rnn_states_critic']
     policy_output_keys = ['actions', 'action_log_probs', 'values', 'rnn_states', 'rnn_states_critic']

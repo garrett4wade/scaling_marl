@@ -343,10 +343,11 @@ class Trainer:
         for sample in data_generator:
             with timing.add_time('training_step/to_device'):
                 for k, v in sample.items():
-                    sample[k] = torch.from_numpy(v).to(**self.tpdv)
+                    sample[k] = torch.from_numpy(v).pin_memory().to(**self.tpdv, non_blocking=True)
 
             with timing.add_time('training_step/algorithm_step'):
                 infos = self.algorithm.step(sample)
+                del sample
 
             with timing.add_time('training_step/logging/loss_all_reduce'):
                 for info in infos:
@@ -369,7 +370,7 @@ class Trainer:
                 train_info[k] /= reduce_factor
 
         with timing.add_time('training_step/close_out'):
-            self.buffer.close_out(slot_id)
+            self.buffer.close_out(slot_id, self.policy_version.item())
 
             with self.param_lock.w_locked():
                 self.policy_version += 1

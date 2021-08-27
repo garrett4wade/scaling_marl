@@ -95,6 +95,7 @@ class ReplayBuffer:
         self._is_writable = torch.ones((self.num_slots, ), dtype=torch.uint8).share_memory_().numpy()
         assert np.all(self._is_readable + self._is_being_read + self._is_being_written + self._is_writable == 1)
 
+        self.policy_versions = torch.zeros((self.num_slots, ), dtype=torch.int32).share_memory_().numpy()
         self._time_stamp = torch.zeros((self.num_slots, ), dtype=torch.float32).share_memory_().numpy()
 
         self._read_ready = mp.Condition(mp.RLock())
@@ -312,6 +313,7 @@ class LearnerBuffer(ReplayBuffer):
 
         super()._init_storage(is_learner=True)
 
+        self.policy_versions = torch.zeros((self._rewards.shape[0], self._rewards.shape[2]), dtype=torch.int32).share_memory_().numpy()
         # tracer storage, e.g. n-step return, GAE, V-trace
         # TODO: add other types of trace storage
         self.v_target = torch.zeros_like(self._rewards, dtype=torch.float32).share_memory_().numpy()
@@ -370,7 +372,7 @@ class LearnerBuffer(ReplayBuffer):
         self._global_ptr[0] = slot_id
         self._global_ptr[1] = 0
 
-    def put(self, seg_dict):
+    def put(self, seg_dict, policy_version):
         # move pointer forward without waiting for the completion of copying
         bs = seg_dict['rewards'].shape[1]
         with self._ptr_lock:
@@ -390,9 +392,12 @@ class LearnerBuffer(ReplayBuffer):
             for k, v in seg_dict.items():
                 self.storage[k][slot_id, :, position_id:] = v[:, :self.rewards.shape[2] - position_id]
                 self.storage[k][new_slot_id, :, :remaining] = v[:, self.rewards.shape[2] - position_id:]
+            self.policy_versions[slot_id, position_id:] = policy_version
+            self.policy_versions[new_slot_id, :remaining] = policy_version
         else:
             for k, v in seg_dict.items():
                 self.storage[k][slot_id, :, position_id: position_id + bs] = v
+            self.policy_versions[slot_id, position_id: position_id + bs] = policy_version
 
         self.total_timesteps += bs * self.episode_length
 
@@ -405,7 +410,7 @@ class LearnerBuffer(ReplayBuffer):
     def get(self, block=True, timeout=None):
         with self._read_ready:
             # randomly choose one slot from the oldest available slots
-            slot_id = super().get(block, timeout, lambda x: x[0])
+            slot_id = super().get(block, timeout, lambda x: x[-1])
             # TODO: default reuse pattern is recycle, while it could be set to 'exhausting' or others
             # defer the timestamp such that the slot will be selected again only after
             # all readable slots are selected at least once
@@ -413,10 +418,11 @@ class LearnerBuffer(ReplayBuffer):
             # self._time_stamp[slot_id] = np.max(self._time_stamp) + 1
         return slot_id
 
-    def close_out(self, slot_id):
+    def close_out(self, slot_id, latest_policy_version):
         with self._read_ready:
             self._used_times[slot_id] += 1
-            if self._used_times[slot_id] >= self.sample_reuse:
+            # print(latest_policy_version - np.min(self.policy_versions[slot_id]))
+            if self._used_times[slot_id] >= self.sample_reuse or latest_policy_version - np.min(self.policy_versions[slot_id]) > self.sample_reuse * 2:
                 self._used_times[slot_id] = 0
                 with self.trace_lock:
                     self._is_trace_ready[slot_id] = 0
@@ -497,7 +503,7 @@ class SharedPolicyMixin(PolicyMixin):
     def prepare_rollout(self):
         self._allocate_many(np.arange(self.num_actor_groups * self.num_splits))
 
-    def advance_indices(self, timing, client_ids, pause=False, **insert_data):
+    def advance_indices(self, timing, client_ids, policy_version, pause=False, **insert_data):
         client_ids = np.array(client_ids, dtype=np.int32)
 
         with timing.add_time('inference/insert/acquire_lock'), timing.time_avg('inference/insert/acquire_lock_once'):
@@ -564,6 +570,7 @@ class SharedPolicyMixin(PolicyMixin):
                             self.storage[name][old_closure_slot_ids, -1] = locals()[name][closure_choose]
 
                 self.rewards[old_closure_slot_ids, -1] = insert_data['rewards'][closure_choose]
+                self.policy_versions[old_closure_slot_ids] = policy_version
 
                 # NOTE: following 2 lines for debug only
                 # with self._read_ready:

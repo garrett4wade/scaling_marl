@@ -65,7 +65,8 @@ class Transmitter:
         mem_data = {}
         total_mem = 0
         num_valid_agents = int(self.buffers[buffer_id].mask_aa_obs_spoof[slot, 0, 0, 0].sum().item()) + 1
-        msg.append(str(num_valid_agents).encode('ascii'))
+        policy_version = self.buffers[buffer_id].policy_versions[slot]
+        msg.extend([str(policy_version).encode('ascii'), str(num_valid_agents).encode('ascii')])
         tmp_valid_agents = self.buffers[buffer_id].mask_aa_obs_spoof[slot, np.random.randint(0, self.cfg.episode_length), np.random.randint(0, self.cfg.envs_per_actor // self.cfg.num_splits), np.random.randint(0, num_valid_agents)].sum()
         assert tmp_valid_agents == num_valid_agents - 1, (tmp_valid_agents, num_valid_agents, self.buffers[buffer_id].mask_aa_obs_spoof[slot, 0, 0])
         for k, data in self.buffers[buffer_id].storage.items():
