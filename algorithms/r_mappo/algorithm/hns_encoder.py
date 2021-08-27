@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from copy import deepcopy
+import torch.utils.checkpoint as cp
 from algorithms.utils.util import init
 from algorithms.utils.running_normalization import RunningNormalization
 
@@ -39,7 +40,7 @@ class HNSEncoder(nn.Module):
 
         self.dense = nn.Sequential(init_(nn.Linear(256, 256)), nn.ReLU(inplace=True), nn.LayerNorm(256))
 
-    def forward(self, inputs, train_normalization=False):
+    def forward(self, inputs, train_normalization=False, use_ckpt=False):
         for k, v in inputs.items():
             if hasattr(self, k + '_normalization'):
                 inputs[k] = getattr(self, k + '_normalization')(v, train=train_normalization)
@@ -56,8 +57,11 @@ class HNSEncoder(nn.Module):
             mask = torch.cat([inputs[k + '_spoof'] for k in self.ordered_obs_mask_keys], -1)
         else:
             mask = torch.cat([inputs[k] for k in self.ordered_obs_mask_keys], -1)
-        attn_other = self.attn(x_other, mask)
-        pooled_attn_other = masked_avg_pooling(attn_other, mask)
+        if use_ckpt:
+            pooled_attn_other = cp.checkpoint(lambda x, y, z: masked_avg_pooling(self.attn(x, y, z), y), x_other, mask, use_ckpt)
+        else:
+            attn_other = self.attn(x_other, mask, use_ckpt)
+            pooled_attn_other = masked_avg_pooling(attn_other, mask)
         x = torch.cat([x_self, pooled_attn_other], dim=-1)
         return self.dense(x)
 
@@ -136,7 +140,7 @@ class MultiHeadSelfAttention(nn.Module):
         # self.attn_dropout = nn.Dropout(dropout)
         self.attn_dropout = None
 
-    def forward(self, x, mask):
+    def forward(self, x, mask, use_ckpt=False):
         # perform linear operation and split into h heads
         k = self.k_linear(x).view(*x.shape[:-1], self.h, self.d_head).transpose(-2, -3)
         q = self.q_linear(x).view(*x.shape[:-1], self.h, self.d_head).transpose(-2, -3)
@@ -144,6 +148,10 @@ class MultiHeadSelfAttention(nn.Module):
 
         # calculate attention
         scores = ScaledDotProductAttention(q, k, v, self.d_head, mask, self.attn_dropout)
+        # if not use_ckpt:
+        #     scores = ScaledDotProductAttention(q, k, v, self.d_head, mask, self.attn_dropout)
+        # else:
+        #     scores = cp.checkpoint(ScaledDotProductAttention, q, k, v, self.d_head, mask, self.attn_dropout)
 
         # concatenate heads and put through final linear layer
         return scores.transpose(-2, -3).contiguous().view(*x.shape[:-1], self.d_model)
@@ -165,8 +173,8 @@ class ResidualMultiHeadSelfAttention(nn.Module):
         # self.dropout_after_attn = nn.Dropout(dropout)
         self.dropout_after_attn = None
 
-    def forward(self, x, mask):
-        scores = self.dense(self.attn(x, mask))
+    def forward(self, x, mask, use_ckpt=False):
+        scores = self.dense(self.attn(x, mask, use_ckpt))
         if self.dropout_after_attn is not None:
             scores = self.dropout_after_attn(scores)
         return self.residual_norm(x + scores)

@@ -1,15 +1,15 @@
 project_name: hide_and_seek
-group_name: reproduce
+group_name: small_scale
 algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: garrett4wade
-experiment_name: reproduce_0
+experiment_name: test0
 benchmark: false
 cuda: true
 cuda_deterministic: true
 seed: 1
-no_summary: true
+no_summary: false
 use_wandb: true
 use_eval: false
 use_render: false
@@ -42,7 +42,7 @@ seg_addrs:  # every worker node has seg_addrs connecting to all learners
 
 num_reanalyzers_per_trainer: 1
 num_value_tracers_per_trainer: 1
-slots_per_update: 11
+slots_per_update: 16
 episode_length: 160
 
 learner_config:

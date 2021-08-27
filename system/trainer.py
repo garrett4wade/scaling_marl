@@ -275,7 +275,7 @@ class Trainer:
 
                 self.maybe_save()
 
-                log_infos = self.maybe_log()
+                log_infos = self.maybe_log(timing)
 
                 self.report({**log_infos, **train_infos})
 
@@ -340,24 +340,25 @@ class Trainer:
         data_generator = self.buffer.recurrent_generator(
             slot_id) if self.cfg.use_recurrent_policy else self.buffer.feed_forward_generator(slot_id)
 
-        for sample in data_generator:
-            with timing.add_time('training_step/to_device'):
-                for k, v in sample.items():
-                    sample[k] = torch.from_numpy(v).pin_memory().to(**self.tpdv, non_blocking=True)
+        with timing.time_avg('one_training_step'):
+            for sample in data_generator:
+                with timing.add_time('training_step/to_device'):
+                    for k, v in sample.items():
+                        sample[k] = torch.from_numpy(v).pin_memory().to(**self.tpdv, non_blocking=True)
 
-            with timing.add_time('training_step/algorithm_step'):
-                infos = self.algorithm.step(sample)
-                del sample
+                with timing.add_time('training_step/algorithm_step'):
+                    infos = self.algorithm.step(sample)
+                    del sample
 
-            with timing.add_time('training_step/logging/loss_all_reduce'):
-                for info in infos:
-                    dist.all_reduce(info)
+                with timing.add_time('training_step/logging/loss_all_reduce'):
+                    for info in infos:
+                        dist.all_reduce(info)
 
-            with timing.add_time('training_step/logging/loss'):
-                value_loss, policy_loss, dist_entropy, grad_norm = infos
+                with timing.add_time('training_step/logging/loss'):
+                    value_loss, policy_loss, dist_entropy, grad_norm = infos
 
-                for k in self.algorithm_summary_keys:
-                    train_info[k] += locals()[k].item()
+                    for k in self.algorithm_summary_keys:
+                        train_info[k] += locals()[k].item()
 
         with timing.add_time('training_step/logging/other_records'):
             # train_info["average_step_rewards"] = np.mean(self.buffer.rewards[slot_id])
@@ -388,7 +389,7 @@ class Trainer:
                                          or self.policy_version.item() == self.train_for_episodes - 1):
             self.save()
 
-    def maybe_log(self):
+    def maybe_log(self, timing):
         log_infos = {}
         # log information
         if self.replicate_rank == 0 and self.policy_version.item() % self.log_interval == 0:
@@ -414,11 +415,11 @@ class Trainer:
             log.debug("Env {} Algo {} Exp {} updates {}/{} episodes, consumed num timesteps {}/{}, "
                       "recent rollout FPS {}, global average rollout FPS {}, recent learning FPS {}, "
                       "global average learning FPS {}, recent sample reuse: {:.2f}, "
-                      "global average sample reuse: {:.2f}.\n".format(
+                      "global average sample reuse: {:.2f}, average training step time {}s.\n".format(
                           self.env_name, self.algorithm_name, self.experiment_name, self.policy_version.item(),
                           self.train_for_episodes, self.consumed_num_steps, self.train_for_env_steps,
                           recent_rollout_fps, global_avg_rollout_fps, recent_learning_fps, global_avg_learning_fps,
-                          recent_sample_reuse, global_sample_reuse))
+                          recent_sample_reuse, global_sample_reuse, timing.one_training_step))
 
             log_infos = {
                 'rollout_FPS': recent_rollout_fps,
