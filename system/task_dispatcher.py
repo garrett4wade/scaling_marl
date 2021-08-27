@@ -56,17 +56,21 @@ class TaskDispatcher:
         self.policy_version = [0 for _ in range(self.cfg.num_policies)]
         self.training_tik = None
 
+        self.num_trainers_of_all_policies = [0 for _ in range(self.cfg.num_policies)]
+        for _, local_config in self.cfg.learner_config.items():
+            for _, policy_id in local_config.items():
+                self.num_trainers_of_all_policies[policy_id] += 1
+
         self.train_for_env_steps = self.cfg.train_for_env_steps
         self.train_for_seconds = self.cfg.train_for_seconds
-        self.transitions_per_batch = (self.cfg.episode_length * self.cfg.actor_group_size * self.cfg.envs_per_actor *
-                                      self.cfg.slots_per_update // self.cfg.num_splits)
+        self.transitions_per_batch = [(self.cfg.episode_length * self.cfg.actor_group_size * self.cfg.envs_per_actor *
+                                      self.cfg.slots_per_update // self.cfg.num_splits * self.cfg.num_agents * num_trainers) for num_trainers in self.num_trainers_of_all_policies]
 
         num_all_trainers = 0
         for _, local_config in self.cfg.learner_config.items():
             num_all_trainers += len(local_config)
         # just a estimation, it is incorrect if different policies occpy different number of GPUs
-        self.train_for_episodes = self.train_for_env_steps // self.transitions_per_batch // (num_all_trainers //
-                                                                                             self.cfg.num_policies)
+        self.train_for_episodes = [self.train_for_env_steps // tpb for tpb in self.transitions_per_batch]
 
         self._context = None
         self.task_socket = None
@@ -151,7 +155,7 @@ class TaskDispatcher:
 
     def _should_end_training(self):
         end = all([c_step > self.train_for_env_steps for c_step in self.consumed_num_steps])
-        end |= all([v > self.train_for_episodes for v in self.policy_version])
+        end |= all([v > tfe for v, tfe in zip(self.policy_version, self.train_for_episodes)])
         end |= (time.time() - self.training_tik) > self.train_for_seconds
 
         # if self.cfg.benchmark:
@@ -172,7 +176,7 @@ class TaskDispatcher:
         if 'learner' in msg[0].decode('ascii'):
             policy_version = infos['iteration']
             self.policy_version[policy_id] = policy_version
-            self.consumed_num_steps[policy_id] = policy_version * self.transitions_per_batch
+            self.consumed_num_steps[policy_id] = policy_version * self.transitions_per_batch[policy_id]
             self.accumulated_too_much_experience[policy_id] = infos['buffer_util'] >= 1.1
             self.accumulated_too_few_experience[policy_id] = infos['buffer_util'] <= 0.25
 

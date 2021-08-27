@@ -46,37 +46,42 @@ class R_MAPPO:
 
     def step(self, sample, update_actor=True):
         assert update_actor, 'currently ppg not supported'
-
-        # Reshape to do in a single forward pass for all steps
-        values, action_log_probs, dist_entropy, v_target = self.policy.evaluate_actions(**sample)
-
-        # actor update
-        imp_weights = torch.exp(action_log_probs - sample['action_log_probs'])
-
-        adv_targ = sample['advantages'].sum(-1, keepdim=True)
-        surr1 = imp_weights * adv_targ
-        surr2 = torch.clamp(imp_weights, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv_targ
-
-        if not self._no_policy_active_masks:
-            policy_loss = (-torch.sum(torch.min(surr1, surr2), dim=-1, keepdim=True) *
-                           sample['active_masks']).sum() / sample['active_masks'].sum()
-        else:
-            policy_loss = -torch.sum(torch.min(surr1, surr2), dim=-1, keepdim=True).mean()
-
-        # critic update
-        value_loss = self.cal_value_loss(values, sample['values'], v_target, sample.get('active_masks'))
-
         # self.policy.optimizer.zero_grad()
         for p in self.policy.actor_critic.parameters():
             p.grad = None
 
-        (policy_loss + value_loss * self.value_coef - dist_entropy * self.entropy_coef).backward()
+        with torch.cuda.amp.autocast():
+            # Reshape to do in a single forward pass for all steps
+            values, action_log_probs, dist_entropy, v_target = self.policy.evaluate_actions(**sample)
+
+            # actor update
+            imp_weights = torch.exp(action_log_probs - sample['action_log_probs'])
+
+            adv_targ = sample['advantages'].sum(-1, keepdim=True)
+            surr1 = imp_weights * adv_targ
+            surr2 = torch.clamp(imp_weights, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv_targ
+
+            if not self._no_policy_active_masks:
+                policy_loss = (-torch.sum(torch.min(surr1, surr2), dim=-1, keepdim=True) *
+                            sample['active_masks']).sum() / sample['active_masks'].sum()
+            else:
+                policy_loss = -torch.sum(torch.min(surr1, surr2), dim=-1, keepdim=True).mean()
+
+            # critic update
+            value_loss = self.cal_value_loss(values, sample['values'], v_target, sample.get('active_masks'))
+
+            loss = policy_loss + value_loss * self.value_coef - dist_entropy * self.entropy_coef
+
+        self.policy.scaler.scale(loss).backward()
+
+        self.policy.scaler.unscale_(self.policy.optimizer)
 
         if self._use_max_grad_norm:
             grad_norm = nn.utils.clip_grad_norm_(self.policy.actor_critic.parameters(), self.max_grad_norm)
         else:
             grad_norm = get_gard_norm(self.policy.actor_critic.parameters())
 
-        self.policy.optimizer.step()
+        self.policy.scaler.step(self.policy.optimizer)
+        self.policy.scaler.update()
 
         return value_loss, policy_loss, dist_entropy, grad_norm

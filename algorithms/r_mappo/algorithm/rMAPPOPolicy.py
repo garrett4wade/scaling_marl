@@ -2,6 +2,7 @@ import torch
 from algorithms.r_mappo.algorithm.r_actor_critic import R_Actor_Critic
 from utils.utils import update_linear_schedule
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.cuda.amp import GradScaler
 
 
 def get_actions_from_dist(action_dists, action_reduce_fn, log_prob_reduce_fn, deterministic=False):
@@ -55,6 +56,7 @@ class R_MAPPOPolicy:
                                               lr=self.lr,
                                               eps=self.opti_eps,
                                               weight_decay=self.weight_decay)
+            self.scaler = GradScaler(init_scale=100.0)
 
     def lr_decay(self, episode, episodes):
         update_linear_schedule(self.optimizer, episode, episodes, self.lr)

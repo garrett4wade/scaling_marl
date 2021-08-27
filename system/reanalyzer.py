@@ -70,15 +70,15 @@ class Reanalyzer:
         torch.cuda.set_device(self.gpu_rank)
 
         # policy network
-        self.policy = self.policy_fn(self.gpu_rank, self.cfg, self.obs_space, self.act_space, is_training=False)
-        self.policy.eval_mode()
+        # self.policy = self.policy_fn(self.gpu_rank, self.cfg, self.obs_space, self.act_space, is_training=False)
+        # self.policy.eval_mode()
 
         log.debug('Reanalyzer {} of trainer {} waiting for all nodes ready...'.format(
             self.replicate_rank, self.trainer_idx))
 
         with self.param_lock.r_locked():
             with timing.time_avg('update_weights/load_state_dict_once'):
-                self.policy.load_state_dict(self.shm_state_dict)
+                # self.policy.load_state_dict(self.shm_state_dict)
                 self.local_policy_version = self.trainer_policy_version.item()
 
             log.info('Reanalyzer %d of trainer %d --- Update to policy version %d', self.replicate_rank,
@@ -90,7 +90,7 @@ class Reanalyzer:
             if (self.local_policy_version + self.cfg.sample_reuse * self.cfg.broadcast_interval <=
                     self.trainer_policy_version):
                 with timing.time_avg('update_weights/load_state_dict_once'):
-                    self.policy.load_state_dict(self.shm_state_dict)
+                    # self.policy.load_state_dict(self.shm_state_dict)
                     self.local_policy_version = self.trainer_policy_version.item()
 
                 log.info('Reanalyzer %d of trainer %d --- Update to policy version %d', self.replicate_rank,
@@ -127,7 +127,7 @@ class Reanalyzer:
                 for k, v in reanalyze_inputs.items():
                     reanalyze_inputs[k] = torch.from_numpy(v).to(**self.tpdv)
 
-                values = self.policy.get_values(**reanalyze_inputs).cpu().numpy()
+                # values = self.policy.get_values(**reanalyze_inputs).cpu().numpy()
                 self.buffer.values[slot_id] = values.reshape(*self.buffer.values[slot_id].shape)
 
         with timing.add_time('compute_importance_weights'):

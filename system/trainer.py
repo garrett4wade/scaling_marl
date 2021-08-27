@@ -92,8 +92,8 @@ class Trainer:
         self.train_for_env_steps = self.cfg.train_for_env_steps
         self.train_for_seconds = self.cfg.train_for_seconds
         self.transitions_per_batch = (self.episode_length * self.cfg.actor_group_size * self.envs_per_split *
-                                      self.slots_per_update * self.num_agents)
-        self.train_for_episodes = self.train_for_env_steps // self.transitions_per_batch // self.num_trainers
+                                      self.slots_per_update * self.num_agents * self.num_trainers)
+        self.train_for_episodes = self.train_for_env_steps // self.transitions_per_batch
 
         self.training_tik = None
         self.logging_tik = None
@@ -394,7 +394,7 @@ class Trainer:
             self.last_received_num_steps = self.received_num_steps
             self.received_num_steps = self.buffer.total_timesteps.item()
 
-            recent_consumed_num_steps = self.log_interval * self.transitions_per_batch * self.num_trainers
+            recent_consumed_num_steps = self.log_interval * self.transitions_per_batch
             recent_received_num_steps = self.received_num_steps - self.last_received_num_steps
 
             recent_rollout_fps = int(recent_received_num_steps / (time.time() - self.logging_tik))
