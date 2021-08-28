@@ -86,7 +86,7 @@ class Receiver:
                 buffer.summary_block[worker_node_idx, task_rank] = summary_info
         buffer_put_time = time.time() - tik
 
-        if self.recv_cnt % 100 == 0:
+        if self.recv_cnt % 1000 == 0:
             log.info('Receiver {} decompression time: {:.2f}, buffer put time: {:.2f}'.format(
                 self.rank, decompression_time, buffer_put_time))
 

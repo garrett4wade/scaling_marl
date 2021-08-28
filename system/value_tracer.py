@@ -53,6 +53,8 @@ class ValueTracer:
             assert v.is_shared()
         self.param_lock = param_lock
 
+        self.update_cnt = 0
+
         self.task_queue = task_queue
 
         self.initialized = self.terminate = False
@@ -91,8 +93,10 @@ class ValueTracer:
                     self.value_normalizer.load_state_dict(subset)
                     self.local_policy_version = self.trainer_policy_version.item()
 
-                log.info('Value Tracer %d of trainer %d --- Update to policy version %d', self.replicate_rank,
-                        self.trainer_idx, self.local_policy_version)
+                self.update_cnt += 1
+                if self.update_cnt % 10 == 0:
+                    log.info('Value Tracer %d of trainer %d --- Update to policy version %d', self.replicate_rank,
+                            self.trainer_idx, self.local_policy_version)
 
     @torch.no_grad()
     def trace_step(self, slot_id, timing):

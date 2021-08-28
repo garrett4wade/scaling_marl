@@ -316,7 +316,7 @@ class Trainer:
 
     def training_step(self, timing):
         buffer_util = self.buffer.utilization
-        if self.policy_version.item() % 10 == 0:
+        if self.policy_version.item() % 40 == 0:
             log.info('buffer utilization before training step: {}/{}'.format(round(buffer_util * self.buffer.num_slots),
                                                                              self.buffer.num_slots))
 
@@ -410,7 +410,7 @@ class Trainer:
                 recent_sample_reuse = recent_consumed_num_steps / recent_received_num_steps
             else:
                 recent_sample_reuse = np.nan
-            global_sample_reuse = self.consumed_num_steps / self.received_num_steps
+            global_sample_reuse = self.consumed_num_steps / self.received_num_steps / self.num_trainers
 
             log.debug("Env {} Algo {} Exp {} updates {}/{} episodes, consumed num timesteps {}/{}, "
                       "recent rollout FPS {}, global average rollout FPS {}, recent learning FPS {}, "

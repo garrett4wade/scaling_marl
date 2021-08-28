@@ -77,6 +77,7 @@ class HNSEnv:
             self.observation_space.append(self.observation_space[0])
 
         self.episode_return_hider = self.episode_return_seeker = 0
+        self.pure_hider_return = self.pure_seeker_return = 0
         self.elapsed_episodes = 0
         self.summary_keys = [
             'max_box_move_prep', 'max_box_move', 'num_box_lock_prep', 'num_box_lock', 'max_ramp_move_prep',
@@ -126,7 +127,9 @@ class HNSEnv:
 
         dict_obs, rewards, done, info = self.env.step(actions_env)
         self.episode_return_hider += rewards[0]
+        self.pure_hider_return += rewards[0] + 10 if rewards[0] <= -10 else rewards[0]
         self.episode_return_seeker += rewards[self.num_agents - 1]
+        self.pure_seeker_return += rewards[self.num_agents - 1] + 10 if rewards[self.num_agents - 1] <= -10 else rewards[self.num_agents - 1]
         if done:
             for k in self.accumulated_summaries.keys():
                 self.accumulated_summaries[k] += info[k]
@@ -134,6 +137,8 @@ class HNSEnv:
             self.elapsed_episodes += 1
             info['episode_return_hider'] = self.episode_return_hider
             info['episode_return_seeker'] = self.episode_return_seeker
+            info['pure_hider_return'] = self.pure_hider_return
+            info['pure_seeker_return'] = self.pure_seeker_return
             info['elapsed_episodes'] = self.elapsed_episodes
         if 'lidar' in dict_obs.keys():
             dict_obs['lidar'] = np.transpose(dict_obs['lidar'], (0, 2, 1))
