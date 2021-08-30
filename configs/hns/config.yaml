@@ -4,7 +4,7 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: garrett4wade
-experiment_name: trial0
+experiment_name: trial_1
 benchmark: false
 cuda: true
 cuda_deterministic: true
@@ -14,8 +14,8 @@ use_wandb: true
 use_eval: false
 use_render: false
 
-num_env_steps: 150.0e+9
-train_for_env_steps: 150.0e+9
+num_env_steps: 200.0e+9
+train_for_env_steps: 200.0e+9
 train_for_seconds: 10000000000000000
 model_dir: null
 save_dir: './models'
@@ -52,7 +52,7 @@ seg_addrs:  # every worker node has seg_addrs connecting to all learners
 
 num_reanalyzers_per_trainer: 1
 num_value_tracers_per_trainer: 1
-slots_per_update: 45
+slots_per_update: 32
 episode_length: 160
 
 learner_config:
