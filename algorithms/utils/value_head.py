@@ -72,8 +72,8 @@ class ValueHead(nn.Module):
 
         self.stddev.data[:] = (self.mean_sq - self.mean**2).sqrt().clamp(min=1e-4)
 
-        self.weight.data[:] = self.weight * old_stddev / self.stddev
-        self.bias.data[:] = (old_stddev * self.bias + old_mean - self.mean) / self.stddev
+        # self.weight.data[:] = self.weight * old_stddev / self.stddev
+        # self.bias.data[:] = (old_stddev * self.bias + old_mean - self.mean) / self.stddev
 
     @torch.no_grad()
     def debiased_mean_var(self):

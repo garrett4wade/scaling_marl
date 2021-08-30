@@ -8,8 +8,9 @@ class RNNLayer(nn.Module):
         super(RNNLayer, self).__init__()
         self._rec_n = rec_n
         self._use_orthogonal = use_orthogonal
+        self.hidden_size = inputs_dim
 
-        self.rnn = nn.GRU(inputs_dim, outputs_dim, num_layers=self._rec_n)
+        self.rnn = nn.LSTM(inputs_dim, outputs_dim, num_layers=self._rec_n)
         for name, param in self.rnn.named_parameters():
             if 'bias' in name:
                 nn.init.constant_(param, 0)
@@ -23,9 +24,10 @@ class RNNLayer(nn.Module):
     def forward(self, x, hxs, masks):
         if x.size(0) == hxs.size(0):
             # rollout
-            x, hxs = self.rnn(x.unsqueeze(0), (hxs * masks.unsqueeze(-1)).transpose(0, 1).contiguous())
+            h, c = (hxs * masks.unsqueeze(-1)).transpose(0, 1).split(self.hidden_size, -1)
+            x, h_and_c = self.rnn(x.unsqueeze(0), (h.contiguous(), c.contiguous()))
             x = x.squeeze(0)
-            hxs = hxs.transpose(0, 1)
+            hxs = torch.cat(h_and_c, -1).transpose(0, 1)
         else:
             has_zeros = (masks[1:] == 0.0).any(dim=1).nonzero(as_tuple=True)[0].cpu().numpy()
             has_zeros = [0] + (has_zeros + 1).tolist() + [x.shape[0]]
@@ -36,8 +38,9 @@ class RNNLayer(nn.Module):
                 # This is much faster
                 start_idx = has_zeros[i]
                 end_idx = has_zeros[i + 1]
-                temp = (hxs * masks[start_idx].view(1, -1, 1)).contiguous()
-                rnn_scores, hxs = self.rnn(x[start_idx:end_idx], temp)
+                h, c = (hxs * masks[start_idx].view(1, -1, 1)).split(self.hidden_size, -1)
+                rnn_scores, h_and_c = self.rnn(x[start_idx:end_idx], (h.contiguous(), c.contiguous()))
+                hxs = torch.cat(h_and_c, -1)
                 outputs.append(rnn_scores)
 
             # assert len(outputs) == T

@@ -55,17 +55,18 @@ class R_MAPPO:
             values, action_log_probs, dist_entropy, v_target = self.policy.evaluate_actions(**sample)
 
             # actor update
-            imp_weights = torch.exp(action_log_probs - sample['action_log_probs'])
+            assert sample['action_log_probs'].shape[-1] == 5, sample['action_log_probs'].shape
+            imp_weights = (action_log_probs - sample['action_log_probs']).sum(-1, keepdim=True).exp()
 
+            assert sample['advantages'].shape[-1] == 1, sample['advantages'].shape
             adv_targ = sample['advantages'].sum(-1, keepdim=True)
             surr1 = imp_weights * adv_targ
             surr2 = torch.clamp(imp_weights, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv_targ
 
             if not self._no_policy_active_masks:
-                policy_loss = (-torch.sum(torch.min(surr1, surr2), dim=-1, keepdim=True) *
-                            sample['active_masks']).sum() / sample['active_masks'].sum()
+                policy_loss = (-torch.min(surr1, surr2) * sample['active_masks']).sum() / sample['active_masks'].sum()
             else:
-                policy_loss = -torch.sum(torch.min(surr1, surr2), dim=-1, keepdim=True).mean()
+                policy_loss = -torch.min(surr1, surr2).mean()
 
             # critic update
             value_loss = self.cal_value_loss(values, sample['values'], v_target, sample.get('active_masks'))

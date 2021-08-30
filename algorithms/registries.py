@@ -20,8 +20,8 @@ def get_ppo_storage_specs(args, obs_space, act_space):
         StorageSpec('actions', (act_dim, ), torch.float32, False, 0),
         StorageSpec('action_log_probs', (act_dim, ), torch.float32, False, 0),
         StorageSpec('values', (1, ), torch.float32, True, 0),
-        StorageSpec('rnn_states', (args.rec_n, args.hidden_size), torch.float32, False, 0),
-        StorageSpec('rnn_states_critic', (args.rec_n, args.hidden_size), torch.float32, False, 0),
+        StorageSpec('rnn_states', (args.rec_n, args.hidden_size * 2), torch.float32, False, 0),
+        StorageSpec('rnn_states_critic', (args.rec_n, args.hidden_size * 2), torch.float32, False, 0),
     ]
 
     for k, obs_shape in obs_space.items():

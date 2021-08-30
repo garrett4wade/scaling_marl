@@ -8,10 +8,13 @@ from algorithms.utils.util import init
 from algorithms.utils.running_normalization import RunningNormalization
 
 
-def masked_avg_pooling(scores, mask):
-    assert mask.shape[-1] == scores.shape[-2]
-    masked_scores = scores * mask.unsqueeze(-1)
-    return masked_scores.sum(-2) / (mask.sum(-1, keepdim=True) + 1e-5)
+def masked_avg_pooling(scores, mask=None):
+    if mask is None:
+        return scores.mean(-2)
+    else:
+        assert mask.shape[-1] == scores.shape[-2]
+        masked_scores = scores * mask.unsqueeze(-1)
+        return masked_scores.sum(-2) / (mask.sum(-1, keepdim=True) + 1e-5)
 
 
 class HNSEncoder(nn.Module):
@@ -22,8 +25,6 @@ class HNSEncoder(nn.Module):
         self.self_obs_keys = ['observation_self', 'lidar']
         self.ordered_other_obs_keys = ['agent_qpos_qvel', 'box_obs', 'ramp_obs']
         self.ordered_obs_mask_keys = ['mask_aa_obs', 'mask_ab_obs', 'mask_ar_obs']
-        for key in self.self_obs_keys + self.ordered_other_obs_keys:
-            setattr(self, key + '_normalization', RunningNormalization((obs_space[key][-1], ), beta=1 - 1e-5))
 
         self_dim = obs_space['observation_self'][-1] + obs_space['lidar'][-1]
         others_shape_dict = deepcopy(obs_space)
@@ -40,10 +41,7 @@ class HNSEncoder(nn.Module):
 
         self.dense = nn.Sequential(init_(nn.Linear(256, 256)), nn.ReLU(inplace=True), nn.LayerNorm(256))
 
-    def forward(self, inputs, train_normalization=False, use_ckpt=False):
-        for k, v in inputs.items():
-            if hasattr(self, k + '_normalization'):
-                inputs[k] = getattr(self, k + '_normalization')(v, train=train_normalization)
+    def forward(self, inputs, use_ckpt=False):
         lidar = inputs['lidar']
         if len(lidar.shape) == 4:
             lidar = lidar.view(-1, *lidar.shape[2:])
@@ -148,10 +146,6 @@ class MultiHeadSelfAttention(nn.Module):
 
         # calculate attention
         scores = ScaledDotProductAttention(q, k, v, self.d_head, mask, self.attn_dropout)
-        # if not use_ckpt:
-        #     scores = ScaledDotProductAttention(q, k, v, self.d_head, mask, self.attn_dropout)
-        # else:
-        #     scores = cp.checkpoint(ScaledDotProductAttention, q, k, v, self.d_head, mask, self.attn_dropout)
 
         # concatenate heads and put through final linear layer
         return scores.transpose(-2, -3).contiguous().view(*x.shape[:-1], self.d_model)

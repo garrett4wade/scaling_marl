@@ -3,6 +3,7 @@ from algorithms.utils.rnn import RNNLayer
 from algorithms.utils.act import ACTLayer
 from algorithms.utils.value_head import ValueHead
 from .hns_encoder import HNSEncoder
+from algorithms.utils.running_normalization import RunningNormalization
 
 
 class R_Actor_Critic(nn.Module):
@@ -15,6 +16,10 @@ class R_Actor_Critic(nn.Module):
         self._use_recurrent_policy = args.use_recurrent_policy
         self._rec_n = args.rec_n
 
+        self.normalize_obs_keys = ['observation_self', 'lidar', 'agent_qpos_qvel', 'box_obs', 'ramp_obs']
+        for key in self.normalize_obs_keys:
+            setattr(self, key + '_normalization', RunningNormalization((obs_space[key][-1], ), beta=1 - 1e-5))
+
         self.actor_base = HNSEncoder(obs_space, omniscient=False, use_orthogonal=self._use_orthogonal)
         self.critic_base = HNSEncoder(obs_space, omniscient=True, use_orthogonal=self._use_orthogonal)
 
@@ -26,12 +31,15 @@ class R_Actor_Critic(nn.Module):
         self.v_out = ValueHead(self.hidden_size, 1, self._use_orthogonal, args.use_popart)
 
     def forward(self, obs, actor_rnn_states, masks, critic_rnn_states=None, unnormalized_v_target=None, train_normalization=False, use_ckpt=False):
+        for k in self.normalize_obs_keys:
+            obs[k] = getattr(self, k + '_normalization')(obs[k], train_normalization)
+
         compute_critic = critic_rnn_states is not None
         values = None
 
-        actor_features = self.actor_base(obs, train_normalization, use_ckpt)
+        actor_features = self.actor_base(obs, use_ckpt)
         if compute_critic:
-            critic_features = self.critic_base(obs, train_normalization, use_ckpt)
+            critic_features = self.critic_base(obs, use_ckpt)
 
         if self._use_recurrent_policy:
             actor_features, actor_rnn_states = self.actor_rnn(actor_features, actor_rnn_states, masks)

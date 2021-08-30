@@ -75,7 +75,7 @@ class R_MAPPOPolicy:
         }
 
     def evaluate_actions(self, rnn_states, rnn_states_critic, actions, masks, v_target, **obs):
-        (action_dists, _, values, _, v_target) = self.actor_critic(obs, rnn_states, masks, rnn_states_critic, v_target, train_normalization=True, use_ckpt=True)
+        (action_dists, _, values, _, v_target) = self.actor_critic(obs, rnn_states, masks, rnn_states_critic, v_target, train_normalization=True, use_ckpt=False)
         actions = torch.split(actions, 1, dim=-1)
         action_log_probs = [action_dist.log_probs(action) for action_dist, action in zip(action_dists, actions)]
         dist_entropy = [action_dist.entropy().mean() for action_dist in action_dists]
