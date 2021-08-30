@@ -21,13 +21,10 @@ seg_addrs:
   - - learner0_addr:port0
     - learner0_addr:port1
   - - learner1_addr:port0
-    - learner2_addr:port1
+    - learner1_addr:port1
 ```
 such that a worker can communicate with all learners. `len(seg_addrs)` equals to the number of learner nodes and
 `len(seg_addrs[0])` equals to the number of worker nodes.
-
-To run a single worker node to benchmark the throughput, comment [here](https://github.com/garrett4wade/scaling_marl/blob/master/system/policy_worker.py#L144)
-and just run a worker node as normal.
 
 # quick launch and monitor
 Specify node numbers (for ssh), container names and learner/worker names in config, and run `python run.py` in this directory (run this outside of container with python2). Notice that `update.sh` update your code before running, you can write your own `update.sh` and uncomment code in `run.py` to auto update before run.
