@@ -26,12 +26,12 @@ class HNSEncoder(nn.Module):
         self.ordered_other_obs_keys = ['agent_qpos_qvel', 'box_obs', 'ramp_obs']
         self.ordered_obs_mask_keys = ['mask_aa_obs', 'mask_ab_obs', 'mask_ar_obs']
 
-        self_dim = obs_space['observation_self'][-1] + obs_space['lidar'][-1]
+        self_dim = obs_space['observation_self'][-1] + obs_space['lidar'][-1] * 9
         others_shape_dict = deepcopy(obs_space)
         others_shape_dict.pop('observation_self')
         others_shape_dict.pop('lidar')
 
-        self.lidar_conv = nn.Conv1d(1, 1, 3, padding=1, padding_mode='circular')
+        self.lidar_conv = nn.Sequential(nn.Conv1d(1, 9, 3, padding=1, padding_mode='circular'), nn.ReLU(inplace=True))
         self.embedding_layer = CatSelfEmbedding(self_dim, others_shape_dict, 128, use_orthogonal=use_orthogonal)
         self.attn = ResidualMultiHeadSelfAttention(128, 4, 32, use_orthogonal=use_orthogonal)
         init_method = [nn.init.xavier_uniform_, nn.init.orthogonal_][use_orthogonal]
@@ -39,7 +39,7 @@ class HNSEncoder(nn.Module):
         def init_(m):
             return init(m, init_method, lambda x: nn.init.constant_(x, 0), gain=nn.init.calculate_gain('relu'))
 
-        self.dense = nn.Sequential(init_(nn.Linear(256, 256)), nn.ReLU(inplace=True), nn.LayerNorm(256))
+        self.dense = nn.Sequential(nn.LayerNorm(256), init_(nn.Linear(256, 256)), nn.ReLU(inplace=True), nn.LayerNorm(256))
 
     def forward(self, inputs, use_ckpt=False):
         lidar = inputs['lidar']
@@ -77,7 +77,7 @@ class CatSelfEmbedding(nn.Module):
             return init(m, init_method, lambda x: nn.init.constant_(x, 0), gain=nn.init.calculate_gain('relu'))
 
         def get_layer(input_dim, output_dim):
-            return nn.Sequential(init_(nn.Linear(input_dim, output_dim)), nn.ReLU(inplace=True), nn.LayerNorm(output_dim))
+            return nn.Sequential(init_(nn.Linear(input_dim, output_dim)), nn.ReLU(inplace=True))
 
         self.others_keys = sorted(self.others_shape_dict.keys())
         self.self_embedding = get_layer(self_dim, d_embedding)
@@ -132,6 +132,7 @@ class MultiHeadSelfAttention(nn.Module):
         self.d_head = d_head
         self.h = heads
 
+        self.pre_norm = nn.LayerNorm(input_dim)
         self.q_linear = init_(nn.Linear(input_dim, self.d_model))
         self.v_linear = init_(nn.Linear(input_dim, self.d_model))
         self.k_linear = init_(nn.Linear(input_dim, self.d_model))
@@ -139,6 +140,7 @@ class MultiHeadSelfAttention(nn.Module):
         self.attn_dropout = None
 
     def forward(self, x, mask, use_ckpt=False):
+        x = self.pre_norm(x)
         # perform linear operation and split into h heads
         k = self.k_linear(x).view(*x.shape[:-1], self.h, self.d_head).transpose(-2, -3)
         q = self.q_linear(x).view(*x.shape[:-1], self.h, self.d_head).transpose(-2, -3)

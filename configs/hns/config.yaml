@@ -4,7 +4,7 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: garrett4wade
-experiment_name: trial_1
+experiment_name: trial_2
 benchmark: false
 cuda: true
 cuda_deterministic: true
@@ -120,7 +120,7 @@ use_reanalyze: false
 use_fct_masks: true
 use_feature_normalization: true
 use_gae: true
-use_huber_loss: true
+use_huber_loss: false
 use_linear_lr_decay: false
 use_max_grad_norm: true
 use_orthogonal: false
