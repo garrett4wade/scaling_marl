@@ -91,7 +91,7 @@ class ValueHead(nn.Module):
             "while the input vector has shape {}".format(x.shape[-1:]))
 
         mean, var = self.debiased_mean_var()
-        out = (x - mean) / torch.sqrt(var)
+        out = ((x - mean) / torch.sqrt(var)).clip(-5.0, 5.0)
 
         return out.numpy() if np_input else out
 

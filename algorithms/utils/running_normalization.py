@@ -48,7 +48,7 @@ class RunningNormalization(nn.Module):
             self.debiasing_term.data[:] = self.beta * self.debiasing_term.data[:] + 1.0 - self.beta
 
         mean, var = self.debiased_mean_var()
-        return (x - mean) / var.sqrt()
+        return ((x - mean) / var.sqrt()).clip(-5.0, 5.0)
 
     @torch.no_grad()
     def denormalize(self, x):
