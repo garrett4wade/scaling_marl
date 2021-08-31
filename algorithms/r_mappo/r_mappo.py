@@ -22,7 +22,7 @@ class R_MAPPO:
         self._no_value_active_masks = cfg.no_value_active_masks
         self._no_policy_active_masks = cfg.no_policy_active_masks
 
-        self.value_loss_fn = lambda x: huber_loss(x, cfg.huber_delta) if self._use_huber_loss else mse_loss
+        self.value_loss_fn = (lambda x: huber_loss(x, cfg.huber_delta)) if self._use_huber_loss else mse_loss
 
     def cal_value_loss(self, values, value_preds_batch, v_target_batch, active_masks_batch=None):
         error_original = v_target_batch - values

@@ -52,7 +52,7 @@ seg_addrs:  # every worker node has seg_addrs connecting to all learners
 
 num_reanalyzers_per_trainer: 1
 num_value_tracers_per_trainer: 1
-slots_per_update: 32
+slots_per_update: 28
 episode_length: 160
 
 learner_config:
@@ -129,7 +129,7 @@ use_proper_time_limits: false
 use_ReLU: true
 use_advantage_normalization: true
 use_centralized_V: false
-use_clipped_value_loss: true
+use_clipped_value_loss: false
 no_value_active_masks: true
 no_policy_active_masks: true
 
