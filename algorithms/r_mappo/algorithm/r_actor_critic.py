@@ -50,5 +50,7 @@ class R_Actor_Critic(nn.Module):
 
         if compute_critic:
             values, v_target = self.v_out(critic_features, unnormalized_v_target)
+        else:
+            v_target = None
 
         return (action_dists, actor_rnn_states, values, critic_rnn_states, v_target)

@@ -31,15 +31,17 @@ class HNSEncoder(nn.Module):
         others_shape_dict.pop('observation_self')
         others_shape_dict.pop('lidar')
 
-        self.lidar_conv = nn.Sequential(nn.Conv1d(1, 9, 3, padding=1, padding_mode='circular'), nn.ReLU(inplace=True))
+        conv = nn.Conv1d(1, 9, 3, padding=1, padding_mode='circular')
+        nn.init.xavier_uniform_(conv.weight.data)
+
+        self.lidar_conv = nn.Sequential(conv, nn.ReLU(inplace=True))
         self.embedding_layer = CatSelfEmbedding(self_dim, others_shape_dict, 128, use_orthogonal=use_orthogonal)
         self.attn = ResidualMultiHeadSelfAttention(128, 4, 32, use_orthogonal=use_orthogonal)
-        init_method = [nn.init.xavier_uniform_, nn.init.orthogonal_][use_orthogonal]
 
-        def init_(m):
-            return init(m, init_method, lambda x: nn.init.constant_(x, 0), gain=nn.init.calculate_gain('relu'))
+        final_linear = nn.Linear(256, 256)
+        nn.init.xavier_uniform_(final_linear.weight.data)
 
-        self.dense = nn.Sequential(nn.LayerNorm(256), init_(nn.Linear(256, 256)), nn.ReLU(inplace=True), nn.LayerNorm(256))
+        self.dense = nn.Sequential(nn.LayerNorm(256), final_linear, nn.ReLU(inplace=True), nn.LayerNorm(256))
 
     def forward(self, inputs, use_ckpt=False):
         lidar = inputs['lidar']
@@ -71,13 +73,10 @@ class CatSelfEmbedding(nn.Module):
         self.others_shape_dict = others_shape_dict
         self.d_embedding = d_embedding
 
-        init_method = [nn.init.xavier_uniform_, nn.init.orthogonal_][use_orthogonal]
-
-        def init_(m):
-            return init(m, init_method, lambda x: nn.init.constant_(x, 0), gain=nn.init.calculate_gain('relu'))
-
         def get_layer(input_dim, output_dim):
-            return nn.Sequential(init_(nn.Linear(input_dim, output_dim)), nn.ReLU(inplace=True))
+            linear = nn.Linear(input_dim, output_dim)
+            nn.init.xavier_uniform_(linear.weight.data)
+            return nn.Sequential(linear, nn.ReLU(inplace=True))
 
         self.others_keys = sorted(self.others_shape_dict.keys())
         self.self_embedding = get_layer(self_dim, d_embedding)
@@ -123,19 +122,19 @@ class MultiHeadSelfAttention(nn.Module):
     def __init__(self, input_dim, heads, d_head, dropout=0.0, use_orthogonal=True):
         super(MultiHeadSelfAttention, self).__init__()
 
-        init_method = [nn.init.xavier_uniform_, nn.init.orthogonal_][use_orthogonal]
-
-        def init_(m):
-            return init(m, init_method, lambda x: nn.init.constant_(x, 0))
-
         self.d_model = d_head * heads
         self.d_head = d_head
         self.h = heads
 
         self.pre_norm = nn.LayerNorm(input_dim)
-        self.q_linear = init_(nn.Linear(input_dim, self.d_model))
-        self.v_linear = init_(nn.Linear(input_dim, self.d_model))
-        self.k_linear = init_(nn.Linear(input_dim, self.d_model))
+        self.q_linear = nn.Linear(input_dim, self.d_model)
+        nn.init.normal_(self.q_linear.weight.data, std=math.sqrt(0.125 / input_dim))
+        self.k_linear = nn.Linear(input_dim, self.d_model)
+        nn.init.normal_(self.k_linear.weight.data, std=math.sqrt(0.125 / input_dim))
+
+        self.v_linear = nn.Linear(input_dim, self.d_model)
+        nn.init.normal_(self.v_linear.weight.data, std=math.sqrt(0.125 / input_dim))
+        
         # self.attn_dropout = nn.Dropout(dropout)
         self.attn_dropout = None
 
@@ -159,12 +158,9 @@ class ResidualMultiHeadSelfAttention(nn.Module):
         self.d_model = heads * d_head
         self.attn = MultiHeadSelfAttention(input_dim, heads, d_head, dropout, use_orthogonal)
 
-        init_method = [nn.init.xavier_uniform_, nn.init.orthogonal_][use_orthogonal]
-
-        def init_(m):
-            return init(m, init_method, lambda x: nn.init.constant_(x, 0), gain=nn.init.calculate_gain('relu'))
-
-        self.dense = nn.Sequential(init_(nn.Linear(self.d_model, self.d_model)), nn.ReLU(inplace=True))
+        post_linear = nn.Linear(self.d_model, self.d_model)
+        nn.init.normal_(post_linear.weight.data, std=math.sqrt(0.125 / self.d_model))
+        self.dense = post_linear
         self.residual_norm = nn.LayerNorm(self.d_model)
         # self.dropout_after_attn = nn.Dropout(dropout)
         self.dropout_after_attn = None

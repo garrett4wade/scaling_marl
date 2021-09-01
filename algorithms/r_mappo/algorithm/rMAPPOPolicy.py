@@ -63,7 +63,7 @@ class R_MAPPOPolicy:
 
     def get_actions(self, rnn_states, rnn_states_critic, masks, deterministic=False, **obs):
         (action_dists, rnn_states, values, rnn_states_critic, _) = self.actor_critic(obs, rnn_states, masks, rnn_states_critic, train_normalization=False, use_ckpt=False)
-        actions = [action_dist.sample() if deterministic else action_dist.mode() for action_dist in action_dists]
+        actions = [action_dist.sample() if not deterministic else action_dist.mode() for action_dist in action_dists]
         action_log_probs = [action_dist.log_probs(action) for action_dist, action in zip(action_dists, actions)]
 
         return {
@@ -80,7 +80,17 @@ class R_MAPPOPolicy:
         action_log_probs = [action_dist.log_probs(action) for action_dist, action in zip(action_dists, actions)]
         dist_entropy = [action_dist.entropy().mean() for action_dist in action_dists]
 
-        return values, torch.cat(action_log_probs, -1), sum(dist_entropy) / len(dist_entropy), v_target
+        return values, torch.cat(action_log_probs, -1), sum(dist_entropy), v_target
+
+    @torch.no_grad()
+    def act(self, rnn_states, masks, deterministic=False, **obs):
+        (action_dists, rnn_states, _, _, _) = self.actor_critic(obs,
+                                                                rnn_states,
+                                                                masks,
+                                                                train_normalization=False,
+                                                                use_ckpt=False)
+        actions = [action_dist.sample() if not deterministic else action_dist.mode() for action_dist in action_dists]
+        return torch.cat(actions, -1), rnn_states
 
     def state_dict(self):
         return self.actor_critic.state_dict()

@@ -49,12 +49,15 @@ class FixedBernoulli(torch.distributions.Bernoulli):
 class Categorical(nn.Module):
     def __init__(self, num_inputs, num_outputs, use_orthogonal=True, gain=0.01):
         super(Categorical, self).__init__()
-        init_method = [nn.init.xavier_uniform_, nn.init.orthogonal_][use_orthogonal]
+        # init_method = [nn.init.xavier_uniform_, nn.init.orthogonal_][use_orthogonal]
 
-        def init_(m):
-            return init(m, init_method, lambda x: nn.init.constant_(x, 0), gain)
+        # def init_(m):
+        #     return init(m, init_method, lambda x: nn.init.constant_(x, 0), gain)
 
-        self.linear = init_(nn.Linear(num_inputs, num_outputs))
+        self.linear = nn.Linear(num_inputs, num_outputs)
+        weight = torch.randn_like(self.linear.weight.data)
+        weight *= gain / torch.sqrt(torch.square(weight).sum(0, keepdim=True))
+        self.linear.weight.data[:] = weight
 
     def forward(self, x, available_actions=None):
         x = self.linear(x)

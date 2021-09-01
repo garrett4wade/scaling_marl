@@ -4,7 +4,7 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: garrett4wade
-experiment_name: trial_2
+experiment_name: trial_4
 benchmark: false
 cuda: true
 cuda_deterministic: true
@@ -42,13 +42,13 @@ seg_addrs:  # every worker node has seg_addrs connecting to all learners
     - tcp://10.0.4.41:12348
     - tcp://10.0.4.41:12349
     - tcp://10.0.4.41:12350
-    - tcp://10.0.4.41:12351
+    # - tcp://10.0.4.41:12351
   - - tcp://10.0.4.43:12346
     - tcp://10.0.4.43:12347
     - tcp://10.0.4.43:12348
     - tcp://10.0.4.43:12349
     - tcp://10.0.4.43:12350
-    - tcp://10.0.4.43:12351
+    # - tcp://10.0.4.43:12351
 
 num_reanalyzers_per_trainer: 1
 num_value_tracers_per_trainer: 1
@@ -123,7 +123,7 @@ use_gae: true
 use_huber_loss: false
 use_linear_lr_decay: false
 use_max_grad_norm: true
-use_orthogonal: false
+use_orthogonal: true
 use_popart: true
 use_proper_time_limits: false
 use_ReLU: true

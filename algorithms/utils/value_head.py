@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import math
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
@@ -29,12 +30,12 @@ class ValueHead(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        init_method = [nn.init.xavier_uniform_, nn.init.orthogonal_][self._use_orthogonal]
+        if self.bias is not None:
+            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+            nn.init.uniform_(self.bias, -bound, bound)
 
-        def init_(m):
-            return init(m, init_method, lambda x: nn.init.constant_(x, 0))
-
-        init_(self)
+        nn.init.xavier_uniform_(self.weight)
         self.stddev.zero_().add_(1)
         self.mean.zero_()
         self.mean_sq.zero_()
