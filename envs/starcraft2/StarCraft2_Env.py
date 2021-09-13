@@ -280,12 +280,13 @@ class StarCraft2Env(MultiAgentEnv):
         self.enemies = {}
         self._episode_count = 0
         self._episode_steps = 0
-        self.episode_steps = 0
+        self.total_episode_steps = 0
         self._total_steps = 0
         self._obs = None
         self.battles_won = 0
         self.battles_game = 0
-        self.episode_return = 0
+        self._episode_return = 0
+        self.total_episode_return = 0
         self.timeouts = 0
         self.force_restarts = 0
         self.last_stats = None
@@ -386,6 +387,7 @@ class StarCraft2Env(MultiAgentEnv):
         """Reset the environment. Required after each full episode.
         Returns initial observations and states.
         """
+        self._episode_return = 0
         self._episode_steps = 0
         if self._episode_count == 0:
             # Launch StarCraft II
@@ -497,8 +499,8 @@ class StarCraft2Env(MultiAgentEnv):
                 available_actions.append(self.get_avail_agent_actions(i))
                 infos[i] = {
                     "_episode_length": self._episode_steps,
-                    "episode_length": self.episode_steps,
-                    "episode_return": self.episode_return,
+                    "episode_length": self.total_episode_steps - self._episode_steps,
+                    "episode_return": self.total_episode_return - self._episode_return,
                     "winning_episodes": self.battles_won,
                     "elapsed_episodes": self.battles_game,
                     "battles_draw": self.timeouts,
@@ -530,7 +532,7 @@ class StarCraft2Env(MultiAgentEnv):
 
         self._total_steps += 1
         self._episode_steps += 1
-        self.episode_steps += 1
+        self.total_episode_steps += 1
 
         # Update units
         game_end_code = self.update_units()
@@ -572,13 +574,14 @@ class StarCraft2Env(MultiAgentEnv):
         if self.reward_scale:
             reward /= self.max_reward / self.reward_scale_rate
 
-        self.episode_return += reward
+        self._episode_return += reward
+        self.total_episode_return += reward
 
         for i in range(self.n_agents):
             infos[i] = {
                 "_episode_length": self._episode_steps,
-                "episode_length": self.episode_steps,
-                "episode_return": self.episode_return,
+                "episode_length": self.total_episode_steps,
+                "episode_return": self.total_episode_return,
                 "winning_episodes": self.battles_won,
                 "elapsed_episodes": self.battles_game,
                 "battles_draw": self.timeouts,
@@ -939,26 +942,22 @@ class StarCraft2Env(MultiAgentEnv):
 
     def get_obs_agent(self, agent_id):
         """Returns observation for agent_id. The observation is composed of:
-
            - agent movement features (where it can move to, height information and pathing grid)
            - enemy features (available_to_attack, health, relative_x, relative_y, shield, unit_type)
            - ally features (visible, distance, relative_x, relative_y, shield, unit_type)
            - agent unit features (health, shield, unit_type)
-
            All of this information is flattened and concatenated into a list,
            in the aforementioned order. To know the sizes of each of the
            features inside the final list of features, take a look at the
            functions ``get_obs_move_feats_size()``,
            ``get_obs_enemy_feats_size()``, ``get_obs_ally_feats_size()`` and
            ``get_obs_own_feats_size()``.
-
            The size of the observation vector may vary, depending on the
            environment configuration and type of units present in the map.
            For instance, non-Protoss units will not have shields, movement
            features may or may not include terrain height and pathing grid,
            unit_type is not included if there is only one type of unit in the
            map etc.).
-
            NOTE: Agents should have access only to their local observations
            during decentralised execution.
         """
@@ -1282,26 +1281,22 @@ class StarCraft2Env(MultiAgentEnv):
 
     def get_state_agent(self, agent_id):
         """Returns observation for agent_id. The observation is composed of:
-
            - agent movement features (where it can move to, height information and pathing grid)
            - enemy features (available_to_attack, health, relative_x, relative_y, shield, unit_type)
            - ally features (visible, distance, relative_x, relative_y, shield, unit_type)
            - agent unit features (health, shield, unit_type)
-
            All of this information is flattened and concatenated into a list,
            in the aforementioned order. To know the sizes of each of the
            features inside the final list of features, take a look at the
            functions ``get_obs_move_feats_size()``,
            ``get_obs_enemy_feats_size()``, ``get_obs_ally_feats_size()`` and
            ``get_obs_own_feats_size()``.
-
            The size of the observation vector may vary, depending on the
            environment configuration and type of units present in the map.
            For instance, non-Protoss units will not have shields, movement
            features may or may not include terrain height and pathing grid,
            unit_type is not included if there is only one type of unit in the
            map etc.).
-
            NOTE: Agents should have access only to their local observations
            during decentralised execution.
         """
@@ -1519,7 +1514,7 @@ class StarCraft2Env(MultiAgentEnv):
         if self.obs_all_health:
             nf_al += 1 + self.shield_bits_ally
 
-        if self.obs_last_action:
+        if self.state_last_action:
             nf_al += self.n_actions
 
         if self.add_center_xy:
@@ -1546,7 +1541,7 @@ class StarCraft2Env(MultiAgentEnv):
         if self.obs_own_health:
             own_feats += 1 + self.shield_bits_ally
 
-        if self.obs_last_action:
+        if self.state_last_action:
             own_feats += self.n_actions
 
         if self.add_center_xy:
