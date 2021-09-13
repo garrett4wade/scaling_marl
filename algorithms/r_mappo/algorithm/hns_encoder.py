@@ -4,8 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from copy import deepcopy
 import torch.utils.checkpoint as cp
-from algorithms.utils.util import init
-from algorithms.utils.running_normalization import RunningNormalization
+# from algorithms.utils.util import init
 
 
 def masked_avg_pooling(scores, mask=None):
@@ -58,7 +57,8 @@ class HNSEncoder(nn.Module):
         else:
             mask = torch.cat([inputs[k] for k in self.ordered_obs_mask_keys], -1)
         if use_ckpt:
-            pooled_attn_other = cp.checkpoint(lambda x, y, z: masked_avg_pooling(self.attn(x, y, z), y), x_other, mask, use_ckpt)
+            pooled_attn_other = cp.checkpoint(lambda x, y, z: masked_avg_pooling(self.attn(x, y, z), y), x_other, mask,
+                                              use_ckpt)
         else:
             attn_other = self.attn(x_other, mask, use_ckpt)
             pooled_attn_other = masked_avg_pooling(attn_other, mask)
@@ -134,7 +134,7 @@ class MultiHeadSelfAttention(nn.Module):
 
         self.v_linear = nn.Linear(input_dim, self.d_model)
         nn.init.normal_(self.v_linear.weight.data, std=math.sqrt(0.125 / input_dim))
-        
+
         # self.attn_dropout = nn.Dropout(dropout)
         self.attn_dropout = None
 

@@ -30,7 +30,14 @@ class R_Actor_Critic(nn.Module):
         self.act = ACTLayer(act_space, self.hidden_size, self._use_orthogonal, self._gain)
         self.v_out = ValueHead(self.hidden_size, 1, self._use_orthogonal, args.use_popart)
 
-    def forward(self, obs, actor_rnn_states, masks, critic_rnn_states=None, unnormalized_v_target=None, train_normalization=False, use_ckpt=False):
+    def forward(self,
+                obs,
+                actor_rnn_states,
+                masks,
+                critic_rnn_states=None,
+                unnormalized_v_target=None,
+                train_normalization=False,
+                use_ckpt=False):
         for k in self.normalize_obs_keys:
             obs[k] = getattr(self, k + '_normalization')(obs[k], train_normalization)
 
