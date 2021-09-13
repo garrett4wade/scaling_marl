@@ -397,7 +397,7 @@ class LearnerBuffer(ReplayBuffer):
     def get(self, block=True, timeout=None):
         with self._read_ready:
             # randomly choose one slot from the oldest available slots
-            slot_id = super().get(block, timeout, lambda x: x[0])
+            slot_id = super().get(block, timeout, lambda x: x[-1])
             # TODO: default reuse pattern is recycle, while it could be set to 'exhausting' or others
             # defer the timestamp such that the slot will be selected again only after
             # all readable slots are selected at least once
