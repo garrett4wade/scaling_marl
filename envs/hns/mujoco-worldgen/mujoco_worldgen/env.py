@@ -348,9 +348,9 @@ class Env(gym.Env):
         action = np.asarray(action)
         action = np.minimum(action, self.action_space.high)
         action = np.maximum(action, self.action_space.low)
-        assert self.action_space.contains(action), (
-            'Action should be in action_space:\nSPACE=%s\nACTION=%s' %
-            (self.action_space, action))
+        # assert self.action_space.contains(action), (
+        #     'Action should be in action_space:\nSPACE=%s\nACTION=%s' %
+        #     (self.action_space, action))
         self.set_action(self.sim, action)
         self.sim.step()
         # Need to call forward() so that sites etc are updated,

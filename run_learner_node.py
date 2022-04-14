@@ -17,9 +17,9 @@ from utils.utils import log
 
 def make_example_env(cfg):
     assert cfg.env_name == "HideAndSeek"
-    env_config = deepcopy(yaml.load(open('./envs/hns/configs/hide_and_seek_paper.yaml', 'r'), Loader=yaml.FullLoader))
-    env_config['n_hiders'] = 3
-    env_config['n_seekers'] = 3
+    env_config = deepcopy(yaml.load(open('./envs/hns/configs/quadrant.yaml', 'r'), Loader=yaml.FullLoader))
+    env_config['n_hiders'] = 2
+    env_config['n_seekers'] = 2
     return HNSEnv('HideAndSeek', env_config)
 
 
@@ -68,7 +68,7 @@ def main():
     example_env.close()
     del example_env
 
-    cfg.num_agents = 6
+    cfg.num_agents = 4
 
     if cfg.learner_node_idx == 0:
         from system.task_dispatcher import TaskDispatcher
