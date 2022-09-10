@@ -165,6 +165,11 @@ class Trainer:
             model_port = self.cfg.model_weights_addrs[self.policy_id].split(':')[-1]
             self.model_weights_socket.bind('tcp://*:' + model_port)
 
+            # TODO init and send
+            self.reset_socket = self._context.socket(zmq.PUB)
+            reset_port = self.cfg.reset_addrs[self.policy_id].split(':')[-1]
+            self.reset_socket.bind('tcp://*:' + reset_port)
+
             self.task_socket = self._context.socket(zmq.SUB)
             self.task_socket.connect(self.cfg.task_dispatcher_addr)
             self.task_socket.setsockopt(zmq.SUBSCRIBE, self.socket_identity)
@@ -308,6 +313,7 @@ class Trainer:
         for k, v in numpy_state_dict.items():
             msg.extend([k.encode('ascii'), v])
         msg.append(str(self.policy_version.item()).encode('ascii'))
+        # TODO send
         self.model_weights_socket.send_multipart(msg)
 
         if self.policy_version.item() % 100 == 0:

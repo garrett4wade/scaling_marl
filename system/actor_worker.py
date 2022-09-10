@@ -156,6 +156,20 @@ class ActorWorker:
 
         self.initialized = True
 
+        # debug
+        # TODO, init and receive
+        import zmq
+        self.model_weights_sockets = [None for _ in range(self.cfg.num_policies)]
+        socket = self._context.socket(zmq.SUB)
+        socket.connect(self.cfg.reset_addrs[i])
+        socket.setsockopt(zmq.SUBSCRIBE, b'') # TODO, start str
+        
+        # self.model_weights_sockets[i] = socket
+        # self.task_socket = self._context.socket(zmq.SUB)
+        # reset_port = self.cfg.reset_addrs[self.policy_id].split(':')[-1]
+        # self.task_socket.connect(self.cfg.task_dispatcher_addr)
+        # self.task_socket.setsockopt(zmq.SUBSCRIBE, self.socket_identity)
+
     def _terminate(self):
         for env_runner in self.env_runners:
             env_runner.close()

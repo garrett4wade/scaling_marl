@@ -58,6 +58,7 @@ class R_MAPPO:
             assert sample['action_log_probs'].shape[-1] == 5, sample['action_log_probs'].shape
             imp_weights = (action_log_probs - sample['action_log_probs']).sum(-1, keepdim=True).exp()
 
+            # TODO mean advantage
             assert sample['advantages'].shape[-1] == 1, sample['advantages'].shape
             adv_targ = sample['advantages'].sum(-1, keepdim=True)
             surr1 = imp_weights * adv_targ

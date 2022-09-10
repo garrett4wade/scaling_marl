@@ -5,7 +5,6 @@ from algorithms.utils.value_head import ValueHead
 from .hns_encoder import HNSEncoder
 from algorithms.utils.running_normalization import RunningNormalization
 
-
 class R_Actor_Critic(nn.Module):
     def __init__(self, args, obs_space, act_space):
         super().__init__()

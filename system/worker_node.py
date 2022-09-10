@@ -111,9 +111,10 @@ class WorkerNode:
         for i in range(self.cfg.num_policies):
             socket = self._context.socket(zmq.SUB)
             socket.connect(self.cfg.model_weights_addrs[i])
-            socket.setsockopt(zmq.SUBSCRIBE, b'')
+            socket.setsockopt(zmq.SUBSCRIBE, b'') # TODO, start str
             self.model_weights_sockets[i] = socket
 
+    # receive msg
     def _update_weights(self, timing, policy_id, block=False):
         socket = self.model_weights_sockets[policy_id]
         model_weights_registry = self.model_weights_registries[policy_id]

@@ -3,7 +3,7 @@ group_name: reproduce
 algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
-user_name: garrett4wade
+user_name: chenjy
 experiment_name: trial_4
 benchmark: false
 cuda: true
@@ -23,49 +23,31 @@ summary_dir: './logs'
 
 # system parameters
 num_tasks_per_node: 1
-num_actors: 128
+num_actors: 2
 actor_group_size: 1
-envs_per_actor: 8
+envs_per_actor: 2
 num_policy_workers: 4
 qsize: 5
 min_num_requests: -1
 
 ddp_init_methods:
-  - tcp://10.0.4.41:6666
-task_dispatcher_addr: tcp://10.0.4.41:8887
-task_result_addr: tcp://10.0.4.41:8886
+  - tcp://localhost:6666
+task_dispatcher_addr: tcp://localhost:8887
+task_result_addr: tcp://localhost:8886
 model_weights_addrs:  # every learner has a model_weights_addr and len(model_weights_adddrs) == num_policies == num_leraners
-  - tcp://10.0.4.41:8889
+  - tcp://localhost:8889
 seg_addrs:  # every worker node has seg_addrs connecting to all learners
-  - - tcp://10.0.4.41:12346
-    - tcp://10.0.4.41:12347
-    - tcp://10.0.4.41:12348
-    - tcp://10.0.4.41:12349
-    - tcp://10.0.4.41:12350
-    # - tcp://10.0.4.41:12351
-  - - tcp://10.0.4.43:12346
-    - tcp://10.0.4.43:12347
-    - tcp://10.0.4.43:12348
-    - tcp://10.0.4.43:12349
-    - tcp://10.0.4.43:12350
-    # - tcp://10.0.4.43:12351
+  - - tcp://localhost:12346
 
 num_reanalyzers_per_trainer: 1
 num_value_tracers_per_trainer: 1
-slots_per_update: 28
+slots_per_update: 1
 episode_length: 160
 
 learner_config:
   "0":
     "0": 0
-    "1": 0
-    "2": 0
-    "3": 0
-  "1":
-    "0": 0
-    "1": 0
-    "2": 0
-    "3": 0
+
 num_policies: 1
 policy2agents:
   "0":
@@ -154,7 +136,7 @@ total_rounds: 100000000 # debug
 interval: 3
 # first node is head
 nodes: learner0,worker0
-puller_address: "10.0.4.41"
+puller_address: "localhost"
 puller_port: 4321
 
 verbose: false
