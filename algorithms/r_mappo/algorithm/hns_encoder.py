@@ -25,15 +25,16 @@ class HNSEncoder(nn.Module):
         self.ordered_other_obs_keys = ['agent_qpos_qvel', 'box_obs', 'ramp_obs']
         self.ordered_obs_mask_keys = ['mask_aa_obs', 'mask_ab_obs', 'mask_ar_obs']
 
-        self_dim = obs_space['observation_self'][-1] + obs_space['lidar'][-1] * 9
+        # self_dim = obs_space['observation_self'][-1] + obs_space['lidar'][-1] * 9
+        self_dim = obs_space['observation_self'][-1]
         others_shape_dict = deepcopy(obs_space)
         others_shape_dict.pop('observation_self')
         others_shape_dict.pop('lidar')
 
-        conv = nn.Conv1d(1, 9, 3, padding=1, padding_mode='circular')
-        nn.init.xavier_uniform_(conv.weight.data)
+        # conv = nn.Conv1d(1, 9, 3, padding=1, padding_mode='circular')
+        # nn.init.xavier_uniform_(conv.weight.data)
 
-        self.lidar_conv = nn.Sequential(conv, nn.ReLU(inplace=True))
+        # self.lidar_conv = nn.Sequential(conv, nn.ReLU(inplace=True))
         self.embedding_layer = CatSelfEmbedding(self_dim, others_shape_dict, 128, use_orthogonal=use_orthogonal)
         self.attn = ResidualMultiHeadSelfAttention(128, 4, 32, use_orthogonal=use_orthogonal)
 
@@ -43,11 +44,13 @@ class HNSEncoder(nn.Module):
         self.dense = nn.Sequential(nn.LayerNorm(256), final_linear, nn.ReLU(inplace=True), nn.LayerNorm(256))
 
     def forward(self, inputs, use_ckpt=False):
-        lidar = inputs['lidar']
-        if len(lidar.shape) == 4:
-            lidar = lidar.view(-1, *lidar.shape[2:])
-        x_lidar = self.lidar_conv(lidar).reshape(*inputs['lidar'].shape[:-2], -1)
-        x_self = torch.cat([inputs['observation_self'], x_lidar], dim=-1)
+        # lidar = inputs['lidar']
+        # if len(lidar.shape) == 4:
+        #     lidar = lidar.view(-1, *lidar.shape[2:])
+        # x_lidar = self.lidar_conv(lidar).reshape(*inputs['lidar'].shape[:-2], -1)
+        # x_self = torch.cat([inputs['observation_self'], x_lidar], dim=-1)
+
+        x_self = inputs['observation_self']
 
         x_other = {k: inputs[k] for k in self.ordered_other_obs_keys}
         x_self, x_other = self.embedding_layer(x_self, **x_other)

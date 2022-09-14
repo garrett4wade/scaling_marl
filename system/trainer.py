@@ -134,6 +134,7 @@ class Trainer:
 
         self._context = None
         self.model_weights_socket = None
+        self.reset_socket = None
         self.task_socket = None
         self.task_result_socket = None
 
@@ -167,7 +168,7 @@ class Trainer:
 
             # TODO init and send
             self.reset_socket = self._context.socket(zmq.PUB)
-            reset_port = self.cfg.reset_addrs[self.policy_id].split(':')[-1]
+            reset_port = self.cfg.reset_addrs[0].split(':')[-1]
             self.reset_socket.bind('tcp://*:' + reset_port)
 
             self.task_socket = self._context.socket(zmq.SUB)
@@ -238,6 +239,7 @@ class Trainer:
     def _terminate(self):
         if self.replicate_rank == 0:
             self.model_weights_socket.close()
+            self.reset_socket.close()
             self.task_socket.close()
 
         dist.destroy_process_group()
@@ -256,6 +258,9 @@ class Trainer:
 
         try:
             while not self.terminate:
+                # cl, tasks
+                self.send_reset_task()
+
                 if self.replicate_rank == 0:
                     try:
                         msg = self.task_socket.recv_multipart(flags=zmq.NOBLOCK)
@@ -313,12 +318,22 @@ class Trainer:
         for k, v in numpy_state_dict.items():
             msg.extend([k.encode('ascii'), v])
         msg.append(str(self.policy_version.item()).encode('ascii'))
-        # TODO send
+        print('********send_model', msg)
         self.model_weights_socket.send_multipart(msg)
 
         if self.policy_version.item() % 100 == 0:
             # print(numpy_state_dict['critic_rnn.rnn.weight_hh_l0'])
             log.debug('Broadcasting model weights...(ver. {})'.format(self.policy_version.item()))
+
+    # cl, send tasks
+    def send_reset_task(self):
+        msg = []
+        
+        for _ in range(self.num_splits):
+            numpy_msg = np.random.randint(0,10)
+            msg.append(str(numpy_msg).encode('ascii'))
+        print('********send_reset', msg)
+        self.reset_socket.send_multipart(msg)
 
     def training_step(self, timing):
         buffer_util = self.buffer.utilization

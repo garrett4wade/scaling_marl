@@ -210,6 +210,7 @@ def get_config():
     parser.add_argument("--set_workers_cpu_affinity", default=True, action='store_false')
 
     parser.add_argument("--model_weights_addrs", type=str, nargs='+')
+    parser.add_argument("--reset_addrs", type=str, nargs='+')
     parser.add_argument("--seg_addrs", type=str, nargs='+')
 
     parser.add_argument('--benchmark', default=False, action='store_true', help='Benchmark mode')

@@ -1,4 +1,4 @@
-max_n_agents: 5
+max_n_agents: 6
 
 # Agent Actions
 grab_box: true
@@ -9,37 +9,33 @@ grab_exclusive: false
 lock_box: true
 lock_ramp: true
 lock_type: "all_lock_team_specific"
-lock_out_of_vision: false
+lock_out_of_vision: True
 
 # Scenario
 n_substeps: 15
-horizon: 240
-scenario: "randomwalls"
+horizon: 80
+scenario: "quadrant"
 n_rooms: 4
 random_room_number: true
 prob_outside_walls: 0.5
 prep_fraction: 0.4
 rew_type: "joint_zero_sum"
 restrict_rect:
-  - -6.0
-  - -6.0
-  - 12.0
-  - 12.0
+  - 0.1
+  - 0.1
+  - 5.9
+  - 5.9
 
 hiders_together_radius: 0.5
 seekers_together_radius: 0.5
 
 # Objects
-n_boxes:
-  - 3
-  - 9
-n_elongated_boxes:
-  - 3
-  - 9
+n_boxes: 1
+n_elongated_boxes: 0
 box_only_z_rot: true
 boxid_obs: false
 
-n_ramps: 2
+n_ramps: 1
 
 # Food
 n_food: 0

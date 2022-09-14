@@ -12,6 +12,7 @@ from utils.utils import log, memory_consumption_mb, join_or_kill, set_process_cp
     TaskType, set_gpus_for_process, drain_semaphore
 
 from envs.env_wrappers import DummyVecEnv
+import zmq
 
 
 def flatten_recurrent(d):
@@ -156,25 +157,88 @@ class ActorWorker:
 
         self.initialized = True
 
-        # debug
-        # TODO, init and receive
-        import zmq
-        self.model_weights_sockets = [None for _ in range(self.cfg.num_policies)]
+        # init reset socket, cl
+        self._context = zmq.Context()
         socket = self._context.socket(zmq.SUB)
-        socket.connect(self.cfg.reset_addrs[i])
+        socket.connect(self.cfg.reset_addrs[0])
         socket.setsockopt(zmq.SUBSCRIBE, b'') # TODO, start str
-        
-        # self.model_weights_sockets[i] = socket
-        # self.task_socket = self._context.socket(zmq.SUB)
-        # reset_port = self.cfg.reset_addrs[self.policy_id].split(':')[-1]
-        # self.task_socket.connect(self.cfg.task_dispatcher_addr)
-        # self.task_socket.setsockopt(zmq.SUBSCRIBE, self.socket_identity)
+        self.reset_sockets = [socket]
 
     def _terminate(self):
         for env_runner in self.env_runners:
             env_runner.close()
 
         self.terminate = True
+
+    # TODO, receive receive task msg
+    def _update_reset_tasks(self, timing, block=False):
+        socket = self.reset_sockets[0]
+        # model_weights_registry = self.model_weights_registries[policy_id]
+        # ps = self.local_ps[policy_id]
+        # lock = self.param_locks[policy_id]
+
+        with timing.add_time('update_reset_tasks'), timing.time_avg('update_reset_tasks_once'):
+            msg = None
+
+            if block:
+                msg = socket.recv_multipart(flags=0)
+            else:
+                while True:
+                    # receive the latest reset tasks
+                    try:
+                        msg = socket.recv_multipart(flags=zmq.NOBLOCK)
+                    except zmq.ZMQError:
+                        break
+            return msg
+
+    # TODO cl, reset task to every env
+    def _handle_reset_cl(self, timing):
+        """
+        Reset all envs, one split at a time (double-buffering), and send requests to policy workers to get
+        actions for the very first env step.
+        """
+        for s in self.envstep_output_semaphore:
+            drain_semaphore(s)
+
+        for s_pair in self.act_semaphore:
+            for s in s_pair:
+                drain_semaphore(s)
+
+        self.is_policy_act_semaphores_ready[:] = False
+
+        # # cl, receive reset tasks
+        # print('#################reset_tasks_begin')
+        # reset_tasks = self._update_reset_tasks(timing)
+        # print('#################reset_tasks', reset_tasks)
+
+        for split_idx, env_runner in enumerate(self.env_runners):
+            policy_inputs = env_runner.reset()
+            policy_inputs['rewards'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
+            policy_inputs['dones'] = np.zeros((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
+            policy_inputs['fct_masks'] = np.ones((self.envs_per_split, self.num_agents, 1), dtype=np.float32)
+            policy_inputs = flatten_recurrent(policy_inputs)
+            for k, shms in self.envstep_output_shm.items():
+                # new rnn states is updated after each inference step
+                if 'rnn_states' not in k:
+                    for policy_shm, agent_idx in zip(shms, self.agent_ids):
+                        policy_shm[split_idx][self.env_slice] = policy_inputs[k][:, agent_idx]
+
+        for split_idx in range(len(self.env_runners)):
+            self.envstep_output_semaphore[split_idx].release()
+            if self.cfg.actor_group_size == 1:
+                # when #actors == #groups
+                self.envstep_output_semaphore[split_idx].acquire()
+                # assert not self.envstep_output_semaphore[split_idx].acquire(block=False)
+                for policy_queue in self.policy_queues:
+                    policy_queue.put(split_idx * self.num_actors + self.local_rank)
+
+        if not self.ready:
+            log.info('Worker task %d finished reset of worker %d (after initialization)', self.task_rank,
+                     self.worker_idx)
+            safe_put(self.report_queue, dict(finished_reset=self.local_rank), queue_name='report')
+            self.ready = True
+        # else:
+        #     log.info('Worker task %d finished reset of worker %d (for evaluation)', self.task_rank, self.worker_idx)
 
     def _handle_reset(self):
         """
@@ -345,7 +409,8 @@ class ActorWorker:
                         if task_type == TaskType.RESET:
                             assert self.initialized
                             with timing.add_time('reset'):
-                                self._handle_reset()
+                                # self._handle_reset()
+                                self._handle_reset_cl(timing)
 
                         if task_type == TaskType.START:
                             self.phase = self.summary_phase = ActorWorkerPhase.ROLLOUT

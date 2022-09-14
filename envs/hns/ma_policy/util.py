@@ -1,12 +1,14 @@
 import numpy as np
-import tensorflow as tf
+# import tensorflow as tf
+import torch
 
 
 def normc_initializer(std=1.0, axis=0):
     def _initializer(shape, dtype=None, partition_info=None):  # pylint: disable=W0613
         out = np.random.randn(*shape).astype(np.float32)
         out *= std / np.sqrt(np.square(out).sum(axis=axis, keepdims=True))
-        return tf.constant(out)
+        return torch.constant(out)
+        # return tf.constant(out)
 
     return _initializer
 
@@ -30,7 +32,7 @@ def shape_list(x):
         deal with dynamic shape in tensorflow cleanly
     '''
     ps = x.get_shape().as_list()
-    ts = tf.shape(x)
+    ts = torch.shape(x)
     return [ts[i] if ps[i] is None else ps[i] for i in range(len(ps))]
 
 
@@ -42,6 +44,6 @@ def l2_loss(pred, label, std, mask):
             TODO: Revisit whether this is the right choice.
     '''
     if mask is None:
-        return 0.5 * tf.reduce_mean(tf.square((pred - label) / std))
+        return 0.5 * torch.reduce_mean(torch.square((pred - label) / std))
     else:
-        return 0.5 * tf.reduce_mean(mask * tf.square((pred - label) / std))
+        return 0.5 * torch.reduce_mean(mask * torch.square((pred - label) / std))
