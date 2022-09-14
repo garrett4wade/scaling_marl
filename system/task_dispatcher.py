@@ -188,9 +188,10 @@ class TaskDispatcher:
                 infos = {'policy_' + str(policy_id) + '/' + k: v for k, v in infos.items()}
                 wandb.log(infos, step=int(self.consumed_num_steps[policy_id].item()))
             else:
-                self.writter.add_scalars('policy_' + str(policy_id),
-                                         infos,
-                                         step=int(self.consumed_num_steps[policy_id].item()))
+                pass
+                # self.writter.add_scalars('policy_' + str(policy_id),
+                #                          infos,
+                #                          step=int(self.consumed_num_steps[policy_id].item()))
 
     def _run(self):
         log.info('Initializing Task Dispatcher...')

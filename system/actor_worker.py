@@ -127,6 +127,9 @@ class ActorWorker:
         self.processed_envsteps = 0
         self.process = TorchProcess(target=self._run, daemon=True)
 
+        # cl
+        self.reset_tasks_queue = []
+
     def start_process(self):
         self.process.start()
 
@@ -155,14 +158,14 @@ class ActorWorker:
                 ]))
             safe_put(self.report_queue, dict(initialized_env=(self.local_rank, i)), queue_name='report')
 
-        self.initialized = True
-
         # init reset socket, cl
         self._context = zmq.Context()
         socket = self._context.socket(zmq.SUB)
         socket.connect(self.cfg.reset_addrs[0])
-        socket.setsockopt(zmq.SUBSCRIBE, b'') # TODO, start str
+        socket.setsockopt(zmq.SUBSCRIBE, b'')
         self.reset_sockets = [socket]
+
+        self.initialized = True
 
     def _terminate(self):
         for env_runner in self.env_runners:
@@ -170,12 +173,9 @@ class ActorWorker:
 
         self.terminate = True
 
-    # TODO, receive receive task msg
-    def _update_reset_tasks(self, timing, block=False):
+    # TODO, collect tasks
+    def _collect_reset_tasks(self, timing, block=False):
         socket = self.reset_sockets[0]
-        # model_weights_registry = self.model_weights_registries[policy_id]
-        # ps = self.local_ps[policy_id]
-        # lock = self.param_locks[policy_id]
 
         with timing.add_time('update_reset_tasks'), timing.time_avg('update_reset_tasks_once'):
             msg = None
@@ -189,7 +189,19 @@ class ActorWorker:
                         msg = socket.recv_multipart(flags=zmq.NOBLOCK)
                     except zmq.ZMQError:
                         break
-            return msg
+            if msg is not None:
+                new_msg = []
+                for msg_one in msg:
+                    new_msg.append(np.array(msg_one.decode('ascii')))
+                self.reset_tasks_queue = new_msg.copy()
+    
+    def _get_new_reset_tasks(self):
+        if len(self.reset_tasks_queue) > 0:
+            new_tasks = self.reset_tasks_queue[:self.num_actors * self.envs_per_actor]
+            self.reset_tasks_queue = self.reset_tasks_queue[self.num_actors * self.envs_per_actor:]
+            return new_tasks.copy()
+        else:
+            return None
 
     # TODO cl, reset task to every env
     def _handle_reset_cl(self, timing):
@@ -205,11 +217,6 @@ class ActorWorker:
                 drain_semaphore(s)
 
         self.is_policy_act_semaphores_ready[:] = False
-
-        # # cl, receive reset tasks
-        # print('#################reset_tasks_begin')
-        # reset_tasks = self._update_reset_tasks(timing)
-        # print('#################reset_tasks', reset_tasks)
 
         for split_idx, env_runner in enumerate(self.env_runners):
             policy_inputs = env_runner.reset()
@@ -283,7 +290,7 @@ class ActorWorker:
         # else:
         #     log.info('Worker task %d finished reset of worker %d (for evaluation)', self.task_rank, self.worker_idx)
 
-    def _advance_rollouts(self, split_idx, timing):
+    def _advance_rollouts(self, split_idx, timing, tasks=None):
         """
         Process incoming request from policy worker. Use the data (policy outputs, actions) to advance the simulation
         by one step on the corresponding VectorEnvRunner.
@@ -295,9 +302,19 @@ class ActorWorker:
         :param timing: profiling stuff
         """
         env = self.env_runners[split_idx]
+        
+        # tasks : self.num_actors * self.envs_per_actor
+        if tasks is None:
+            env_set_tasks = None
+        else:
+            task_chunk = tasks[self.local_rank * self.envs_per_actor : (self.local_rank + 1) * self.envs_per_actor]
+            if split_idx == 0:
+                env_set_tasks = task_chunk[:self.envs_per_split].copy()
+            else :
+                env_set_tasks = task_chunk[self.envs_per_split:].copy()
 
         with timing.add_time('env_step/simulation'), timing.time_avg('env_step/simulation_avg'):
-            envstep_outputs = flatten_recurrent(env.step(self.act_shm[split_idx]))
+            envstep_outputs = flatten_recurrent(env.step(self.act_shm[split_idx], env_set_tasks))
             self.debug_ep_steps[split_idx] += 1
 
         with timing.add_time('env_step/copy_outputs'):
@@ -369,7 +386,7 @@ class ActorWorker:
         last_report = time.time()
         with torch.no_grad():
             while not self.terminate:
-                try:
+                try:                    
                     if self.initialized and not (self.phase == ActorWorkerPhase.PAUSE and cur_split == stop_split):
                         with timing.add_time('waiting'), timing.time_avg('wait_for_inference'):
                             for i, policy_act_semaphore in enumerate(self.act_semaphore):
@@ -379,8 +396,15 @@ class ActorWorker:
                                     self.is_policy_act_semaphores_ready[i] = cur_ready
 
                         with timing.add_time('env_step'):
+                            # reset env by cl
+                            # cl, receive reset tasks
+                            # print('#################reset_tasks_begin')
+                            self._collect_reset_tasks(timing)
+                            # maintain an archive with num_actor * envs_per_actor
+                            reset_tasks = self._get_new_reset_tasks()
+                            print('#################reset_tasks', reset_tasks)
                             if np.all(self.is_policy_act_semaphores_ready):
-                                self._advance_rollouts(cur_split, timing)
+                                self._advance_rollouts(cur_split, timing, reset_tasks)
                                 cur_split = (cur_split + 1) % self.num_splits
                                 self.is_policy_act_semaphores_ready[:] = 0
 

@@ -142,7 +142,7 @@ class PolicyWorker:
             # initialize the Torch modules
             log.info('Initializing model on the policy worker %d...', self.worker_idx)
 
-            torch.set_num_threads(32)
+            torch.set_num_threads(1)
 
             if self.cfg.cuda:
                 # we should already see only one CUDA device, because of env vars

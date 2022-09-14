@@ -133,7 +133,6 @@ class WorkerNode:
                         msg = socket.recv_multipart(flags=zmq.NOBLOCK)
                     except zmq.ZMQError:
                         break
-
             if msg is None:
                 return
 

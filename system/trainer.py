@@ -21,6 +21,9 @@ class Trainer:
         self.gpu_rank = gpu_rank
         self.node_idx = self.cfg.learner_node_idx
 
+        self.num_actors = self.cfg.num_actors // self.cfg.num_tasks_per_node
+        self.envs_per_actor = cfg.envs_per_actor
+
         self.policy_id = self.cfg.learner_config[str(self.node_idx)][str(gpu_rank)]
         self.replicate_rank = self.trainer_idx = self.num_trainers = 0
 
@@ -166,7 +169,6 @@ class Trainer:
             model_port = self.cfg.model_weights_addrs[self.policy_id].split(':')[-1]
             self.model_weights_socket.bind('tcp://*:' + model_port)
 
-            # TODO init and send
             self.reset_socket = self._context.socket(zmq.PUB)
             reset_port = self.cfg.reset_addrs[0].split(':')[-1]
             self.reset_socket.bind('tcp://*:' + reset_port)
@@ -259,7 +261,7 @@ class Trainer:
         try:
             while not self.terminate:
                 # cl, tasks
-                # self.send_reset_task()
+                self.send_reset_task()
 
                 if self.replicate_rank == 0:
                     try:
@@ -280,6 +282,8 @@ class Trainer:
                             # log.warning('Trainer %d is not executing tasks and there are no tasks distributed to it!',
                             #             self.trainer_idx)
                             pass
+
+                # TODO update CL archive
 
                 train_infos = self.training_step(timing)
 
@@ -329,10 +333,9 @@ class Trainer:
     def send_reset_task(self):
         msg = []
         
-        for _ in range(self.num_splits):
-            numpy_msg = np.random.randint(0,10)
+        for _ in range(10000):
+            numpy_msg = np.ones(5) * np.random.randint(0,10)
             msg.append(str(numpy_msg).encode('ascii'))
-        # print('********send_reset', msg)
         self.reset_socket.send_multipart(msg)
 
     def training_step(self, timing):
@@ -368,6 +371,7 @@ class Trainer:
                         sample[k] = torch.from_numpy(v).pin_memory().to(**self.tpdv, non_blocking=True)
 
                 with timing.add_time('training_step/algorithm_step'):
+                    # TODO use value_pred of samples, update cl archive
                     infos = self.algorithm.step(sample)
                     del sample
 
@@ -413,7 +417,7 @@ class Trainer:
     def maybe_log(self, timing):
         log_infos = {}
         # log information
-        if self.replicate_rank == 0 and self.policy_version.item() % self.log_interval == 20:
+        if self.replicate_rank == 0 and self.policy_version.item() % self.log_interval == 1:
             self.last_received_num_steps = self.received_num_steps
             self.received_num_steps = self.buffer.total_timesteps.item()
 

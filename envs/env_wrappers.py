@@ -1,6 +1,7 @@
 """
 Modified from OpenAI Baselines code to work with multi-agent envs
 """
+from pickle import NONE
 import numpy as np
 from multiprocessing import Process, Pipe
 from abc import ABC, abstractmethod
@@ -310,6 +311,19 @@ def shareworker(remote, parent_remote, env_fn_wrapper):
                     ob, s_ob, available_actions = env.reset()
 
             remote.send((ob, s_ob, reward, done, info, available_actions))
+        elif cmd == 'step_cl':
+            action = data[0]
+            task = data[1]
+            print('task', task)
+            ob, s_ob, reward, done, info, available_actions = env.step(action)
+            if 'bool' in done.__class__.__name__:
+                if done:
+                    ob, s_ob, available_actions = env.reset()
+            else:
+                if np.all(done):
+                    ob, s_ob, available_actions = env.reset()
+
+            remote.send((ob, s_ob, reward, done, info, available_actions))
         elif cmd == 'reset':
             ob, s_ob, available_actions = env.reset()
             remote.send((ob, s_ob, available_actions))
@@ -357,15 +371,30 @@ class ShareSubprocVecEnv(ShareVecEnv):
         observation_space, share_observation_space, action_space = self.remotes[0].recv()
         ShareVecEnv.__init__(self, len(env_fns), observation_space, share_observation_space, action_space)
 
-    def step_async(self, actions):
-        for remote, action in zip(self.remotes, actions):
-            remote.send(('step', action))
+    # def step_async(self, actions):
+    #     for remote, action in zip(self.remotes, actions):
+    #         # remote.send(('step', action))
+    #     self.waiting = True
+
+    def step_async(self, actions, tasks=None):
+        if tasks is not None:
+            for remote, action in zip(self.remotes, actions):
+                # remote.send(('step', action))
+                remote.send(('step', action))
+        else:
+            for remote, action, task in zip(self.remotes, actions, tasks):
+                # remote.send(('step', action))
+                remote.send(('step_cl', (action, task)))
         self.waiting = True
 
     def step_wait(self):
         results = [remote.recv() for remote in self.remotes]
         self.waiting = False
         return map(np.stack, zip(*results))
+
+    def step(self, actions, tasks=None):
+        self.step_async(actions, tasks)
+        return self.step_wait()
 
     def reset(self):
         for remote in self.remotes:
@@ -658,10 +687,14 @@ class DummyVecEnv(ShareVecEnv):
         ShareVecEnv.__init__(self, len(env_fns), env.observation_space, None, env.action_space)
         self.actions = None
 
+    def step(self, actions, tasks=None):
+        self.step_async(actions)
+        return self.step_wait(tasks)
+
     def step_async(self, actions):
         self.actions = actions
 
-    def step_wait(self):
+    def step_wait(self, tasks=None):
         results = [env.step(a) for (a, env) in zip(self.actions, self.envs)]
         obs_lis, rews_lis, dones_lis, infos_lis = zip(*results)
         obs = {k: np.stack([v[k] for v in obs_lis]) for k in obs_lis[0].keys()}
@@ -670,6 +703,8 @@ class DummyVecEnv(ShareVecEnv):
         for (i, done) in enumerate(dones):
             if np.all(done):
                 obs_reset = self.envs[i].reset()
+                # TODO
+                # obs_reset = self.envs[i].reset(tasks[i])
                 for k in obs_reset.keys():
                     obs[k][i] = obs_reset[k]
 
