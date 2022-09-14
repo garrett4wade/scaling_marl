@@ -152,7 +152,7 @@ class WorkerNode:
 
                 self.ps_policy_versions[policy_id] = learner_policy_version
 
-        if self.num_policy_updates[policy_id] % 100 == 0:
+        if self.num_policy_updates[policy_id] % 1 == 0:
             log.debug(
                 'Updated Policy %d on node %d, policy_version %d (%s)',
                 policy_id,

@@ -1,4 +1,4 @@
-max_n_agents: 6
+max_n_agents: 3
 
 # Agent Actions
 grab_box: true

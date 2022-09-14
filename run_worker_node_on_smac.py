@@ -15,8 +15,10 @@ def build_actor_env(rank, seed_idx, cfg):
     assert cfg.env_name == "HideAndSeek"
     env_config = deepcopy(yaml.load(open('./envs/hns/configs/hide_and_seek_paper.yaml', 'r'), Loader=yaml.FullLoader))
     np.random.seed(seed_idx)
-    env_config['n_hiders'] = np.random.randint(1, 4)
-    env_config['n_seekers'] = np.random.randint(1, 4)
+    # env_config['n_hiders'] = np.random.randint(1, 4)
+    # env_config['n_seekers'] = np.random.randint(1, 4)
+    env_config['n_hiders'] = 2
+    env_config['n_seekers'] = 1
     # print(f'seed idx {seed_idx}, hiders {env_config["n_hiders"]}, seekers {env_config["n_seekers"]}')
     env = HNSEnv('HideAndSeek', env_config)
     env.seed(cfg.seed + rank * 10000)
@@ -27,8 +29,8 @@ def build_actor_env(rank, seed_idx, cfg):
 def make_example_env(cfg):
     assert cfg.env_name == "HideAndSeek"
     env_config = deepcopy(yaml.load(open('./envs/hns/configs/hide_and_seek_paper.yaml', 'r'), Loader=yaml.FullLoader))
-    env_config['n_hiders'] = 3
-    env_config['n_seekers'] = 3
+    env_config['n_hiders'] = 2
+    env_config['n_seekers'] = 1
     return HNSEnv('HideAndSeek', env_config)
 
 
@@ -74,7 +76,7 @@ def main():
     example_env.close()
     del example_env
 
-    cfg.num_agents = 6
+    cfg.num_agents = 3
     assert len(cfg.policy2agents) == cfg.num_policies
     assert sum([len(v) for v in cfg.policy2agents.values()]) == cfg.num_agents
 

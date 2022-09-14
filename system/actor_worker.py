@@ -409,8 +409,8 @@ class ActorWorker:
                         if task_type == TaskType.RESET:
                             assert self.initialized
                             with timing.add_time('reset'):
-                                # self._handle_reset()
-                                self._handle_reset_cl(timing)
+                                self._handle_reset()
+                                # self._handle_reset_cl(timing)
 
                         if task_type == TaskType.START:
                             self.phase = self.summary_phase = ActorWorkerPhase.ROLLOUT

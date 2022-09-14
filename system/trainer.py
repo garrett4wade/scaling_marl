@@ -259,7 +259,7 @@ class Trainer:
         try:
             while not self.terminate:
                 # cl, tasks
-                self.send_reset_task()
+                # self.send_reset_task()
 
                 if self.replicate_rank == 0:
                     try:
@@ -318,7 +318,7 @@ class Trainer:
         for k, v in numpy_state_dict.items():
             msg.extend([k.encode('ascii'), v])
         msg.append(str(self.policy_version.item()).encode('ascii'))
-        print('********send_model', msg)
+        # print('********send_model', msg)
         self.model_weights_socket.send_multipart(msg)
 
         if self.policy_version.item() % 100 == 0:
@@ -332,7 +332,7 @@ class Trainer:
         for _ in range(self.num_splits):
             numpy_msg = np.random.randint(0,10)
             msg.append(str(numpy_msg).encode('ascii'))
-        print('********send_reset', msg)
+        # print('********send_reset', msg)
         self.reset_socket.send_multipart(msg)
 
     def training_step(self, timing):
