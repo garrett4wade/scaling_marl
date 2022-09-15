@@ -36,6 +36,10 @@ def get_ppo_storage_specs(args, obs_space, act_space):
 
     policy_input_keys = [*obs_space.keys(), 'masks', 'rnn_states', 'rnn_states_critic']
     policy_output_keys = ['actions', 'action_log_probs', 'values', 'rnn_states', 'rnn_states_critic']
+    
+    # cl, 3agents,1box,1ramp,1door
+    # ppo_storage_specs.append(StorageSpec('task', (14, ), torch.uint8, True, 1))
+
     return ppo_storage_specs, policy_input_keys, policy_output_keys
 
 

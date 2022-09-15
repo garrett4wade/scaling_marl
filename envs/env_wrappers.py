@@ -702,9 +702,10 @@ class DummyVecEnv(ShareVecEnv):
 
         for (i, done) in enumerate(dones):
             if np.all(done):
-                obs_reset = self.envs[i].reset()
-                # TODO
-                # obs_reset = self.envs[i].reset(tasks[i])
+                if tasks is None:
+                    obs_reset = self.envs[i].reset(tasks)
+                else:
+                    obs_reset = self.envs[i].reset(tasks[i])
                 for k in obs_reset.keys():
                     obs[k][i] = obs_reset[k]
 

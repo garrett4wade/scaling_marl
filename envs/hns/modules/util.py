@@ -17,8 +17,7 @@ def get_size_from_xml(obj):
     else:
         return outer_bound['geom'][0]['@size'][:2] * 2
 
-
-def rejection_placement(env, placement_fn, floor_size, obj_size, num_tries=10):
+def rejection_placement(env, obj_id, placement_fn, floor_size, obj_size, num_tries=50):
     '''
         Args:
             env (gym.Env): environment
@@ -43,13 +42,12 @@ def rejection_placement(env, placement_fn, floor_size, obj_size, num_tries=10):
 
     for i in range(num_tries):
         if placement_fn is not None:
-            pos = placement_fn(grid, obj_size_in_cells, env.metadata, env._random_state)
+            # pos = placement_fn(grid, obj_size_in_cells, env.metadata, env._random_state)
+            pos = placement_fn(grid, obj_size_in_cells, env.metadata, env._random_state, obj_id, num_try=i)
         else:
             # Assume that we'll always have boundary walls so don't sample there
-            pos = np.array([
-                env._random_state.randint(1, grid_size - obj_size_in_cells[0] - 1),
-                env._random_state.randint(1, grid_size - obj_size_in_cells[1] - 1)
-            ])
+            pos = np.array([env._random_state.randint(1, grid_size - obj_size_in_cells[0] - 1),
+                            env._random_state.randint(1, grid_size - obj_size_in_cells[1] - 1)])
         if np.any(grid[pos[0]:pos[0] + obj_size_in_cells[0], pos[1]:pos[1] + obj_size_in_cells[1]]):
             continue
         else:
@@ -60,6 +58,49 @@ def rejection_placement(env, placement_fn, floor_size, obj_size, num_tries=10):
             grid[pos[0]:pos[0] + obj_size_in_cells[0], pos[1]:pos[1] + obj_size_in_cells[1]] = 1
             return placement, pos
     return None, None
+
+# def rejection_placement(env, placement_fn, floor_size, obj_size, num_tries=10):
+#     '''
+#         Args:
+#             env (gym.Env): environment
+#             placement_fn (function): Function that returns a position on a grid
+#                 Args:
+#                     grid (np.ndarray): 2D occupancy grid. 1's mean occupied
+#                     obj_size_in_cells (int np.ndarray): number of cells in [x, y]
+#                         that this object would occupy on the grid. Currently only supports
+#                         rectangular object sizes (but so does worldgen)
+#                     env.metadata (dict): environment metadata
+#                     random_state (np.random.RandomState): numpy random state
+#                 Returns: x, y placement position on grid
+#             floor_size (float): size of floor
+#             obj_size (float np.ndarray): [x, y] size of object
+#             num_tries (int): number of tries to place object
+#         Returns: int np.ndarray([x, y]) position on grid or None if no placement was found.
+#     '''
+#     grid = env.placement_grid
+#     grid_size = len(grid)
+#     cell_size = floor_size / grid_size
+#     obj_size_in_cells = np.ceil(obj_size / cell_size).astype(int)
+
+#     for i in range(num_tries):
+#         if placement_fn is not None:
+#             pos = placement_fn(grid, obj_size_in_cells, env.metadata, env._random_state)
+#         else:
+#             # Assume that we'll always have boundary walls so don't sample there
+#             pos = np.array([
+#                 env._random_state.randint(1, grid_size - obj_size_in_cells[0] - 1),
+#                 env._random_state.randint(1, grid_size - obj_size_in_cells[1] - 1)
+#             ])
+#         if np.any(grid[pos[0]:pos[0] + obj_size_in_cells[0], pos[1]:pos[1] + obj_size_in_cells[1]]):
+#             continue
+#         else:
+#             extra_room = obj_size_in_cells * cell_size - obj_size
+#             pos_on_floor = pos / grid_size * floor_size
+#             pos_on_floor += env._random_state.uniform([0, 0], extra_room)
+#             placement = pos_on_floor / (floor_size - obj_size)
+#             grid[pos[0]:pos[0] + obj_size_in_cells[0], pos[1]:pos[1] + obj_size_in_cells[1]] = 1
+#             return placement, pos
+#     return None, None
 
 
 def uniform_placement(grid, obj_size, metadata, random_state):

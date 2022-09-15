@@ -484,8 +484,26 @@ class LearnerBuffer(ReplayBuffer):
         # for k, v in output_tensors.items():
         #     assert np.all(1 - np.isnan(v)) and np.all(1 - np.isinf(v)), k
 
+        # get tasks
+        # the 3rd axis :  num_agents * 2
+        ramp_pos = np.floor(self.storage['ramp_obs'][slot, :self.episode_length, :, :, 0:2] * 27.5 / 6.0)
+        box_pos = np.floor(self.storage['box_obs'][slot, :self.episode_length, :, :, 0:2] * 27.5 / 6.0)
+        agents_pos = np.floor(self.storage['observation_self'][slot, :self.episode_length, : ,0:2] * 4.75)
+        # get values
+        all_values = self.storage['values'][slot,:self.episode_length]
+        # ramp, [T, num_agents * 2, num_ramps, 2]
+        # agent, [T, num_agents * 2, 2]
+        T_length = agents_pos.shape[0]
+        env_ramp_pos = np.concatenate([ramp_pos[:,0].reshape(T_length, -1), ramp_pos[:,self.num_agents].reshape(T_length, -1)],axis=0)
+        env_box_pos = np.concatenate([box_pos[:,0].reshape(T_length, -1), box_pos[:,self.num_agents].reshape(T_length, -1)],axis=0)
+        env_agents_pos = np.concatenate([agents_pos[:,:self.num_agents].reshape(T_length, -1), agents_pos[:,self.num_agents:].reshape(T_length, -1)])
+        all_tasks = np.concatenate([env_agents_pos, env_box_pos, env_ramp_pos], axis=1)
+        # [all_tasks, num_agents, num_critic]
+        all_values = np.concatenate([all_values[:,:self.num_agents], all_values[:,self.num_agents:]])
+
         if self.num_mini_batch == 1:
-            yield output_tensors
+            # yield output_tensors
+            yield output_tensors, all_tasks, all_values
         else:
             rand = torch.randperm(self.batch_size).numpy()
             for i in range(self.num_mini_batch):

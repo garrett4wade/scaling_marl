@@ -97,12 +97,17 @@ class HNSEnv:
         else:
             padded_obs = {}
             for k, v in dict_obs.items():
-                pad = [(0, self.max_n_agents - v.shape[0])] + [(0, 0) for _ in range(len(v.shape) - 1)]
-                padded_obs[k] = np.pad(v, pad)
+                if k!='task':
+                    pad = [(0, self.max_n_agents - v.shape[0])] + [(0, 0) for _ in range(len(v.shape) - 1)]
+                    padded_obs[k] = np.pad(v, pad)
+                else:
+                    padded_obs['task'] = v
             return padded_obs
 
-    def reset(self):
-        dict_obs = self.env.reset()
+    def reset(self, task=None):
+        # print('task', task)
+        dict_obs = self.env.reset(task)
+        # print('obs_self', (np.floor(dict_obs['observation_self'][:,0:2]* 4.75)).reshape(-1), 'box', (np.floor(dict_obs['box_obs'][0,0,0:2]* 27.5 / 6.0)).reshape(-1), 'ramp', (np.floor(dict_obs['ramp_obs'][0,0,0:2]* 27.5 / 6.0)).reshape(-1))
         if 'lidar' in dict_obs.keys():
             dict_obs['lidar'] = np.transpose(dict_obs['lidar'], (0, 2, 1))
         dict_obs = {

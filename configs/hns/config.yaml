@@ -46,11 +46,6 @@ num_value_tracers_per_trainer: 1
 slots_per_update: 1
 episode_length: 80
 
-num_reanalyzers_per_trainer: 1
-num_value_tracers_per_trainer: 1
-slots_per_update: 1
-episode_length: 160
-
 learner_config:
   "0":
     "0": 0

@@ -373,7 +373,6 @@ class RandomWalls(EnvModule):
 
         return obs
 
-
 class WallScenarios(EnvModule):
     '''
     Add a wall scenario to the environment. This must be the first module added to the environment.
@@ -394,9 +393,12 @@ class WallScenarios(EnvModule):
                 This is just used for pretty rendering
     '''
     @store_args
-    def __init__(self, grid_size, door_size, scenario, friction=None, p_door_dropout=0.0, low_outside_walls=False):
+    def __init__(self, n_agents, grid_size, door_size, scenario, friction=None, p_door_dropout=0.0,
+                 low_outside_walls=False):
+        self.n_agents = n_agents
         assert scenario in ['var_quadrant', 'quadrant', 'half', 'var_tri', 'empty']
 
+    # different from openai (set door state)
     def build_world_step(self, env, floor, floor_size):
         # Outside walls
         walls = outside_walls(self.grid_size, use_low_wall_height=self.low_outside_walls)
@@ -406,16 +408,18 @@ class WallScenarios(EnvModule):
             env.metadata['quadrant_size'] = q_size
             new_walls = [
                 Wall([self.grid_size - q_size, 0], [self.grid_size - q_size, q_size]),
-                Wall([self.grid_size - q_size, q_size], [self.grid_size - 1, q_size])
-            ]
+                Wall([self.grid_size - q_size, q_size], [self.grid_size - 1, q_size])]
             if env._random_state.uniform(0, 1) < self.p_door_dropout:
                 wall_to_split = env._random_state.randint(0, 2)
-                walls += [new_walls[(1 - wall_to_split)]]
+                if 'set_door_state' not in env.metadata:
+                    walls += [new_walls[(1 - wall_to_split)]]
                 walls_to_split = [new_walls[wall_to_split]]
             else:
                 walls_to_split = new_walls
+            self.max_num_doors = len(new_walls)
         elif self.scenario == 'half':
-            walls_to_split += [Wall([self.grid_size - 1, self.grid_size // 2], [0, self.grid_size // 2])]
+            walls_to_split += [Wall([self.grid_size - 1, self.grid_size // 2],
+                                    [0, self.grid_size // 2])]
         elif self.scenario == 'var_tri':
             wall1_splitoff_point, wall2_splitoff_point = [
                 int(self.grid_size * env._random_state.uniform(0.4, 0.6)) for _ in range(2)
@@ -427,33 +431,45 @@ class WallScenarios(EnvModule):
             env.metadata['tri_wall_splitoff_points'] = [wall1_splitoff_point, wall2_splitoff_point]
             env.metadata['tri_wall_orientations'] = [wall1_orientation, wall2_orientation]
             if wall1_orientation == 'horizontal':
-                walls_to_split = [Wall([self.grid_size - 1, wall1_splitoff_point], [0, wall1_splitoff_point])]
+                walls_to_split = [Wall([self.grid_size - 1, wall1_splitoff_point],
+                                       [0, wall1_splitoff_point])]
                 if wall2_orientation == 'left':
-                    walls_to_split += [Wall([wall2_splitoff_point, wall1_splitoff_point], [wall2_splitoff_point, 0])]
-                    rooms = [[(1, self.grid_size - 1), (wall1_splitoff_point + 1, self.grid_size - 1)],
-                             [(1, wall2_splitoff_point - 1), (1, wall1_splitoff_point - 1)],
-                             [(wall2_splitoff_point + 1, self.grid_size - 1), (1, wall1_splitoff_point - 1)]]
+                    walls_to_split += [Wall([wall2_splitoff_point, wall1_splitoff_point],
+                                            [wall2_splitoff_point, 0])]
+                    rooms = [[(1, self.grid_size - 1),
+                              (wall1_splitoff_point + 1, self.grid_size - 1)],
+                             [(1, wall2_splitoff_point - 1),
+                              (1, wall1_splitoff_point - 1)],
+                             [(wall2_splitoff_point + 1, self.grid_size - 1),
+                              (1, wall1_splitoff_point - 1)]]
                 elif wall2_orientation == 'right':
-                    walls_to_split += [
-                        Wall([wall2_splitoff_point, self.grid_size - 1], [wall2_splitoff_point, wall1_splitoff_point])
-                    ]
-                    rooms = [[(1, self.grid_size - 1), (0, wall1_splitoff_point - 1)],
-                             [(1, wall2_splitoff_point - 1), (wall1_splitoff_point + 1, self.grid_size - 1)],
+                    walls_to_split += [Wall([wall2_splitoff_point, self.grid_size - 1],
+                                            [wall2_splitoff_point, wall1_splitoff_point])]
+                    rooms = [[(1, self.grid_size - 1),
+                              (0, wall1_splitoff_point - 1)],
+                             [(1, wall2_splitoff_point - 1),
+                              (wall1_splitoff_point + 1, self.grid_size - 1)],
                              [(wall2_splitoff_point + 1, self.grid_size - 1),
                               (wall1_splitoff_point + 1, self.grid_size - 1)]]
             elif wall1_orientation == 'vertical':
-                walls_to_split = [Wall([wall1_splitoff_point, self.grid_size - 1], [wall1_splitoff_point, 0])]
+                walls_to_split = [Wall([wall1_splitoff_point, self.grid_size - 1],
+                                       [wall1_splitoff_point, 0])]
                 if wall2_orientation == 'left':
-                    walls_to_split += [Wall([wall1_splitoff_point, wall2_splitoff_point], [0, wall2_splitoff_point])]
-                    rooms = [[(wall1_splitoff_point + 1, self.grid_size - 1), (1, self.grid_size - 1)],
-                             [(1, wall1_splitoff_point - 1), (1, wall2_splitoff_point - 1)],
-                             [(1, wall1_splitoff_point - 1), (wall2_splitoff_point + 1, self.grid_size - 1)]]
+                    walls_to_split += [Wall([wall1_splitoff_point, wall2_splitoff_point],
+                                            [0, wall2_splitoff_point])]
+                    rooms = [[(wall1_splitoff_point + 1, self.grid_size - 1),
+                              (1, self.grid_size - 1)],
+                             [(1, wall1_splitoff_point - 1),
+                              (1, wall2_splitoff_point - 1)],
+                             [(1, wall1_splitoff_point - 1),
+                              (wall2_splitoff_point + 1, self.grid_size - 1)]]
                 elif wall2_orientation == 'right':
-                    walls_to_split += [
-                        Wall([self.grid_size - 1, wall2_splitoff_point], [wall1_splitoff_point, wall2_splitoff_point])
-                    ]
-                    rooms = [[(0, wall1_splitoff_point - 1), (1, self.grid_size - 1)],
-                             [(wall1_splitoff_point + 1, self.grid_size - 1), (1, wall2_splitoff_point - 1)],
+                    walls_to_split += [Wall([self.grid_size - 1, wall2_splitoff_point],
+                                            [wall1_splitoff_point, wall2_splitoff_point])]
+                    rooms = [[(0, wall1_splitoff_point - 1),
+                              (1, self.grid_size - 1)],
+                             [(wall1_splitoff_point + 1, self.grid_size - 1),
+                              (1, wall2_splitoff_point - 1)],
                              [(wall1_splitoff_point + 1, self.grid_size - 1),
                               (wall2_splitoff_point + 1, self.grid_size - 1)]]
             env.metadata['tri_room_grid_cell_range'] = rooms
@@ -463,9 +479,32 @@ class WallScenarios(EnvModule):
             env.metadata['tri_placement_rotation'] = []
         elif self.scenario == 'empty':
             walls_to_split = []
-
-        # Add doors
-        new_walls, doors = split_walls(walls_to_split, self.door_size, random_state=env._random_state)
+        
+        if 'set_door_state' in env.metadata:
+            # reset the full walls
+            walls_to_split = [
+                Wall([self.grid_size - q_size, 0], [self.grid_size - q_size, q_size]),
+                Wall([self.grid_size - q_size, q_size], [self.grid_size - 1, q_size])]
+            doors=env.metadata['set_door_state']
+            new_walls = []
+            if doors.shape[0] > 1: # two doors in two walls
+                for door_pos in doors:
+                    if door_pos[0,0] == door_pos[1,0]: # vertical
+                        new_walls += split_walls_set_door(walls_to_split[0], door_pos)
+                    else:
+                        new_walls += split_walls_set_door(walls_to_split[1], door_pos)
+            else:
+                door_pos = doors[0]
+                if door_pos[0,0] == door_pos[1,0]: # vertical
+                    new_walls += split_walls_set_door(walls_to_split[0], door_pos)
+                    new_walls.append(walls_to_split[1])
+                else:
+                    new_walls.append(walls_to_split[0])
+                    new_walls += split_walls_set_door(walls_to_split[1], door_pos)
+        else:
+            # Add doors
+            new_walls, doors = split_walls(walls_to_split, self.door_size,
+                                        random_state=env._random_state)
         walls += new_walls
 
         env.metadata['doors'] = np.array(doors)
@@ -480,10 +519,129 @@ class WallScenarios(EnvModule):
         add_walls_to_grid(env.placement_grid, walls)
         return True
 
-    def observation_step(self, env, sim):
+    def observation_step(self, env, sim):       
         if self.door_obs is not None:
-            obs = {'door_obs': self.door_obs}
+            one_door_dim = self.door_obs[0].shape[-1]
+            vector_door_obs = np.zeros((1, self.max_num_doors*one_door_dim))
+            current_door_dim = self.door_obs.reshape(1,-1).shape[-1]
+            vector_door_obs[0][:current_door_dim] = self.door_obs.reshape(1,-1).copy()
+            vector_door_obs = vector_door_obs.repeat(self.n_agents,axis=0)
+            obs = {'door_obs': self.door_obs, 'vector_door_obs': vector_door_obs}
         else:
             obs = {}
-
         return obs
+
+
+# class WallScenarios(EnvModule):
+#     '''
+#     Add a wall scenario to the environment. This must be the first module added to the environment.
+#         Args:
+#             grid_size (int): grid size to place walls on
+#             door_size (int): size of doors in grid cells
+#             scenario (string): Options:
+#                 'empty': no walls
+#                 'half': one wall in the middle with a random door
+#                 'quadrant': one quadrant is walled off with random door(s)
+#                 'var_quadrant': same as 'quadrant' but the room size is also randomized
+#                 'var_tri': three rooms, one taking about half of the area and the other
+#                     two taking about a quarter of the area. Random doors
+#             friction (float): wall friction
+#             p_door_dropout (float): probability we don't place one of the doors either
+#                 quadrant scenario
+#             low_outside_walls (bool): If true, outside walls are the same height as inside walls.
+#                 This is just used for pretty rendering
+#     '''
+#     @store_args
+#     def __init__(self, grid_size, door_size, scenario, friction=None, p_door_dropout=0.0, low_outside_walls=False):
+#         assert scenario in ['var_quadrant', 'quadrant', 'half', 'var_tri', 'empty']
+
+#     def build_world_step(self, env, floor, floor_size):
+#         # Outside walls
+#         walls = outside_walls(self.grid_size, use_low_wall_height=self.low_outside_walls)
+#         if self.scenario in ['quadrant', 'var_quadrant']:
+#             q_size = env._random_state.uniform(0.3, 0.6) if self.scenario == 'var_quadrant' else 0.5
+#             q_size = int(q_size * self.grid_size)
+#             env.metadata['quadrant_size'] = q_size
+#             new_walls = [
+#                 Wall([self.grid_size - q_size, 0], [self.grid_size - q_size, q_size]),
+#                 Wall([self.grid_size - q_size, q_size], [self.grid_size - 1, q_size])
+#             ]
+#             if env._random_state.uniform(0, 1) < self.p_door_dropout:
+#                 wall_to_split = env._random_state.randint(0, 2)
+#                 walls += [new_walls[(1 - wall_to_split)]]
+#                 walls_to_split = [new_walls[wall_to_split]]
+#             else:
+#                 walls_to_split = new_walls
+#         elif self.scenario == 'half':
+#             walls_to_split += [Wall([self.grid_size - 1, self.grid_size // 2], [0, self.grid_size // 2])]
+#         elif self.scenario == 'var_tri':
+#             wall1_splitoff_point, wall2_splitoff_point = [
+#                 int(self.grid_size * env._random_state.uniform(0.4, 0.6)) for _ in range(2)
+#             ]
+#             wall1_orientation = 'vertical' if env._random_state.uniform() < 0.5 else 'horizontal'
+#             # if first wall is horizontal, 'left' means below and 'right' means above
+#             wall2_orientation = 'left' if env._random_state.uniform() < 0.5 else 'right'
+
+#             env.metadata['tri_wall_splitoff_points'] = [wall1_splitoff_point, wall2_splitoff_point]
+#             env.metadata['tri_wall_orientations'] = [wall1_orientation, wall2_orientation]
+#             if wall1_orientation == 'horizontal':
+#                 walls_to_split = [Wall([self.grid_size - 1, wall1_splitoff_point], [0, wall1_splitoff_point])]
+#                 if wall2_orientation == 'left':
+#                     walls_to_split += [Wall([wall2_splitoff_point, wall1_splitoff_point], [wall2_splitoff_point, 0])]
+#                     rooms = [[(1, self.grid_size - 1), (wall1_splitoff_point + 1, self.grid_size - 1)],
+#                              [(1, wall2_splitoff_point - 1), (1, wall1_splitoff_point - 1)],
+#                              [(wall2_splitoff_point + 1, self.grid_size - 1), (1, wall1_splitoff_point - 1)]]
+#                 elif wall2_orientation == 'right':
+#                     walls_to_split += [
+#                         Wall([wall2_splitoff_point, self.grid_size - 1], [wall2_splitoff_point, wall1_splitoff_point])
+#                     ]
+#                     rooms = [[(1, self.grid_size - 1), (0, wall1_splitoff_point - 1)],
+#                              [(1, wall2_splitoff_point - 1), (wall1_splitoff_point + 1, self.grid_size - 1)],
+#                              [(wall2_splitoff_point + 1, self.grid_size - 1),
+#                               (wall1_splitoff_point + 1, self.grid_size - 1)]]
+#             elif wall1_orientation == 'vertical':
+#                 walls_to_split = [Wall([wall1_splitoff_point, self.grid_size - 1], [wall1_splitoff_point, 0])]
+#                 if wall2_orientation == 'left':
+#                     walls_to_split += [Wall([wall1_splitoff_point, wall2_splitoff_point], [0, wall2_splitoff_point])]
+#                     rooms = [[(wall1_splitoff_point + 1, self.grid_size - 1), (1, self.grid_size - 1)],
+#                              [(1, wall1_splitoff_point - 1), (1, wall2_splitoff_point - 1)],
+#                              [(1, wall1_splitoff_point - 1), (wall2_splitoff_point + 1, self.grid_size - 1)]]
+#                 elif wall2_orientation == 'right':
+#                     walls_to_split += [
+#                         Wall([self.grid_size - 1, wall2_splitoff_point], [wall1_splitoff_point, wall2_splitoff_point])
+#                     ]
+#                     rooms = [[(0, wall1_splitoff_point - 1), (1, self.grid_size - 1)],
+#                              [(wall1_splitoff_point + 1, self.grid_size - 1), (1, wall2_splitoff_point - 1)],
+#                              [(wall1_splitoff_point + 1, self.grid_size - 1),
+#                               (wall2_splitoff_point + 1, self.grid_size - 1)]]
+#             env.metadata['tri_room_grid_cell_range'] = rooms
+
+#             # this is used when we want to consecutively place objects in every room
+#             # e.g. if we want object i to go in room (i % 3)
+#             env.metadata['tri_placement_rotation'] = []
+#         elif self.scenario == 'empty':
+#             walls_to_split = []
+
+#         # Add doors
+#         new_walls, doors = split_walls(walls_to_split, self.door_size, random_state=env._random_state)
+#         walls += new_walls
+
+#         env.metadata['doors'] = np.array(doors)
+
+#         # Convert doors into mujoco frame
+#         if len(doors) > 0:
+#             self.door_obs = construct_door_obs(np.array(doors), floor_size, self.grid_size)
+#         else:
+#             self.door_obs = None
+
+#         walls_to_mujoco(floor, floor_size, self.grid_size, walls, friction=self.friction)
+#         add_walls_to_grid(env.placement_grid, walls)
+#         return True
+
+#     def observation_step(self, env, sim):
+#         if self.door_obs is not None:
+#             obs = {'door_obs': self.door_obs}
+#         else:
+#             obs = {}
+
+#         return obs
