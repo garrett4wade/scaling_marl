@@ -994,8 +994,6 @@ class Trainer:
 
         try:
             while not self.terminate:
-                # cl, tasks
-                self.send_reset_task()
 
                 if self.replicate_rank == 0:
                     try:
@@ -1018,6 +1016,8 @@ class Trainer:
                             pass
 
                 # TODO update CL archive
+                # cl, tasks
+                self.send_reset_task()
 
                 train_infos = self.training_step(timing)
 

@@ -202,9 +202,7 @@ class ActorWorker:
     
     def _get_new_reset_tasks(self):
         if len(self.reset_tasks_queue) > 0:
-            new_tasks = self.reset_tasks_queue[:self.num_actors * self.envs_per_actor]
-            self.reset_tasks_queue = self.reset_tasks_queue[self.num_actors * self.envs_per_actor:]
-            return new_tasks.copy()
+            return self.reset_tasks_queue[:self.num_actors * self.envs_per_actor]
         else:
             return None
 
@@ -312,6 +310,7 @@ class ActorWorker:
         if tasks is None:
             env_set_tasks = None
         else:
+            # print('tasks',len(tasks), 'local_rank', self.local_rank, 'envs_per_actor', self.envs_per_actor)
             task_chunk = tasks[self.local_rank * self.envs_per_actor : (self.local_rank + 1) * self.envs_per_actor]
             if split_idx == 0:
                 env_set_tasks = task_chunk[:self.envs_per_split].copy()
@@ -403,11 +402,9 @@ class ActorWorker:
                         with timing.add_time('env_step'):
                             # reset env by cl
                             # cl, receive reset tasks
-                            # print('#################reset_tasks_begin')
                             self._collect_reset_tasks(timing)
                             # maintain an archive with num_actor * envs_per_actor
                             reset_tasks = self._get_new_reset_tasks()
-                            # print('#################reset_tasks', reset_tasks)
                             if np.all(self.is_policy_act_semaphores_ready):
                                 self._advance_rollouts(cur_split, timing, reset_tasks)
                                 cur_split = (cur_split + 1) % self.num_splits

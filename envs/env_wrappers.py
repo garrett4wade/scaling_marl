@@ -702,6 +702,12 @@ class DummyVecEnv(ShareVecEnv):
 
         for (i, done) in enumerate(dones):
             if np.all(done):
+                # print('dones', len(dones))
+                # if tasks is None:
+                #     print('tasks', None)
+                # else:
+                #     print('tasks', len(tasks))
+
                 if tasks is None:
                     obs_reset = self.envs[i].reset()
                 else:
