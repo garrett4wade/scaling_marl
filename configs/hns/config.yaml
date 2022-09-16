@@ -4,13 +4,13 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: chenjy
-experiment_name: debug
+experiment_name: debug_num_critic1
 benchmark: false
 cuda: true
 cuda_deterministic: true
 seed: 1
 no_summary: false
-use_wandb: false
+use_wandb: true
 use_eval: true
 use_render: false
 
@@ -26,9 +26,9 @@ summary_dir: './logs'
 
 # system parameters
 num_tasks_per_node: 1
-num_actors: 4
+num_actors: 256
 actor_group_size: 1
-envs_per_actor: 16
+envs_per_actor: 8
 num_policy_workers: 4
 qsize: 5
 min_num_requests: -1
@@ -46,7 +46,7 @@ seg_addrs:  # every worker node has seg_addrs connecting to all learners
 
 num_reanalyzers_per_trainer: 1
 num_value_tracers_per_trainer: 1
-slots_per_update: 1
+slots_per_update: 480
 episode_length: 80
 
 learner_config:
@@ -67,8 +67,8 @@ set_workers_cpu_affinity: true
 force_envs_single_thread: true
 default_niceness: 0
 eval_episodes: 32
-eval_interval: 10
-log_interval: 10
+eval_interval: 100
+log_interval: 100
 n_training_threads: 1
 reset_timeout_seconds: 60
 actor_worker_gpus: 0
@@ -96,7 +96,7 @@ huber_delta: 10.0
 ifi: 0.1
 render_episodes: 5
 save_gifs: false
-save_interval: 5000
+save_interval: 1000
 
 # tricks
 share_policy: true

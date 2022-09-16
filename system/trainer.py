@@ -1155,7 +1155,7 @@ class Trainer:
     def maybe_log(self, timing):
         log_infos = {}
         # log information
-        if self.replicate_rank == 0 and self.policy_version.item() % self.log_interval == 1:
+        if self.replicate_rank == 0 and self.policy_version.item() % self.log_interval == 20:
             self.last_received_num_steps = self.received_num_steps
             self.received_num_steps = self.buffer.total_timesteps.item()
 
