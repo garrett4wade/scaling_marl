@@ -488,21 +488,26 @@ class LearnerBuffer(ReplayBuffer):
         #     assert np.all(1 - np.isnan(v)) and np.all(1 - np.isinf(v)), k
 
         # get tasks
-        # the 3rd axis :  num_agents * 2
+        # the 3rd axis :  num_agents * self.envs_per_slot
+
         ramp_pos = np.floor(self.storage['ramp_obs'][slot, :self.episode_length, :, :, 0:2] * 27.5 / 6.0)
         box_pos = np.floor(self.storage['box_obs'][slot, :self.episode_length, :, :, 0:2] * 27.5 / 6.0)
         agents_pos = np.floor(self.storage['observation_self'][slot, :self.episode_length, : ,0:2] * 4.75)
+
+        ramp_shape = ramp_pos.shape
+        box_shape = box_pos.shape
+        agents_shape = agents_pos.shape
+        ramp_pos = ramp_pos.reshape(ramp_shape[0], self.envs_per_slot, -1, *ramp_shape[2:])
+        box_pos = box_pos.reshape(box_shape[0], self.envs_per_slot, -1, *box_shape[2:])
+        agents_pos = agents_pos.reshape(agents_shape[0], self.envs_per_slot, -1, *agents_shape[2:])
+        # ramp, [T, envs_per_slot, num_agents, num_ramps, 2]
+        # agent, [T, envs_per_slot, num_agents, 2]
+
         # get values
-        all_values = self.storage['values'][slot,:self.episode_length]
-        # ramp, [T, num_agents * 2, num_ramps, 2]
-        # agent, [T, num_agents * 2, 2]
         T_length = agents_pos.shape[0]
-        env_ramp_pos = np.concatenate([ramp_pos[:,0].reshape(T_length, -1), ramp_pos[:,self.num_agents].reshape(T_length, -1)],axis=0)
-        env_box_pos = np.concatenate([box_pos[:,0].reshape(T_length, -1), box_pos[:,self.num_agents].reshape(T_length, -1)],axis=0)
-        env_agents_pos = np.concatenate([agents_pos[:,:self.num_agents].reshape(T_length, -1), agents_pos[:,self.num_agents:].reshape(T_length, -1)])
-        all_tasks = np.concatenate([env_agents_pos, env_box_pos, env_ramp_pos], axis=1)
-        # [all_tasks, num_agents, num_critic]
-        all_values = np.concatenate([all_values[:,:self.num_agents], all_values[:,self.num_agents:]])
+        envs_per_slot = agents_pos.shape[1]
+        all_tasks = np.concatenate([agents_pos.reshape(T_length,envs_per_slot,-1), box_pos[:,:,0].reshape(T_length,envs_per_slot,-1), ramp_pos[:,:,0].reshape(T_length,envs_per_slot,-1)], axis=-1)
+        all_values = self.storage['values'][slot,:self.episode_length].reshape(T_length, envs_per_slot, -1)
 
         if self.num_mini_batch == 1:
             # yield output_tensors

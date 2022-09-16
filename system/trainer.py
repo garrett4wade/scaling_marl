@@ -19,7 +19,8 @@ class goal_proposal():
         self.buffer_capacity = 10000
         self.buffer = []
         for _ in range(self.buffer_capacity):
-            self.buffer.append(np.array([20,10, 18,13, 7,7, 20,7, 13,17]))
+            # self.buffer.append(np.array([20,10, 18,13, 7,7, 20,7, 13,17]))
+            self.buffer.append(None)
         self.buffer_priority = []
 
     def add_states(self, new_states, new_values):

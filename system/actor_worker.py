@@ -193,7 +193,10 @@ class ActorWorker:
                 new_msg = []
                 for msg_one in msg:
                     msg_str = msg_one.decode('ascii')
-                    data = np.array(msg_str[1:-1].split(),dtype=int)
+                    if msg_str is None:
+                        data = None
+                    else:
+                        data = np.array(msg_str[1:-1].split(),dtype=int)
                     new_msg.append(data)
                 self.reset_tasks_queue = new_msg.copy()
     
@@ -405,6 +408,7 @@ class ActorWorker:
                             # maintain an archive with num_actor * envs_per_actor
                             reset_tasks = self._get_new_reset_tasks()
                             # print('#################reset_tasks', reset_tasks)
+                            reset_tasks = None
                             if np.all(self.is_policy_act_semaphores_ready):
                                 self._advance_rollouts(cur_split, timing, reset_tasks)
                                 cur_split = (cur_split + 1) % self.num_splits
