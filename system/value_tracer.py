@@ -5,6 +5,7 @@ import time
 from queue import Empty
 from utils.utils import log, TaskType
 from numpy import float32
+import numpy as np
 
 import torch
 import torch.multiprocessing as mp
@@ -29,6 +30,7 @@ class ValueTracer:
         param_lock,
     ):
         self.cfg = cfg
+        self.num_critic = self.cfg.num_critic
         self.trainer_idx = trainer_idx
         self.replicate_rank = replicate_rank
 
@@ -106,7 +108,14 @@ class ValueTracer:
 
         if self.cfg.use_popart:
             self.maybe_update_weights(timing)
-            denormalized_values = self.value_normalizer.denormalize(self.buffer.values[slot_id])
+            denormalized_values = []
+            for critic_id in range(self.num_critic):
+                denormalized_values_one = self.value_normalizer.denormalize(np.expand_dims(self.buffer.values[slot_id,:,:,critic_id],axis=-1))
+                denormalized_values.append(denormalized_values_one)
+            if self.num_critic == 1:
+                denormalized_values = np.stack(denormalized_values, axis=-1).squeeze(-1)
+            else:
+                denormalized_values = np.stack(denormalized_values, axis=-1).squeeze()
         else:
             denormalized_values = self.buffer.values[slot_id]
 

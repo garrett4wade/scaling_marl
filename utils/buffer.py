@@ -301,6 +301,7 @@ class LearnerBuffer(ReplayBuffer):
         # each trainer has its own buffer
         self.target_num_slots = self.num_consumers_to_notify = 1
         self.num_slots = cfg.qsize
+        self.num_critic = cfg.num_critic
 
         # concatenate several slots from workers into a single batch,
         # which will be then sent to GPU for optimziation
@@ -316,8 +317,10 @@ class LearnerBuffer(ReplayBuffer):
         self.policy_versions = torch.zeros((self._rewards.shape[0], self._rewards.shape[2]), dtype=torch.int32).share_memory_().numpy()
         # tracer storage, e.g. n-step return, GAE, V-trace
         # TODO: add other types of trace storage
-        self.v_target = torch.zeros_like(self._rewards, dtype=torch.float32).share_memory_().numpy()
-        self.advantages = torch.zeros_like(self._rewards, dtype=torch.float32).share_memory_().numpy()
+        # self.v_target = torch.zeros_like(self._rewards, dtype=torch.float32).share_memory_().numpy()
+        # self.advantages = torch.zeros_like(self._rewards, dtype=torch.float32).share_memory_().numpy()
+        self.v_target = torch.zeros((self._rewards.shape[0], self._rewards.shape[1], self._rewards.shape[2], self.num_critic), dtype=torch.float32).share_memory_().numpy()
+        self.advantages = torch.zeros((self._rewards.shape[0], self._rewards.shape[1], self._rewards.shape[2], self.num_critic), dtype=torch.float32).share_memory_().numpy()
 
         self.trace_lock = mp.Lock()
         self._is_trace_ready = torch.zeros(self.num_slots, dtype=torch.bool).share_memory_().numpy()
