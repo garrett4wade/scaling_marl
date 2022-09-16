@@ -502,6 +502,8 @@ class LearnerBuffer(ReplayBuffer):
         agents_pos = agents_pos.reshape(agents_shape[0], self.envs_per_slot, -1, *agents_shape[2:])
         # ramp, [T, envs_per_slot, num_agents, num_ramps, 2]
         # agent, [T, envs_per_slot, num_agents, 2]
+        # print('ramp_pos', ramp_pos[0,:,0])
+        # print('agents_pos', agents_pos[0,:])
 
         # get values
         T_length = agents_pos.shape[0]

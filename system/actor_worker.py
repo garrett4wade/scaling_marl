@@ -193,7 +193,7 @@ class ActorWorker:
                 new_msg = []
                 for msg_one in msg:
                     msg_str = msg_one.decode('ascii')
-                    if msg_str is None:
+                    if msg_str == 'None':
                         data = None
                     else:
                         data = np.array(msg_str[1:-1].split(),dtype=int)
@@ -310,7 +310,7 @@ class ActorWorker:
         
         # tasks : self.num_actors * self.envs_per_actor
         if tasks is None:
-            env_set_tasks = None
+            env_set_tasks = [None] * self.envs_per_actor
         else:
             task_chunk = tasks[self.local_rank * self.envs_per_actor : (self.local_rank + 1) * self.envs_per_actor]
             if split_idx == 0:
@@ -408,7 +408,6 @@ class ActorWorker:
                             # maintain an archive with num_actor * envs_per_actor
                             reset_tasks = self._get_new_reset_tasks()
                             # print('#################reset_tasks', reset_tasks)
-                            reset_tasks = None
                             if np.all(self.is_policy_act_semaphores_ready):
                                 self._advance_rollouts(cur_split, timing, reset_tasks)
                                 cur_split = (cur_split + 1) % self.num_splits
