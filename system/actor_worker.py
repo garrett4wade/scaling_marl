@@ -310,7 +310,7 @@ class ActorWorker:
         
         # tasks : self.num_actors * self.envs_per_actor
         if tasks is None:
-            env_set_tasks = [None] * self.envs_per_actor
+            env_set_tasks = None
         else:
             task_chunk = tasks[self.local_rank * self.envs_per_actor : (self.local_rank + 1) * self.envs_per_actor]
             if split_idx == 0:
