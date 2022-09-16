@@ -24,7 +24,10 @@ class RNNLayer(nn.Module):
     def forward(self, x, hxs, masks):
         if x.size(0) == hxs.size(0):
             # rollout
+            print('self.hidden_size', self.hidden_size)
+            print('x', x.shape, 'hxs', hxs.shape, 'masks', masks.shape)
             h, c = (hxs * masks.unsqueeze(-1)).transpose(0, 1).split(self.hidden_size, -1)
+            print('h', h.shape, 'c', c.shape)
             x, h_and_c = self.rnn(x.unsqueeze(0), (h.contiguous(), c.contiguous()))
             x = x.squeeze(0)
             hxs = torch.cat(h_and_c, -1).transpose(0, 1)
