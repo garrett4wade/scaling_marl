@@ -509,7 +509,10 @@ class LearnerBuffer(ReplayBuffer):
         T_length = agents_pos.shape[0]
         envs_per_slot = agents_pos.shape[1]
         all_tasks = np.concatenate([agents_pos.reshape(T_length,envs_per_slot,-1), box_pos[:,:,0].reshape(T_length,envs_per_slot,-1), ramp_pos[:,:,0].reshape(T_length,envs_per_slot,-1)], axis=-1)
-        all_values = self.storage['values'][slot,:self.episode_length].reshape(T_length, envs_per_slot, -1)
+        
+        values_std = np.std(self.storage['values'][slot,:self.episode_length], axis=-1)
+        all_values = values_std.reshape(T_length, envs_per_slot, -1)
+        all_values = np.sum(all_values,axis=-1)
 
         if self.num_mini_batch == 1:
             # yield output_tensors
