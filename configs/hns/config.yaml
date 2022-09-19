@@ -96,7 +96,7 @@ huber_delta: 10.0
 ifi: 0.1
 render_episodes: 5
 save_gifs: false
-save_interval: 300
+save_interval: 200
 
 # tricks
 share_policy: true
