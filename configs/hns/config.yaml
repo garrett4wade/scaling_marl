@@ -4,7 +4,7 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: chenjy
-experiment_name: ZACL
+experiment_name: unif
 benchmark: false
 cuda: true
 cuda_deterministic: true
@@ -15,7 +15,7 @@ use_eval: false
 use_render: false
 
 # cl
-num_critic: 3
+num_critic: 1
 
 num_env_steps: 200.0e+9
 train_for_env_steps: 200.0e+9
@@ -26,7 +26,7 @@ summary_dir: './logs'
 
 # system parameters
 num_tasks_per_node: 1
-num_actors: 128
+num_actors: 256
 actor_group_size: 1
 envs_per_actor: 20
 num_policy_workers: 4
@@ -118,7 +118,7 @@ no_value_active_masks: true
 no_policy_active_masks: true
 
 # setup configs, use absolute dir
-cwd: "/home/jiayu-ch15/scaling_marl"
+cwd: "/home/yuchao/scaling_marl"
 trainer_dir: "run_learner_node.py"
 worker_dir: "run_worker_node_on_smac.py"
 monitor_dir: "run_monitor.py"

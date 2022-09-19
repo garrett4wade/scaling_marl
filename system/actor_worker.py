@@ -307,15 +307,17 @@ class ActorWorker:
         env = self.env_runners[split_idx]
         
         # tasks : self.num_actors * self.envs_per_actor
-        if tasks is None:
-            env_set_tasks = None
-        else:
-            # print('tasks',len(tasks), 'local_rank', self.local_rank, 'envs_per_actor', self.envs_per_actor)
-            task_chunk = tasks[self.local_rank * self.envs_per_actor : (self.local_rank + 1) * self.envs_per_actor]
-            if split_idx == 0:
-                env_set_tasks = task_chunk[:self.envs_per_split].copy()
-            else :
-                env_set_tasks = task_chunk[self.envs_per_split:].copy()
+        # if tasks is None:
+        #     env_set_tasks = None
+        # else:
+        #     # print('tasks',len(tasks), 'local_rank', self.local_rank, 'envs_per_actor', self.envs_per_actor)
+        #     task_chunk = tasks[self.local_rank * self.envs_per_actor : (self.local_rank + 1) * self.envs_per_actor]
+        #     if split_idx == 0:
+        #         env_set_tasks = task_chunk[:self.envs_per_split].copy()
+        #     else :
+        #         env_set_tasks = task_chunk[self.envs_per_split:].copy()
+        
+        env_set_tasks = None
 
         with timing.add_time('env_step/simulation'), timing.time_avg('env_step/simulation_avg'):
             envstep_outputs = flatten_recurrent(env.step(self.act_shm[split_idx], env_set_tasks))
@@ -400,13 +402,13 @@ class ActorWorker:
                                     self.is_policy_act_semaphores_ready[i] = cur_ready
 
                         with timing.add_time('env_step'):
-                            # reset env by cl
-                            # cl, receive reset tasks
-                            self._collect_reset_tasks(timing)
-                            # maintain an archive with num_actor * envs_per_actor
-                            reset_tasks = self._get_new_reset_tasks()
+                            # # reset env by cl
+                            # # cl, receive reset tasks
+                            # self._collect_reset_tasks(timing)
+                            # # maintain an archive with num_actor * envs_per_actor
+                            # reset_tasks = self._get_new_reset_tasks()
                             if np.all(self.is_policy_act_semaphores_ready):
-                                self._advance_rollouts(cur_split, timing, reset_tasks)
+                                self._advance_rollouts(cur_split, timing)
                                 cur_split = (cur_split + 1) % self.num_splits
                                 self.is_policy_act_semaphores_ready[:] = 0
 
