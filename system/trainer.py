@@ -904,9 +904,7 @@ class Trainer:
                     all_values_flatten = all_values.reshape(-1).tolist()
                     start_tasks = all_tasks[0].tolist()
                     start_values = all_values[0].tolist()
-                    print('goals_len_before', len(self.goals.buffer))
                     self.goals.add_NovelandEasy_states_accurate(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
-                    print('start_tasks', len(start_tasks), 'goals_len', len(self.goals.buffer))
 
                 with timing.add_time('training_step/to_device'):
                     for k, v in sample.items():

@@ -4,13 +4,13 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: chenjy
-experiment_name: debug
+experiment_name: ZACL
 benchmark: false
 cuda: true
 cuda_deterministic: true
 seed: 1
 no_summary: false
-use_wandb: false
+use_wandb: true
 use_eval: false
 use_render: false
 
@@ -96,7 +96,7 @@ huber_delta: 10.0
 ifi: 0.1
 render_episodes: 5
 save_gifs: false
-save_interval: 1
+save_interval: 300
 
 # tricks
 share_policy: true
