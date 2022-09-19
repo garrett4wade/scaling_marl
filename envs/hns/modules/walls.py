@@ -15,7 +15,8 @@ class Wall:
             rgba (float tuple): wall rgba
     '''
     def __init__(self, pt1, pt2, height=0.5, rgba=(0, 1, 0, 1)):
-        assert pt1[0] == pt2[0] or pt1[1] == pt2[1], ("Currently only horizontal and vertical walls are supported")
+        # assert pt1[0] == pt2[0] or pt1[1] == pt2[1], ("Currently only horizontal and vertical walls are supported")
+        assert pt1[0] == pt2[0] or pt1[1] == pt2[1], ('pt1',pt1,'pt2',pt2)
         self.is_vertical = pt1[0] == pt2[0]
         # Make sure pt2 is top right of pt1
         if np.any(np.array(pt2) - np.array(pt1) < 0):

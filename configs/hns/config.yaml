@@ -26,7 +26,7 @@ summary_dir: './logs'
 
 # system parameters
 num_tasks_per_node: 1
-num_actors: 4
+num_actors: 128
 actor_group_size: 1
 envs_per_actor: 20
 num_policy_workers: 4
@@ -46,7 +46,7 @@ seg_addrs:  # every worker node has seg_addrs connecting to all learners
 
 num_reanalyzers_per_trainer: 1
 num_value_tracers_per_trainer: 1
-slots_per_update: 1
+slots_per_update: 240
 episode_length: 80
 
 learner_config:
@@ -96,7 +96,7 @@ huber_delta: 10.0
 ifi: 0.1
 render_episodes: 5
 save_gifs: false
-save_interval: 300
+save_interval: 1
 
 # tricks
 share_policy: true

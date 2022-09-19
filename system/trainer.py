@@ -47,7 +47,7 @@ class goal_proposal_debug():
 class goal_proposal():
     def __init__(self, device='cuda:0'):
         self.alpha = 3.0
-        self.buffer_capacity = 10000
+        self.buffer_capacity = 2000
         self.proposal_batch = 10000
         # active: restart_p, easy: restart_easy, unif: 1-restart_p-restart_easy
         self.restart_p = 0.7
@@ -62,7 +62,7 @@ class goal_proposal():
         self.grid_size = 30
         self.quadrant_game_hider_uniform_placement = True
         self.quadrant_game_ramp_uniform_placement = True
-        self.threshold = 2.0
+        self.threshold = 1.0
     
     def init_env_config(self):
         self.num_hiders = 2
@@ -677,10 +677,6 @@ class Trainer:
 
         self.process = mp.Process(target=self._run)
 
-        # cl, goal_proposal
-        self.goals = goal_proposal()
-        self.goals.init_env_config()
-
     def start_process(self):
         self.process.start()
 
@@ -704,6 +700,10 @@ class Trainer:
             self.task_result_socket = self._context.socket(zmq.PUSH)
             self.task_result_socket.connect(self.cfg.task_result_addr)
             self.task_result_socket.send_multipart([self.socket_identity, str(self.policy_id).encode('ascii')])
+
+            # cl, goal_proposal
+            self.goals = goal_proposal()
+            self.goals.init_env_config()
 
         log.debug('Trainer {} initializing process group!'.format(self.trainer_idx))
 
@@ -904,7 +904,9 @@ class Trainer:
                     all_values_flatten = all_values.reshape(-1).tolist()
                     start_tasks = all_tasks[0].tolist()
                     start_values = all_values[0].tolist()
+                    print('goals_len_before', len(self.goals.buffer))
                     self.goals.add_NovelandEasy_states_accurate(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
+                    print('start_tasks', len(start_tasks), 'goals_len', len(self.goals.buffer))
 
                 with timing.add_time('training_step/to_device'):
                     for k, v in sample.items():
