@@ -510,16 +510,10 @@ class goal_proposal():
 
         hider_pos = task[:self.num_hiders * 2]
         for hider_id in range(self.num_hiders):
-            if self.quadrant_game_hider_uniform_placement:
-                if in_map(hider_pos[hider_id * 2 : (hider_id + 1) * 2], self.agent_size):
-                    continue
-                else:
-                    return True
+            if in_map(hider_pos[hider_id * 2 : (hider_id + 1) * 2], self.agent_size):
+                continue
             else:
-                if in_quadrant(hider_pos[hider_id * 2 : (hider_id + 1) * 2], self.agent_size):
-                    continue
-                else:
-                    return True
+                return True
 
         seeker_pos = task[self.num_hiders * 2: self.num_hiders * 2 + self.num_seekers * 2]
         for seeker_id in range(self.num_seekers):
@@ -537,16 +531,10 @@ class goal_proposal():
         
         ramp_pos = task[(self.num_hiders + self.num_seekers) * 2 + self.num_boxes * 2 : (self.num_hiders + self.num_seekers) * 2 + self.num_boxes * 2 + self.num_ramps * 2]
         for ramp_id in range(self.num_ramps):
-            if self.quadrant_game_ramp_uniform_placement:
-                if in_map(ramp_pos[ramp_id * 2 : (ramp_id + 1) * 2], self.ramp_size):
-                    continue
-                else:
-                    return True
+            if in_map(ramp_pos[ramp_id * 2 : (ramp_id + 1) * 2], self.ramp_size):
+                continue
             else:
-                if outside_quadrant(ramp_pos[ramp_id * 2 : (ramp_id + 1) * 2], self.ramp_size):
-                    continue
-                else:
-                    return True
+                return True
         return False
 
 class Trainer:

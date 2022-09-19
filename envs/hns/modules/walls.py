@@ -293,6 +293,27 @@ def outside_walls(grid_size, rgba=(0, 1, 0, 0.1), use_low_wall_height=False):
         Wall([0, grid_size - 1], [grid_size - 1, grid_size - 1], height=height, rgba=rgba)
     ]
 
+# different from openai, add set_door_pos
+def split_walls_set_door(split_wall, door_pos=None):
+    # wall : wall that can set the door
+    if int(np.linalg.norm(door_pos[0]-door_pos[1])) < split_wall.length: 
+        new_wall_start = split_wall.pt1
+        next_wall_end = split_wall.pt2
+        new_wall = []
+        if split_wall.is_vertical:
+            new_wall_end = door_pos[0] - np.array([0,1])
+            next_wall_start = door_pos[1] + np.array([0,1])
+        else:
+            new_wall_end = door_pos[0] - np.array([1,0])
+            next_wall_start = door_pos[1] + np.array([1,0])
+        if int(np.linalg.norm(new_wall_start-new_wall_end)) <= 0:
+            new_wall += [Wall(next_wall_start,next_wall_end)]
+        elif int(np.linalg.norm(next_wall_start-next_wall_end)) <= 0:
+            new_wall += [Wall(new_wall_start,new_wall_end)]
+        else:
+            new_wall += [Wall(new_wall_start,new_wall_end),
+                    Wall(next_wall_start,next_wall_end)]
+        return new_wall
 
 class RandomWalls(EnvModule):
     '''
@@ -487,20 +508,25 @@ class WallScenarios(EnvModule):
                 Wall([self.grid_size - q_size, q_size], [self.grid_size - 1, q_size])]
             doors=env.metadata['set_door_state']
             new_walls = []
-            if doors.shape[0] > 1: # two doors in two walls
-                for door_pos in doors:
-                    if door_pos[0,0] == door_pos[1,0]: # vertical
-                        new_walls += split_walls_set_door(walls_to_split[0], door_pos)
-                    else:
-                        new_walls += split_walls_set_door(walls_to_split[1], door_pos)
+            # if doors.shape[0] > 1: # two doors in two walls
+            #     for door_pos in doors:
+            #         if door_pos[0,0] == door_pos[1,0]: # vertical
+            #             new_walls += split_walls_set_door(walls_to_split[0], door_pos)
+            #         else:
+            #             new_walls += split_walls_set_door(walls_to_split[1], door_pos)
+            # else:
+            # only 1 door
+            door_pos = doors[0]
+            if abs(door_pos[0] - 15) < 1e-5: # vertical
+                door_pos = np.concatenate([door_pos, [15, door_pos[1] + 1]]).reshape(2,2)
+                doors = door_pos.reshape(-1,2,2)
+                new_walls += split_walls_set_door(walls_to_split[0], door_pos)
+                new_walls.append(walls_to_split[1])
             else:
-                door_pos = doors[0]
-                if door_pos[0,0] == door_pos[1,0]: # vertical
-                    new_walls += split_walls_set_door(walls_to_split[0], door_pos)
-                    new_walls.append(walls_to_split[1])
-                else:
-                    new_walls.append(walls_to_split[0])
-                    new_walls += split_walls_set_door(walls_to_split[1], door_pos)
+                door_pos = np.concatenate([door_pos, [door_pos[0] + 1, 15]]).reshape(2,2)
+                doors = door_pos.reshape(-1,2,2)
+                new_walls.append(walls_to_split[0])
+                new_walls += split_walls_set_door(walls_to_split[1], door_pos)
         else:
             # Add doors
             new_walls, doors = split_walls(walls_to_split, self.door_size,
