@@ -14,6 +14,7 @@ import torch.multiprocessing as mp
 import torch.distributed as dist
 from algorithms.registries import ALGORITHM_SUMMARY_KEYS
 import copy
+from pathlib import Path
 
 class goal_proposal_debug():
     def __init__(self):
@@ -479,9 +480,6 @@ class goal_proposal():
                 fp.write(str(np.array(line).reshape(-1))+'\n')
         with open(save_path / ('values_%i' %(episode)),'w+') as fp:
             for line in self.buffer_priority:
-                fp.write(str(np.array(line).reshape(-1))+'\n')
-        with open(save_path / ('dist_%i' %(episode)),'w+') as fp:
-            for line in self.buffer_dist:
                 fp.write(str(np.array(line).reshape(-1))+'\n')
 
     def illegal_task(self, task):
@@ -954,6 +952,7 @@ class Trainer:
         if self.replicate_rank == 0 and (self.policy_version.item() % self.save_interval == 0
                                          or self.policy_version.item() == self.train_for_episodes - 1):
             self.save()
+            self.goals.save_node(self.save_dir, self.policy_version.item())
 
     def maybe_log(self, timing):
         log_infos = {}
