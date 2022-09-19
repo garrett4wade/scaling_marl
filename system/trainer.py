@@ -822,7 +822,13 @@ class Trainer:
                 # cl, tasks
                 self.send_reset_task()
 
-                train_infos = self.training_step(timing)
+                if self.policy_version % (self.cfg.sample_reuse *
+                            self.cfg.broadcast_interval) == 0 and self.replicate_rank == 0:
+                    update_cl_archive = True
+                else:
+                    update_cl_archive = False
+
+                train_infos = self.training_step(timing, update_cl_archive=update_cl_archive)
 
                 self.maybe_save()
 
@@ -877,7 +883,7 @@ class Trainer:
             msg.append(str(new_tasks[idx]).encode('ascii'))
         self.reset_socket.send_multipart(msg)
 
-    def training_step(self, timing):
+    def training_step(self, timing, update_cl_archive=True):
         buffer_util = self.buffer.utilization
         if self.policy_version.item() % 40 == 0:
             log.info('buffer utilization before training step: {}/{}'.format(round(buffer_util * self.buffer.num_slots),
@@ -907,11 +913,12 @@ class Trainer:
             for sample, all_tasks, all_values in data_generator:
                 # TODO, add all_tasks and all_values to goal_proposal
                 # all_tasks: episode_length * envs * dim, all_values: episode_length * envs
-                all_tasks_flatten = all_tasks.reshape(-1, all_tasks.shape[-1]).tolist()
-                all_values_flatten = all_values.reshape(-1).tolist()
-                start_tasks = all_tasks[0].tolist()
-                start_values = all_values[0].tolist()
-                self.goals.add_NovelandEasy_states_accurate(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
+                if update_cl_archive:
+                    all_tasks_flatten = all_tasks.reshape(-1, all_tasks.shape[-1]).tolist()
+                    all_values_flatten = all_values.reshape(-1).tolist()
+                    start_tasks = all_tasks[0].tolist()
+                    start_values = all_values[0].tolist()
+                    self.goals.add_NovelandEasy_states_accurate(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
 
                 with timing.add_time('training_step/to_device'):
                     for k, v in sample.items():
