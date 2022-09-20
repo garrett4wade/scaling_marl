@@ -47,7 +47,7 @@ class goal_proposal_debug():
 class goal_proposal():
     def __init__(self, device='cuda:0'):
         self.alpha = 3.0
-        self.buffer_capacity = 2000
+        self.buffer_capacity = 10000
         self.proposal_batch = 10000
         # active: restart_p, easy: restart_easy, unif: 1-restart_p-restart_easy
         self.restart_p = 0.7
@@ -62,7 +62,7 @@ class goal_proposal():
         self.grid_size = 30
         self.quadrant_game_hider_uniform_placement = True
         self.quadrant_game_ramp_uniform_placement = True
-        self.threshold = 1.0
+        self.threshold = 2.0
     
     def init_env_config(self):
         self.num_hiders = 2
@@ -248,8 +248,11 @@ class goal_proposal():
                 ramp_pos = np.array([np.random.randint(1, self.grid_size - ramp_size - 1),
                                 np.random.randint(1, self.grid_size - ramp_size - 1)])
                 ramp.append(copy.deepcopy(ramp_pos))
+            
+            door_poses = [np.array([15, np.random.randint(1,14)]),np.array([np.random.randint(15,28),15])]
+            door_pos = [door_poses[np.random.randint(0,2)]]
 
-            archive.append((np.concatenate(hider + seeker + box + ramp)).astype(int))
+            archive.append((np.concatenate(hider + seeker + box + ramp + door_pos)).astype(int))
             hider = []
             seeker = []
             box = []
@@ -899,12 +902,16 @@ class Trainer:
             for sample, all_tasks, all_values in data_generator:
                 # TODO, add all_tasks and all_values to goal_proposal
                 # all_tasks: episode_length * envs * dim, all_values: episode_length * envs
+                print('update_cl_archive', update_cl_archive)
                 if update_cl_archive:
                     all_tasks_flatten = all_tasks.reshape(-1, all_tasks.shape[-1]).tolist()
                     all_values_flatten = all_values.reshape(-1).tolist()
                     start_tasks = all_tasks[0].tolist()
                     start_values = all_values[0].tolist()
+                    start1 = time.time()
                     self.goals.add_NovelandEasy_states_accurate(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
+                    end1 = time.time()
+                    print('start_tasks', len(start_tasks), 'time', end1-start1)
 
                 with timing.add_time('training_step/to_device'):
                     for k, v in sample.items():

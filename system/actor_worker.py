@@ -202,7 +202,8 @@ class ActorWorker:
     
     def _get_new_reset_tasks(self):
         if len(self.reset_tasks_queue) > 0:
-            return self.reset_tasks_queue[:self.num_actors * self.envs_per_actor]
+            idx = np.random.randint(0,len(self.reset_tasks_queue), self.num_actors * self.envs_per_actor)
+            return np.array(self.reset_tasks_queue)[idx]
         else:
             return None
 
@@ -405,6 +406,10 @@ class ActorWorker:
                             self._collect_reset_tasks(timing)
                             # maintain an archive with num_actor * envs_per_actor
                             reset_tasks = self._get_new_reset_tasks()
+                            # if reset_tasks is None:
+                            #     print('reset_tasks', reset_tasks)
+                            # else:
+                            #     print('reset_tasks', reset_tasks.shape)
                             if np.all(self.is_policy_act_semaphores_ready):
                                 self._advance_rollouts(cur_split, timing, reset_tasks)
                                 cur_split = (cur_split + 1) % self.num_splits

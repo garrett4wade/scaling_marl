@@ -520,25 +520,25 @@ class WallScenarios(EnvModule):
             door_pos = doors[0]
             if abs(door_pos[0] - 15) < 1e-5: # vertical
                 door_pos = np.concatenate([door_pos, [15, door_pos[1] + 1]]).reshape(2,2)
-                doors = door_pos.reshape(-1,2,2)
+                all_doors = door_pos.reshape(-1,2,2)
                 new_walls += split_walls_set_door(walls_to_split[0], door_pos)
                 new_walls.append(walls_to_split[1])
             else:
                 door_pos = np.concatenate([door_pos, [door_pos[0] + 1, 15]]).reshape(2,2)
-                doors = door_pos.reshape(-1,2,2)
+                all_doors = door_pos.reshape(-1,2,2)
                 new_walls.append(walls_to_split[0])
                 new_walls += split_walls_set_door(walls_to_split[1], door_pos)
         else:
             # Add doors
-            new_walls, doors = split_walls(walls_to_split, self.door_size,
+            new_walls, all_doors = split_walls(walls_to_split, self.door_size,
                                         random_state=env._random_state)
         walls += new_walls
 
-        env.metadata['doors'] = np.array(doors)
+        env.metadata['doors'] = np.array(all_doors)
 
         # Convert doors into mujoco frame
-        if len(doors) > 0:
-            self.door_obs = construct_door_obs(np.array(doors), floor_size, self.grid_size)
+        if len(all_doors) > 0:
+            self.door_obs = construct_door_obs(np.array(all_doors), floor_size, self.grid_size)
         else:
             self.door_obs = None
 
