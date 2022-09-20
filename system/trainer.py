@@ -808,9 +808,6 @@ class Trainer:
                             #             self.trainer_idx)
                             pass
 
-                # cl, tasks
-                self.send_reset_task()
-
                 if self.policy_version % (self.cfg.sample_reuse *
                             self.cfg.broadcast_interval) == 0 and self.replicate_rank == 0:
                     update_cl_archive = True
@@ -902,7 +899,7 @@ class Trainer:
             for sample, all_tasks, all_values in data_generator:
                 # TODO, add all_tasks and all_values to goal_proposal
                 # all_tasks: episode_length * envs * dim, all_values: episode_length * envs
-                print('update_cl_archive', update_cl_archive)
+                # print('update_cl_archive', update_cl_archive)
                 if update_cl_archive:
                     all_tasks_flatten = all_tasks.reshape(-1, all_tasks.shape[-1]).tolist()
                     all_values_flatten = all_values.reshape(-1).tolist()
@@ -912,6 +909,8 @@ class Trainer:
                     self.goals.add_NovelandEasy_states_accurate(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
                     end1 = time.time()
                     print('start_tasks', len(start_tasks), 'time', end1-start1)
+                    # cl, send new distribution
+                    self.send_reset_task()
 
                 with timing.add_time('training_step/to_device'):
                     for k, v in sample.items():
@@ -1068,7 +1067,7 @@ class Trainer:
 
     def restore(self):
         """Restore policy's networks from a saved model."""
-        self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model.pt'))
+        self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model_47200.pt'))
 
     def report(self, infos):
         if not infos or self.replicate_rank != 0:
