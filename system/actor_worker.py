@@ -410,8 +410,9 @@ class ActorWorker:
                             #     print('reset_tasks', reset_tasks)
                             # else:
                             #     print('reset_tasks', reset_tasks.shape)
+                            reset_tasks = None
                             if np.all(self.is_policy_act_semaphores_ready):
-                                self._advance_rollouts(cur_split, timing, reset_tasks)
+                                self._advance_rollouts(cur_split, timing)
                                 cur_split = (cur_split + 1) % self.num_splits
                                 self.is_policy_act_semaphores_ready[:] = 0
 

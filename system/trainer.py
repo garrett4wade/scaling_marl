@@ -180,7 +180,7 @@ class goal_proposal():
             self.buffer = self.buffer[len(self.buffer)-self.buffer_capacity:]
             self.buffer_priority = self.buffer_priority[len(self.buffer_priority)-self.buffer_capacity:]
 
-        self.buffer = [np.array(state) for state in self.buffer]
+        self.buffer = [np.array(state, dtype=int) for state in self.buffer]
 
     def uniform_from_buffer(self, buffer, starts_length):
         sample_length = [starts_length // 2, starts_length - starts_length // 2]
@@ -899,14 +899,15 @@ class Trainer:
             for sample, all_tasks, all_values in data_generator:
                 # TODO, add all_tasks and all_values to goal_proposal
                 # all_tasks: episode_length * envs * dim, all_values: episode_length * envs
-                # print('update_cl_archive', update_cl_archive)
                 if update_cl_archive:
                     all_tasks_flatten = all_tasks.reshape(-1, all_tasks.shape[-1]).tolist()
                     all_values_flatten = all_values.reshape(-1).tolist()
                     start_tasks = all_tasks[0].tolist()
                     start_values = all_values[0].tolist()
                     start1 = time.time()
-                    self.goals.add_NovelandEasy_states_accurate(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
+                    if self.policy_version > self.cfg.sample_reuse:
+                        self.goals.add_NovelandEasy_states_accurate(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
+                        # self.goals.add_NovelandEasy_states_globalexploration(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
                     end1 = time.time()
                     print('start_tasks', len(start_tasks), 'time', end1-start1)
                     # cl, send new distribution
@@ -1067,7 +1068,7 @@ class Trainer:
 
     def restore(self):
         """Restore policy's networks from a saved model."""
-        self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model_47200.pt'))
+        self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model_7200.pt'))
 
     def report(self, infos):
         if not infos or self.replicate_rank != 0:
