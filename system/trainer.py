@@ -245,9 +245,18 @@ class goal_proposal():
                 box.append(copy.deepcopy(box_pos))
 
             for i in range(self.num_ramps):
-                ramp_pos = np.array([np.random.randint(1, self.grid_size - ramp_size - 1),
-                                np.random.randint(1, self.grid_size - ramp_size - 1)])
+                ramp_poses = [
+                    np.array([np.random.randint(1,self.grid_size // 2 - ramp_size - 1), np.random.randint(1,self.grid_size // 2 - ramp_size - 1)]),
+                    np.array([np.random.randint(1,self.grid_size // 2 - ramp_size - 1), np.random.randint(self.grid_size // 2, self.grid_size - ramp_size - 1)]),
+                    np.array([np.random.randint(self.grid_size // 2, self.grid_size - ramp_size - 1),np.random.randint(self.grid_size // 2, self.grid_size - ramp_size - 1)])
+                    ]
+                ramp_pos = ramp_poses[np.random.randint(0, 3)]
                 ramp.append(copy.deepcopy(ramp_pos))
+
+            # for i in range(self.num_ramps):
+            #     ramp_pos = np.array([np.random.randint(1, self.grid_size - ramp_size - 1),
+            #                     np.random.randint(1, self.grid_size - ramp_size - 1)])
+            #     ramp.append(copy.deepcopy(ramp_pos))
             
             door_poses = [np.array([15, np.random.randint(1,14)]),np.array([np.random.randint(15,28),15])]
             door_pos = [door_poses[np.random.randint(0,2)]]
@@ -532,7 +541,8 @@ class goal_proposal():
         
         ramp_pos = task[(self.num_hiders + self.num_seekers) * 2 + self.num_boxes * 2 : (self.num_hiders + self.num_seekers) * 2 + self.num_boxes * 2 + self.num_ramps * 2]
         for ramp_id in range(self.num_ramps):
-            if in_map(ramp_pos[ramp_id * 2 : (ramp_id + 1) * 2], self.ramp_size):
+            if outside_quadrant(ramp_pos[ramp_id * 2 : (ramp_id + 1) * 2], self.ramp_size):
+            # if in_map(ramp_pos[ramp_id * 2 : (ramp_id + 1) * 2], self.ramp_size):
                 continue
             else:
                 return True

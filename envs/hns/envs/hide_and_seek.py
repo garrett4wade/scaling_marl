@@ -249,6 +249,47 @@ def outside_agent_set_placement(grid, obj_size, metadata, random_state, agent_id
         pos = poses[random_state.randint(0, 3)]
     return pos
 
+def outside_ramp_set_placement(grid, obj_size, metadata, random_state, ramp_id=None, num_try=0):
+    '''
+        Places object outside of the bottom right quadrant of the playing field
+    '''
+    grid_size = len(grid)
+    qsize = metadata['quadrant_size']
+    if 'set_ramp_state' in metadata and num_try == 0:
+        # set ramp by set_ramp_state
+        pos = np.array(metadata['set_ramp_state'][ramp_id])
+    elif 'set_ramp_state' in metadata and num_try >= 1 and num_try < 40:
+        origin_pos = np.array(metadata['set_ramp_state'][ramp_id])
+        # get nearest area 5 * 5
+        nearest_len = 3 if num_try <= 20 else 5
+        while nearest_len < grid_size // 2:
+            quadrant_grid = np.zeros(shape=grid.shape)
+            # set quadrant to be illegal
+            quadrant_grid[grid_size // 2:, 0: grid_size // 2] += 1.0
+            quadrant_grid = grid + quadrant_grid
+            # padding with len = 2
+            quadrant_grid = np.pad(quadrant_grid,((nearest_len,nearest_len),(nearest_len,nearest_len)),'constant', constant_values=(1,1)) 
+            nearest_area = quadrant_grid[origin_pos[0] : origin_pos[0] + 2*nearest_len + 1, origin_pos[1] : origin_pos[1] + 2*nearest_len + 1]
+            empty_area = np.argwhere(nearest_area==0)
+            if empty_area.shape[0] == 0:
+                nearest_len += 1
+            else:
+                break
+        new_pos_index = empty_area[random_state.randint(0,empty_area.shape[0])]
+        pos = origin_pos - np.array([nearest_len,nearest_len]) + new_pos_index
+    else:
+        # three regions
+        poses = [
+            np.array([random_state.randint(1, grid_size - qsize - obj_size[0] - 1),
+                    random_state.randint(1, qsize - obj_size[1] - 1)]),
+            np.array([random_state.randint(1, grid_size - qsize - obj_size[0] - 1),
+                    random_state.randint(qsize, grid_size - obj_size[1] - 1)]),
+            np.array([random_state.randint(grid_size - qsize, grid_size - obj_size[0] - 1),
+                    random_state.randint(qsize, grid_size - obj_size[1] - 1)]),
+        ]
+        pos = poses[random_state.randint(0, 3)]
+    return pos
+
 def uniform_set_ramp_placement(grid, obj_size, metadata, random_state, ramp_id=None, num_try=0):
     '''
         Places object within the bottom right quadrant of the playing field
@@ -461,7 +502,8 @@ def make_env(n_substeps=15,
                                      p_door_dropout=p_door_dropout))
         box_placement_fn = quadrant_set_box_placement
 
-        ramp_placement_fn = uniform_set_ramp_placement
+        # ramp_placement_fn = uniform_set_ramp_placement
+        ramp_placement_fn = outside_ramp_set_placement
 
         hider_placement = uniform_set_agent_placement
         agent_placement_fn = [hider_placement] * \

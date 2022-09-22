@@ -20,7 +20,7 @@ num_critic: 3
 num_env_steps: 200.0e+9
 train_for_env_steps: 200.0e+9
 train_for_seconds: 10000000000000000
-model_dir: '/home/jiayu-ch15/scaling_marl/models/HideAndSeek/rmappo/ZACL_load/policy_0'
+model_dir: '/home/yuchao/scaling_marl/models/HideAndSeek/rmappo/ZACL_load/policy_0'
 save_dir: './models'
 summary_dir: './logs'
 
