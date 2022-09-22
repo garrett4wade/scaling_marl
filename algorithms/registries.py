@@ -43,12 +43,21 @@ def get_ppo_storage_specs(args, obs_space, act_space):
     return ppo_storage_specs, policy_input_keys, policy_output_keys
 
 
+# ENV_SUMMARY_KEYS = {
+#     'StarCraft2': ['elapsed_episodes', 'winning_episodes', 'episode_return', 'episode_length'],
+#     'Hanabi': ['elapsed_episodes', 'episode_return', 'episode_length'],
+#     'HideAndSeek': [
+#         'max_box_move_prep', 'max_box_move', 'num_box_lock_prep', 'num_box_lock', 'max_ramp_move_prep', 'max_ramp_move',
+#         'num_ramp_lock_prep', 'num_ramp_lock', 'episode_return_hider', 'episode_return_seeker', 'pure_hider_return', 'pure_seeker_return', 'elapsed_episodes'
+#     ],
+# }
+
 ENV_SUMMARY_KEYS = {
     'StarCraft2': ['elapsed_episodes', 'winning_episodes', 'episode_return', 'episode_length'],
     'Hanabi': ['elapsed_episodes', 'episode_return', 'episode_length'],
     'HideAndSeek': [
         'max_box_move_prep', 'max_box_move', 'num_box_lock_prep', 'num_box_lock', 'max_ramp_move_prep', 'max_ramp_move',
-        'num_ramp_lock_prep', 'num_ramp_lock', 'episode_return_hider', 'episode_return_seeker', 'pure_hider_return', 'pure_seeker_return', 'elapsed_episodes'
+        'episode_return_hider', 'episode_return_seeker', 'pure_hider_return', 'pure_seeker_return', 'elapsed_episodes'
     ],
 }
 

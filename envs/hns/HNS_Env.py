@@ -79,9 +79,13 @@ class HNSEnv:
         self.episode_return_hider = self.episode_return_seeker = 0
         self.pure_hider_return = self.pure_seeker_return = 0
         self.elapsed_episodes = 0
+        # self.summary_keys = [
+        #     'max_box_move_prep', 'max_box_move', 'num_box_lock_prep', 'num_box_lock', 'max_ramp_move_prep',
+        #     'max_ramp_move', 'num_ramp_lock_prep', 'num_ramp_lock'
+        # ]
         self.summary_keys = [
             'max_box_move_prep', 'max_box_move', 'num_box_lock_prep', 'num_box_lock', 'max_ramp_move_prep',
-            'max_ramp_move', 'num_ramp_lock_prep', 'num_ramp_lock'
+            'max_ramp_move'
         ]
         self.accumulated_summaries = {k: 0.0 for k in self.summary_keys}
 
