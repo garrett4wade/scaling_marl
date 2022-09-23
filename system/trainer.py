@@ -144,6 +144,47 @@ class goal_proposal():
 
         self.buffer = [np.array(state, dtype=int) for state in self.buffer]
 
+    def add_NovelandEasy_states_batch(self, states, scores, start_states, start_scores):
+        # states : list, scores : list, returns : dict, {role: list}
+        all_states = states.copy()
+        all_scores = scores.copy()
+
+        new_states = start_states.copy()
+        new_scores = start_scores.copy()
+             
+        # delete illegal states
+        for state_id in reversed(range(len(all_states))):
+            if self.illegal_task(all_states[state_id]):
+                del all_states[state_id]
+                del all_scores[state_id]
+        for state_id in reversed(range(len(new_states))):
+            if self.illegal_task(new_states[state_id]):
+                del new_states[state_id]
+                del new_scores[state_id]
+
+        # update priority
+        if len(self.buffer) > 0:
+            self.buffer_priority = self.update_priority_bydist(self.buffer, all_states, all_scores, self.device)
+
+        # get dist of all_states and buffer, only add states with dist > threshold
+        if len(self.buffer) > 0:
+            new_dists = self.get_dist_batch2buffer(new_states, self.buffer, self.device)
+            for idx in range(len(new_dists)):
+                if new_dists[idx] > self.threshold:
+                    self.buffer.append(new_states[idx])
+                    self.buffer_priority.append(new_scores[idx])
+        else:
+            self.buffer += new_states
+            self.buffer_priority += new_scores
+
+        # delete states by novelty
+        if len(self.buffer) > self.buffer_capacity:
+            self.buffer_priority, self.buffer = self.buffer_sort(self.buffer_priority, self.buffer)
+            self.buffer = self.buffer[len(self.buffer)-self.buffer_capacity:]
+            self.buffer_priority = self.buffer_priority[len(self.buffer_priority)-self.buffer_capacity:]
+
+        self.buffer = [np.array(state, dtype=int) for state in self.buffer]
+
     def add_NovelandEasy_states_globalexploration(self, states, scores, start_states, start_scores):
         # states : list, scores : list, returns : dict, {role: list}
         all_states = states.copy()
@@ -412,6 +453,29 @@ class goal_proposal():
         dist_nearest = dist_nearest.cpu().numpy()
         dist = dist_nearest.copy()
         
+        return dist
+
+    def get_dist_batch2buffer(self, batch, buffer, device):
+        n = len(batch)
+        bacth_array = torch.from_numpy(np.array(batch)).float().to(device)
+        buffer_array = torch.from_numpy(np.array(buffer)).float().to(device)
+        topk = 1
+        if n // 500 > 5:
+            chunk = n // 500
+            dist = []
+            for i in range((n // chunk) + 1):
+                b = bacth_array[i * chunk : (i+1) * chunk]
+                d = self._euclidean_dist(b, buffer_array)
+                # d = torch.matmul(b, buffer_array.transpose(0,1))
+                dist_nearest_chunk, dist_chunk_index = torch.topk(d, k=topk, dim=1, largest=False)
+                dist_nearest_chunk = dist_nearest_chunk.cpu().numpy()
+                dist.append(np.mean(dist_nearest_chunk,axis=1))
+            dist = np.concatenate(dist, axis=0)
+        else:
+            d = self._euclidean_dist(bacth_array, buffer_array)
+            dist_nearest, dist_index = torch.topk(d, k=topk, dim=1, largest=False)
+            dist_nearest = dist_nearest.cpu().numpy()
+            dist = np.mean(dist_nearest,axis=1)
         return dist
 
     def get_dist(self, buffer, device):
@@ -915,8 +979,8 @@ class Trainer:
                     start_tasks = all_tasks[0].tolist()
                     start_values = all_values[0].tolist()
                     start1 = time.time()
-                    if self.policy_version > self.cfg.sample_reuse:
-                        self.goals.add_NovelandEasy_states_accurate(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
+                    if self.policy_version > self.cfg.sample_reuse * 2:
+                        self.goals.add_NovelandEasy_states_batch(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
                         # self.goals.add_NovelandEasy_states_globalexploration(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
                     end1 = time.time()
                     print('start_tasks', len(start_tasks), 'time', end1-start1)
