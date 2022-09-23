@@ -4,7 +4,7 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: chenjy
-experiment_name: unif_load_rampoutside
+experiment_name: unif_load47200_rampoutside
 benchmark: false
 cuda: true
 cuda_deterministic: true
