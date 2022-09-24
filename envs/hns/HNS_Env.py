@@ -7,6 +7,7 @@ class HNSEnv:
     def __init__(self, map_name, env_config):
         self.env_config = deepcopy(env_config)
         self.max_n_agents = self.env_config['max_n_agents'] + 1  # max others + self
+        # self.max_n_agents = 3 + 1  # max others + self
         if map_name == "BoxLocking":
             self.num_agents = self.env_config['n_agents']
             from envs.hns.envs.box_locking import make_env

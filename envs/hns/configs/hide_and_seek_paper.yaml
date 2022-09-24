@@ -2,7 +2,7 @@ max_n_agents: 3
 
 # Agent Actions
 grab_box: true
-grab_out_of_vision: false
+grab_out_of_vision: true
 grab_selective: false
 grab_exclusive: false
 
@@ -26,8 +26,8 @@ restrict_rect:
   - 5.9
   - 5.9
 
-hiders_together_radius: 0.5
-seekers_together_radius: 0.5
+# hiders_together_radius: 0.5
+# seekers_together_radius: 0.5
 
 # Objects
 n_boxes: 1

@@ -287,9 +287,9 @@ class goal_proposal():
 
             for i in range(self.num_ramps):
                 ramp_poses = [
-                    np.array([np.random.randint(1,self.grid_size // 2 - ramp_size - 1), np.random.randint(1,self.grid_size // 2 - ramp_size - 1)]),
-                    np.array([np.random.randint(1,self.grid_size // 2 - ramp_size - 1), np.random.randint(self.grid_size // 2, self.grid_size - ramp_size - 1)]),
-                    np.array([np.random.randint(self.grid_size // 2, self.grid_size - ramp_size - 1),np.random.randint(self.grid_size // 2, self.grid_size - ramp_size - 1)])
+                    np.array([np.random.randint(1,self.grid_size // 2 - ramp_size), np.random.randint(1, self.grid_size // 2 - ramp_size)]),
+                    np.array([np.random.randint(1,self.grid_size // 2 - ramp_size), np.random.randint(self.grid_size // 2, self.grid_size - ramp_size)]),
+                    np.array([np.random.randint(self.grid_size // 2, self.grid_size - ramp_size),np.random.randint(self.grid_size // 2, self.grid_size - ramp_size)])
                     ]
                 ramp_pos = ramp_poses[np.random.randint(0, 3)]
                 ramp.append(copy.deepcopy(ramp_pos))
