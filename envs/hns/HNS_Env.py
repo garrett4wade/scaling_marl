@@ -7,6 +7,7 @@ class HNSEnv:
     def __init__(self, map_name, env_config):
         self.env_config = deepcopy(env_config)
         self.max_n_agents = self.env_config['max_n_agents'] + 1  # max others + self
+        # self.max_n_agents = 3 + 1  # max others + self
         if map_name == "BoxLocking":
             self.num_agents = self.env_config['n_agents']
             from envs.hns.envs.box_locking import make_env
@@ -79,13 +80,9 @@ class HNSEnv:
         self.episode_return_hider = self.episode_return_seeker = 0
         self.pure_hider_return = self.pure_seeker_return = 0
         self.elapsed_episodes = 0
-        # self.summary_keys = [
-        #     'max_box_move_prep', 'max_box_move', 'num_box_lock_prep', 'num_box_lock', 'max_ramp_move_prep',
-        #     'max_ramp_move', 'num_ramp_lock_prep', 'num_ramp_lock'
-        # ]
         self.summary_keys = [
             'max_box_move_prep', 'max_box_move', 'num_box_lock_prep', 'num_box_lock', 'max_ramp_move_prep',
-            'max_ramp_move'
+            'max_ramp_move', 'num_ramp_lock_prep', 'num_ramp_lock'
         ]
         self.accumulated_summaries = {k: 0.0 for k in self.summary_keys}
 

@@ -4,7 +4,8 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: chenjy
-experiment_name: unif_load47200_rampoutside
+experiment_name: unif_debug_batch57k
+# experiment_name: debug
 benchmark: false
 cuda: true
 cuda_deterministic: true
@@ -20,7 +21,7 @@ num_critic: 1
 num_env_steps: 200.0e+9
 train_for_env_steps: 200.0e+9
 train_for_seconds: 10000000000000000
-model_dir: '/home/yuchao/scaling_marl/models/HideAndSeek/rmappo/unif/policy_0'
+model_dir: null
 save_dir: './models'
 summary_dir: './logs'
 
@@ -34,15 +35,15 @@ qsize: 5
 min_num_requests: -1
 
 ddp_init_methods:
-  - tcp://localhost:6666
-task_dispatcher_addr: tcp://localhost:8887
-task_result_addr: tcp://localhost:8886
+  - tcp://localhost:6676
+task_dispatcher_addr: tcp://localhost:8897
+task_result_addr: tcp://localhost:8896
 model_weights_addrs:  # every learner has a model_weights_addr and len(model_weights_adddrs) == num_policies == num_leraners
-  - tcp://localhost:8889
+  - tcp://localhost:8899
 reset_addrs:
-  - tcp://localhost:8990
+  - tcp://localhost:9000
 seg_addrs:  # every worker node has seg_addrs connecting to all learners
-  - - tcp://localhost:12356
+  - - tcp://localhost:12366
 
 num_reanalyzers_per_trainer: 1
 num_value_tracers_per_trainer: 1
