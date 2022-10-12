@@ -575,7 +575,9 @@ def make_env(n_substeps=15,
         env.add_module(FloorAttributes(friction=box_floor_friction))
     env.add_module(WorldConstants(gravity=gravity))
     env.reset()
-    keys_self = ['agent_qpos_qvel', 'hider', 'prep_obs']
+    # keys_self = ['agent_qpos_qvel', 'hider', 'prep_obs']
+    # add walls to observation_self
+    keys_self = ['agent_qpos_qvel', 'hider', 'prep_obs', 'vector_door_obs']
     keys_mask_self = ['mask_aa_obs']
     keys_external = ['agent_qpos_qvel']
     keys_copy = ['you_lock', 'team_lock', 'ramp_you_lock', 'ramp_team_lock']
