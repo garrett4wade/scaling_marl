@@ -4,14 +4,14 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: chenjy
-experiment_name: ZACL_obs_adddoor
-# experiment_name: debug
+# experiment_name: ZACL_obs_adddoor
+experiment_name: debug
 benchmark: false
 cuda: true
 cuda_deterministic: true
 seed: 1
 no_summary: false
-use_wandb: true
+use_wandb: false
 use_eval: false
 use_render: false
 
@@ -27,7 +27,7 @@ summary_dir: './logs'
 
 # system parameters
 num_tasks_per_node: 1
-num_actors: 256
+num_actors: 4
 actor_group_size: 1
 envs_per_actor: 20
 num_policy_workers: 4
@@ -47,7 +47,7 @@ seg_addrs:  # every worker node has seg_addrs connecting to all learners
 
 num_reanalyzers_per_trainer: 1
 num_value_tracers_per_trainer: 1
-slots_per_update: 240
+slots_per_update: 4
 episode_length: 80
 
 learner_config:
