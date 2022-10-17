@@ -299,10 +299,11 @@ class goal_proposal():
             #                     np.random.randint(1, self.grid_size - ramp_size - 1)])
             #     ramp.append(copy.deepcopy(ramp_pos))
             
-            door_poses = [np.array([15, np.random.randint(1,14)]),np.array([np.random.randint(15,28),15])]
-            door_pos = [door_poses[np.random.randint(0,2)]]
+            # door_poses = [np.array([15, np.random.randint(1,14)]),np.array([np.random.randint(15,28),15])]
+            # door_pos = [door_poses[np.random.randint(0,2)]]
 
-            archive.append((np.concatenate(hider + seeker + box + ramp + door_pos)).astype(int))
+            # archive.append((np.concatenate(hider + seeker + box + ramp + door_pos)).astype(int))
+            archive.append((np.concatenate(hider + seeker + box + ramp)).astype(int))
             hider = []
             seeker = []
             box = []
@@ -979,7 +980,7 @@ class Trainer:
                     start_tasks = all_tasks[0].tolist()
                     start_values = all_values[0].tolist()
                     start1 = time.time()
-                    if self.policy_version > self.cfg.sample_reuse * 2:
+                    if self.policy_version > self.cfg.sample_reuse * 4:
                         self.goals.add_NovelandEasy_states_batch(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
                         # self.goals.add_NovelandEasy_states_globalexploration(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
                     end1 = time.time()

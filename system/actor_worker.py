@@ -320,9 +320,6 @@ class ActorWorker:
 
         with timing.add_time('env_step/simulation'), timing.time_avg('env_step/simulation_avg'):
             envstep_outputs = flatten_recurrent(env.step(self.act_shm[split_idx], env_set_tasks))
-            if env_set_tasks is not None:
-                print('observation_self', envstep_outputs['observation_self'][0])
-                print('env_set_tasks', env_set_tasks[0], 'len', len(env_set_tasks))
             self.debug_ep_steps[split_idx] += 1
 
         with timing.add_time('env_step/copy_outputs'):
