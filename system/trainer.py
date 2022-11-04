@@ -979,7 +979,7 @@ class Trainer:
                     start_tasks = all_tasks[0].tolist()
                     start_values = all_values[0].tolist()
                     start1 = time.time()
-                    if self.policy_version > self.cfg.sample_reuse * 2:
+                    if self.policy_version > self.cfg.sample_reuse * 4:
                         self.goals.add_NovelandEasy_states_batch(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
                         # self.goals.add_NovelandEasy_states_globalexploration(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
                     end1 = time.time()
