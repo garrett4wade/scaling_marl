@@ -4,12 +4,12 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: chenjy
-experiment_name: unif_debug_batch57k
+experiment_name: unif_batch64k
 # experiment_name: debug
 benchmark: false
 cuda: true
 cuda_deterministic: true
-seed: 1
+seed: 3
 no_summary: false
 use_wandb: true
 use_eval: false
@@ -47,7 +47,7 @@ seg_addrs:  # every worker node has seg_addrs connecting to all learners
 
 num_reanalyzers_per_trainer: 1
 num_value_tracers_per_trainer: 1
-slots_per_update: 240
+slots_per_update: 270
 episode_length: 80
 
 learner_config:
