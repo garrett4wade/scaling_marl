@@ -299,10 +299,11 @@ class goal_proposal():
             #                     np.random.randint(1, self.grid_size - ramp_size - 1)])
             #     ramp.append(copy.deepcopy(ramp_pos))
             
-            door_poses = [np.array([15, np.random.randint(1,14)]),np.array([np.random.randint(15,28),15])]
-            door_pos = [door_poses[np.random.randint(0,2)]]
+            # door_poses = [np.array([15, np.random.randint(1,14)]),np.array([np.random.randint(15,28),15])]
+            # door_pos = [door_poses[np.random.randint(0,2)]]
 
-            archive.append((np.concatenate(hider + seeker + box + ramp + door_pos)).astype(int))
+            # archive.append((np.concatenate(hider + seeker + box + ramp + door_pos)).astype(int))
+            archive.append((np.concatenate(hider + seeker + box + ramp)).astype(int))
             hider = []
             seeker = []
             box = []

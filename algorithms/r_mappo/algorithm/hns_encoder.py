@@ -58,8 +58,12 @@ class HNSEncoder(nn.Module):
 
         if self.omniscient:
             # cl, fully-observable
-            inputs['mask_aa_obs_spoof'][:,-1] = 1.0
-            mask = torch.cat([inputs[k + '_spoof'] for k in self.ordered_obs_mask_keys], -1)
+            # inputs['mask_aa_obs_spoof'][:,-1] = 1.0
+            # mask = torch.cat([inputs[k + '_spoof'] for k in self.ordered_obs_mask_keys], -1)
+            if all((inputs[k + '_spoof'] is None) for k in self.ordered_obs_mask_keys):
+                mask = None
+            else:
+                mask = torch.cat([inputs[k + '_spoof'] for k in self.ordered_obs_mask_keys], -1)
         else:
             mask = torch.cat([inputs[k] for k in self.ordered_obs_mask_keys], -1)
         if use_ckpt:

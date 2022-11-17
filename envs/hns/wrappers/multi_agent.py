@@ -179,8 +179,8 @@ class SelectKeysWrapper(gym.ObservationWrapper):
                 del self.env.metadata['set_box_state']
             if 'set_ramp_state' in self.env.metadata:
                 del self.env.metadata['set_ramp_state']
-            if 'set_door_state' in self.env.metadata:
-                del self.env.metadata['set_door_state']
+            # if 'set_door_state' in self.env.metadata:
+            #     del self.env.metadata['set_door_state']
             observation = self.env.reset()
         else:
             self.env.metadata['random_reset'] = False
@@ -190,7 +190,7 @@ class SelectKeysWrapper(gym.ObservationWrapper):
             if self.n_ramps > 0:
                 self.env.metadata['set_ramp_state'] = start[self.n_agents * 2 + self.n_boxes * 2 : self.n_agents * 2 + self.n_boxes * 2 + self.n_ramps * 2].reshape(-1,2).astype(np.int16)
             
-            self.env.metadata['set_door_state'] = start[-2:].reshape(-1,2).astype(np.int16)
+            # self.env.metadata['set_door_state'] = start[-2:].reshape(-1,2).astype(np.int16)
 
             observation = self.env.reset()
         
