@@ -88,7 +88,6 @@ class TrackStatWrapper(gym.Wrapper):
 
         return obs, rew, done, info
 
-
 class HideAndSeekRewardWrapper(gym.Wrapper):
     '''
         Establishes hide and seek dynamics (see different reward types below). Defaults to first half

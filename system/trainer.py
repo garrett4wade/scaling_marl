@@ -43,7 +43,6 @@ class goal_proposal_debug():
         for index in self.choose_index:
             starts.append(self.buffer[index])
         return starts
-
 class goal_proposal():
     def __init__(self, device='cuda:0'):
         self.alpha = 3.0
@@ -102,6 +101,140 @@ class goal_proposal():
             starts += self.uniform_sampling(self.proposal_batch - num_restart)
             unif_start_idx = num_restart
         return starts, unif_start_idx
+
+    def update_buffer(self, states, scores, unif_states, unif_scores):
+        # states : list, scores : list, returns : dict, {role: list}
+        all_states = states.copy()
+        all_scores = scores.copy()
+
+        add_unif_states = unif_states.copy()
+        add_unif_scores = unif_scores.copy()
+             
+        # delete illegal states
+        for state_id in reversed(range(len(all_states))):
+            if self.illegal_task(all_states[state_id]):
+                del all_states[state_id]
+                del all_scores[state_id]
+        for state_id in reversed(range(len(add_unif_states))):
+            if self.illegal_task(add_unif_states[state_id]):
+                del add_unif_states[state_id]
+                del add_unif_scores[state_id]
+
+        if self.empty_buffer:
+            self.buffer = []
+            self.buffer_priority = []
+            self.buffer_dist = []
+        else:
+            # update priority of old tasks in the buffer
+            if len(self.buffer) > 0:
+                self.buffer_priority = self.update_priority_bydist_ablation(self.buffer, self.buffer_priority, all_states, all_scores, self.device)
+
+        # get uniform threshold
+        threshold = np.mean(add_unif_scores)
+        for idx, all_score in enumerate(all_scores):
+            if all_score > threshold:
+                self.buffer.append(all_states[idx])
+                self.buffer_priority.append(all_scores[idx])
+
+        # delete states by novelty
+        if len(self.buffer) > self.buffer_capacity:
+            self.buffer_dist = self.get_dist(self.buffer, self.device)
+            strata = np.percentile(self.buffer_dist, np.linspace(0, 100, self.buffer_capacity+1))
+
+            max_subset = []
+            max_subset_value = []
+            max_subset_dist = 0.0
+            sample_time = 0
+            while sample_time <= 3:
+                # Initialize the subset
+                subset = []
+                subset_value = []
+                # Loop through each stratum
+                for i in range(self.buffer_capacity):
+                    # Calculate the indices of the vectors in the current stratum
+                    indices = np.where((self.buffer_dist >= strata[i]) & (self.buffer_dist < strata[i+1]))[0]
+                    
+                    # Randomly sample one vector from the current stratum
+                    if indices.shape[0] > 0:
+                        # if not empty
+                        index = np.random.choice(indices, 1)[0]
+                        
+                        # Add the vector to the subset
+                        subset.append(self.buffer[index])
+                        subset_value.append(self.buffer_priority[index])
+                subset_dist = np.mean(self.get_dist(subset, self.device))
+                if subset_dist > max_subset_dist:
+                    max_subset = copy.deepcopy(subset)
+                    max_subset_value = copy.deepcopy(subset_value)
+                    max_subset_dist = subset_dist
+                sample_time += 1
+            print('max_subset_dist', max_subset_dist)
+            self.buffer = copy.deepcopy(max_subset)
+            self.buffer_priority = copy.deepcopy(max_subset_value)
+
+        self.buffer = [np.array(state, dtype=int) for state in self.buffer]
+
+    def update_buffer_system(self, states, scores):
+        # states : list, scores : list, returns : dict, {role: list}
+        all_states = states.copy()
+        all_scores = scores.copy()
+
+             
+        # delete illegal states
+        for state_id in reversed(range(len(all_states))):
+            if self.illegal_task(all_states[state_id]):
+                del all_states[state_id]
+                del all_scores[state_id]
+
+        # update priority of old tasks in the buffer
+        if len(self.buffer) > 0:
+            self.buffer_priority = self.update_priority_bydist_ablation(self.buffer, self.buffer_priority, all_states, all_scores, self.device)
+
+        # get uniform threshold
+        if len(self.buffer) > 0:
+            threshold = np.mean(self.buffer_priority)
+            for idx, all_score in enumerate(all_scores):
+                if all_score > threshold:
+                    self.buffer.append(all_states[idx])
+                    self.buffer_priority.append(all_scores[idx])
+
+        # delete states by novelty
+        if len(self.buffer) > self.buffer_capacity:
+            self.buffer_dist = self.get_dist(self.buffer, self.device)
+            strata = np.percentile(self.buffer_dist, np.linspace(0, 100, self.buffer_capacity+1))
+
+            max_subset = []
+            max_subset_value = []
+            max_subset_dist = 0.0
+            sample_time = 0
+            while sample_time <= 3:
+                # Initialize the subset
+                subset = []
+                subset_value = []
+                # Loop through each stratum
+                for i in range(self.buffer_capacity):
+                    # Calculate the indices of the vectors in the current stratum
+                    indices = np.where((self.buffer_dist >= strata[i]) & (self.buffer_dist < strata[i+1]))[0]
+                    
+                    # Randomly sample one vector from the current stratum
+                    if indices.shape[0] > 0:
+                        # if not empty
+                        index = np.random.choice(indices, 1)[0]
+                        
+                        # Add the vector to the subset
+                        subset.append(self.buffer[index])
+                        subset_value.append(self.buffer_priority[index])
+                subset_dist = np.mean(self.get_dist(subset, self.device))
+                if subset_dist > max_subset_dist:
+                    max_subset = copy.deepcopy(subset)
+                    max_subset_value = copy.deepcopy(subset_value)
+                    max_subset_dist = subset_dist
+                sample_time += 1
+            print('max_subset_dist', max_subset_dist)
+            self.buffer = copy.deepcopy(max_subset)
+            self.buffer_priority = copy.deepcopy(max_subset_value)
+
+        self.buffer = [np.array(state, dtype=int) for state in self.buffer]
 
     def add_NovelandEasy_states_accurate(self, states, scores, start_states, start_scores):
         # states : list, scores : list, returns : dict, {role: list}
@@ -981,8 +1114,8 @@ class Trainer:
                     start_values = all_values[0].tolist()
                     start1 = time.time()
                     if self.policy_version > self.cfg.sample_reuse * 4:
-                        self.goals.add_NovelandEasy_states_batch(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
-                        # self.goals.add_NovelandEasy_states_globalexploration(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
+                        self.goals.update_buffer_system(all_tasks_flatten, all_values_flatten)
+                        # self.goals.add_NovelandEasy_states_batch(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
                     end1 = time.time()
                     print('start_tasks', len(start_tasks), 'time', end1-start1)
                     # cl, send new distribution
