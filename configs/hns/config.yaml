@@ -119,7 +119,7 @@ no_value_active_masks: true
 no_policy_active_masks: true
 
 # setup configs, use absolute dir
-cwd: "/home/yuchao/scaling_marl"
+cwd: "/home/jiayu-ch15/scaling_marl"
 trainer_dir: "run_learner_node.py"
 worker_dir: "run_worker_node_on_smac.py"
 monitor_dir: "run_monitor.py"
