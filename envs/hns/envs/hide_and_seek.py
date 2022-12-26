@@ -349,6 +349,33 @@ def uniform_set_agent_placement(grid, obj_size, metadata, random_state, agent_id
                         random_state.randint(1, grid_size - obj_size[1] - 1)])
     return pos
 
+def uniform_set_box_placement(grid, obj_size, metadata, random_state, box_id=None, num_try=0):
+    grid_size = len(grid)
+    if 'set_box_state' in metadata and num_try == 0:
+        pos = np.array(metadata['set_box_state'][box_id])
+    elif 'set_box_state' in metadata and num_try >= 1 and num_try < 40:
+        origin_pos = np.array(metadata['set_box_state'][box_id])
+        # get nearest area 5 * 5
+        nearest_len = 3 if num_try <= 20 else 5
+        while nearest_len < grid_size // 2:
+            quadrant_grid = np.zeros(shape=grid.shape)
+            quadrant_grid = grid + quadrant_grid
+            # padding with len = 2
+            quadrant_grid = np.pad(quadrant_grid,((nearest_len,nearest_len),(nearest_len,nearest_len)),'constant', constant_values=(1,1)) 
+            nearest_area = quadrant_grid[origin_pos[0] : origin_pos[0] + 2*nearest_len + 1, origin_pos[1] : origin_pos[1] + 2*nearest_len + 1]
+            empty_area = np.argwhere(nearest_area==0)
+            if empty_area.shape[0] == 0:
+                nearest_len += 1
+            else:
+                break
+        new_pos_index = empty_area[random_state.randint(0,empty_area.shape[0])]
+        pos = origin_pos - np.array([nearest_len,nearest_len]) + new_pos_index
+    else:
+        grid_size = len(grid)
+        pos = np.array([random_state.randint(1, grid_size - obj_size[0] - 1),
+                        random_state.randint(1, grid_size - obj_size[1] - 1)])
+    return pos
+
 def quadrant_set_box_placement(grid, obj_size, metadata, random_state, box_id=None, num_try=0):
     '''
         Places object within the bottom right quadrant of the playing field
@@ -504,12 +531,12 @@ def make_env(n_substeps=15,
                           scenario=scenario,
                           friction=other_friction,
                           p_door_dropout=p_door_dropout))
-        box_placement_fn = quadrant_set_box_placement
+        box_placement_fn = uniform_set_box_placement
 
-        # ramp_placement_fn = uniform_set_ramp_placement
-        ramp_placement_fn = outside_ramp_set_placement
+        ramp_placement_fn = uniform_set_ramp_placement
 
         hider_placement = uniform_set_agent_placement
+        
         agent_placement_fn = [hider_placement] * \
             n_hiders + [outside_agent_set_placement] * n_seekers
         # box_placement_fn = quadrant_placement
