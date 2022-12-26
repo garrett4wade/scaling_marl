@@ -490,10 +490,9 @@ class LearnerBuffer(ReplayBuffer):
         # get tasks
         # the 3rd axis :  num_agents * self.envs_per_slot
 
-        ramp_pos = np.floor(self.storage['ramp_obs'][slot, :self.episode_length, :, :, 0:2] * 27.5 / 6.0)
-        box_pos = np.floor(self.storage['box_obs'][slot, :self.episode_length, :, :, 0:2] * 27.5 / 6.0)
-        agents_pos = np.floor(self.storage['observation_self'][slot, :self.episode_length, : ,0:2] * 4.75)
-        # door_pos = np.floor((self.storage['observation_self'][slot, :self.episode_length, : ,-6:-4] - 3.1) / 0.2 + 15.0)
+        ramp_pos = self.storage['ramp_obs'][slot, :self.episode_length, :, :, 0:3]
+        box_pos = self.storage['box_obs'][slot, :self.episode_length, :, :, 0:3]
+        agents_pos = self.storage['observation_self'][slot, :self.episode_length, : ,0:3]
 
         ramp_shape = ramp_pos.shape
         box_shape = box_pos.shape

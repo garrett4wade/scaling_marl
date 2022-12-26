@@ -16,33 +16,6 @@ from algorithms.registries import ALGORITHM_SUMMARY_KEYS
 import copy
 from pathlib import Path
 
-class goal_proposal_debug():
-    def __init__(self):
-        self.buffer_capacity = 10000
-        self.buffer = []
-        for _ in range(self.buffer_capacity):
-            # self.buffer.append(np.array([20,10, 18,13, 7,7, 20,7, 13,17]))
-            self.buffer.append(None)
-        self.buffer_priority = []
-
-    def add_states(self, new_states, new_values):
-        self.buffer += new_states.tolist()
-        self.buffer_priority += new_values
-
-        if len(self.buffer) > self.buffer_capacity:
-            self.buffer = self.buffer[len(self.buffer)-self.buffer_capacity:]
-            self.buffer_priority = self.buffer_priority[len(self.buffer_priority)-self.buffer_capacity:]
-
-        for idx in range(len(self.buffer)):
-            self.buffer[idx] = np.array(self.buffer[idx])
-    
-    def sample_tasks(self, sample_num):
-        self.buffer_p = [1.0 / len(self.buffer)] * len(self.buffer)
-        self.choose_index = np.random.choice(range(len(self.buffer)),size=sample_num,replace=True,p=self.buffer_p)
-        starts = []
-        for index in self.choose_index:
-            starts.append(self.buffer[index])
-        return starts
 class goal_proposal():
     def __init__(self, device='cuda:0'):
         self.alpha = 3.0
@@ -90,15 +63,15 @@ class goal_proposal():
             num_restart = 0
         
         if num_restart == 0:
-            # starts += [None] * self.proposal_batch
-            starts = self.uniform_sampling(self.proposal_batch)
+            starts += [None] * self.proposal_batch
+            # starts = self.uniform_sampling(self.proposal_batch)
             unif_start_idx = 0
         else:
             # restart and priority_sampling
             new_starts, restart_index = self.priority_sampling(starts_length=num_restart)
             starts += new_starts
-            # starts += [None] * (self.proposal_batch - num_restart)
-            starts += self.uniform_sampling(self.proposal_batch - num_restart)
+            starts += [None] * (self.proposal_batch - num_restart)
+            # starts += self.uniform_sampling(self.proposal_batch - num_restart)
             unif_start_idx = num_restart
         return starts, unif_start_idx
 
@@ -426,14 +399,6 @@ class goal_proposal():
                     ]
                 ramp_pos = ramp_poses[np.random.randint(0, 3)]
                 ramp.append(copy.deepcopy(ramp_pos))
-
-            # for i in range(self.num_ramps):
-            #     ramp_pos = np.array([np.random.randint(1, self.grid_size - ramp_size - 1),
-            #                     np.random.randint(1, self.grid_size - ramp_size - 1)])
-            #     ramp.append(copy.deepcopy(ramp_pos))
-            
-            # door_poses = [np.array([15, np.random.randint(1,14)]),np.array([np.random.randint(15,28),15])]
-            # door_pos = [door_poses[np.random.randint(0,2)]]
 
             # archive.append((np.concatenate(hider + seeker + box + ramp + door_pos)).astype(int))
             archive.append((np.concatenate(hider + seeker + box + ramp)).astype(int))
@@ -1126,6 +1091,7 @@ class Trainer:
         
         # TODO sample tasks from goal_proposal
         new_tasks, _ = self.goals.restart_sampling()
+        print('new_tasks', new_tasks)
         for idx in range(len(new_tasks)):
             # numpy_msg = np.ones(5) * np.random.randint(0,10)
             msg.append(str(new_tasks[idx]).encode('ascii'))
@@ -1169,7 +1135,6 @@ class Trainer:
                     start1 = time.time()
                     if self.policy_version > self.cfg.sample_reuse * 4:
                         self.goals.update_buffer_system(all_tasks_flatten, all_values_flatten)
-                        # self.goals.add_NovelandEasy_states_batch(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
                     end1 = time.time()
                     print('start_tasks', len(start_tasks), 'time', end1-start1)
                     # cl, send new distribution

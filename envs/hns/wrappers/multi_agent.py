@@ -3,6 +3,7 @@ import numpy as np
 from scipy.linalg import circulant
 from gym.spaces import Tuple, Box, Dict
 from copy import deepcopy
+from mujoco_py import MjSimState
 
 
 class SplitMultiAgentActions(gym.ActionWrapper):
@@ -173,79 +174,21 @@ class SelectKeysWrapper(gym.ObservationWrapper):
         # start = [agent_state, box_state, ramp_state, door_state (4 dimension for quadrant)]
         if start is None:
             self.env.metadata['random_reset'] = True
-            if 'set_agent_state' in self.env.metadata:
-                del self.env.metadata['set_agent_state']
-            if 'set_box_state' in self.env.metadata:
-                del self.env.metadata['set_box_state']
-            if 'set_ramp_state' in self.env.metadata:
-                del self.env.metadata['set_ramp_state']
-            # if 'set_door_state' in self.env.metadata:
-            #     del self.env.metadata['set_door_state']
             observation = self.env.reset()
         else:
             self.env.metadata['random_reset'] = False
-            self.env.metadata['set_agent_state'] = start[0: self.n_agents * 2].reshape(-1,2).astype(np.int16)
-            if self.n_boxes > 0:
-                self.env.metadata['set_box_state'] = start[self.n_agents * 2 : self.n_agents * 2 + self.n_boxes * 2].reshape(-1,2).astype(np.int16)
-            if self.n_ramps > 0:
-                self.env.metadata['set_ramp_state'] = start[self.n_agents * 2 + self.n_boxes * 2 : self.n_agents * 2 + self.n_boxes * 2 + self.n_ramps * 2].reshape(-1,2).astype(np.int16)
-            
-            # self.env.metadata['set_door_state'] = start[-2:].reshape(-1,2).astype(np.int16)
+            num_entity = len(start) // 3
+            set_states = np.zeros(num_entity * 4)
+            set_vel = np.zeros(num_entity * 4)
+            for entity_idx in range(num_entity):
+                set_states[entity_idx * 4: (entity_idx + 1) * 4 - 1] = start[entity_idx * 3: (entity_idx + 1) * 3]
+            print('start', start)
 
-            observation = self.env.reset()
+            mujoco_states = MjSimState(time=0.0, qpos=set_states,qvel=set_vel, act=None, udd_state={})
+            self.env.reset_to_state(mujoco_states)
+
+            # observation = self.env.reset()
         
         obs = self.observation(observation)
 
         return obs
-    
-    # def step(self, action):
-    #     observation, rew, done, info = self.env.step(action)
-
-    #     obs = self.observation(observation)
-
-    #     task = []
-    #     for i in range(self.n_agents):
-    #         task.append(self.env.metadata[f'agent{i}_pos'])
-    #     for i in range(self.n_boxes):
-    #         task.append(self.env.metadata[f'box{i}_pos'])
-    #     for i in range(self.n_ramps):
-    #         task.append(self.env.metadata[f'ramp{i}_pos'])
-    #     task.append(self.env.metadata['doors'].reshape(-1))
-    #     obs['task'] = np.concatenate(task)
-
-    #     return obs, rew, done, info
-
-# class GetStateWrapper(gym.ObservationWrapper):
-#     def __init__(self, env):
-#         super().__init__(env)
-#         self.observation = self.env.observation
-    
-#     def reset(self, start=None):
-#         if start is None:
-#             observation = self.env.reset()
-#         else:
-#             observation = self.env.reset(start)
-#         obs = self.observation(observation)
-#         task = []
-#         for i in range(self.n_agents):
-#             task.append(self.env.metadata[f'agent{i}_initpos'])
-#         for i in range(self.n_boxes):
-#             task.append(self.env.metadata[f'box{i}_initpos'])
-#         for i in range(self.n_ramps):
-#             task.append(self.env.metadata[f'ramp{i}_initpos'])
-#         task.append(self.env.metadata['doors'])
-#         obs['task'] = np.concatenate(task)
-#         return obs
-    
-#     def step(self, action):
-#         obs, rew, done, info = self.env.step(action)
-#         task = []
-#         for i in range(self.n_agents):
-#             task.append(self.env.metadata[f'agent{i}_pos'])
-#         for i in range(self.n_boxes):
-#             task.append(self.env.metadata[f'box{i}_pos'])
-#         for i in range(self.n_ramps):
-#             task.append(self.env.metadata[f'ramp{i}_pos'])
-#         task.append(self.env.metadata['doors'])
-#         obs['task'] = np.concatenate(task)
-#         return obs, rew, done, info
