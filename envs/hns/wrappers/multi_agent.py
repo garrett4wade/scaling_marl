@@ -22,6 +22,14 @@ class SplitMultiAgentActions(gym.ActionWrapper):
 
     def action(self, action):
         return action['action_movement'].flatten()
+    
+    # diff from openai
+    def reset(self):
+        if self.env.metadata['reset_task'] is None:
+            obs = self.env.reset()
+        else:
+            obs = self.env.reset_to_state(self.env.metadata['reset_task'])
+        return obs
 
 
 class JoinMultiAgentActions(gym.ActionWrapper):
@@ -174,6 +182,7 @@ class SelectKeysWrapper(gym.ObservationWrapper):
         # start = [agent_state, box_state, ramp_state, door_state (4 dimension for quadrant)]
         if start is None:
             self.env.metadata['random_reset'] = True
+            self.env.metadata['reset_task'] = None
             observation = self.env.reset()
         else:
             self.env.metadata['random_reset'] = False
@@ -182,12 +191,11 @@ class SelectKeysWrapper(gym.ObservationWrapper):
             set_vel = np.zeros(num_entity * 4)
             for entity_idx in range(num_entity):
                 set_states[entity_idx * 4: (entity_idx + 1) * 4 - 1] = start[entity_idx * 3: (entity_idx + 1) * 3]
-            print('start', start)
 
             mujoco_states = MjSimState(time=0.0, qpos=set_states,qvel=set_vel, act=None, udd_state={})
-            self.env.reset_to_state(mujoco_states)
-
-            # observation = self.env.reset()
+            self.env.metadata['reset_task'] = mujoco_states
+            # observation = self.env.reset_to_state(mujoco_states)
+            observation = self.env.reset()
         
         obs = self.observation(observation)
 

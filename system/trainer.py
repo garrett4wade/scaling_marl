@@ -800,7 +800,7 @@ class Trainer:
                     update_cl_archive = True
                 else:
                     update_cl_archive = False
-
+                
                 train_infos = self.training_step(timing, update_cl_archive=update_cl_archive)
 
                 self.maybe_save()
@@ -891,8 +891,7 @@ class Trainer:
                     start_tasks = all_tasks[0].tolist()
                     start_values = all_values[0].tolist()
                     start1 = time.time()
-                    if self.policy_version > self.cfg.sample_reuse * 4:
-                        self.goals.update_buffer(all_tasks_flatten, all_values_flatten)
+                    self.goals.update_buffer(all_tasks_flatten, all_values_flatten)
                     end1 = time.time()
                     print('buffer length', len(self.goals.buffer), 'all_tasks_flatten', len(all_tasks_flatten), 'time', end1-start1)
                     # cl, send new distribution
@@ -1053,7 +1052,7 @@ class Trainer:
 
     def restore(self):
         """Restore policy's networks from a saved model."""
-        self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model_7200.pt'))
+        self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model_25000.pt'))
 
     def report(self, infos):
         if not infos or self.replicate_rank != 0:
