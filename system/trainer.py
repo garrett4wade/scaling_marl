@@ -31,7 +31,10 @@ class goal_proposal():
         self.use_smooth_weight = True
         self.use_Guassian_smoothing = True
         self.use_Guassian_diversified = True
+        self.update_by_allnearest = True
+        self.nearest_k = 5
         self.grid_size = 30
+        self.priority_lambda = 0.0
         self.quadrant_game_hider_uniform_placement = True
         self.quadrant_game_ramp_uniform_placement = True
         self.threshold = 2.0
@@ -44,9 +47,9 @@ class goal_proposal():
         self.grid_size = 30
         self.floor_size = 6.0
         self.cell_size = self.floor_size / self.grid_size
-        self.agent_size = 2
-        self.box_size = 3
-        self.ramp_size = 3
+        self.agent_size = 0.3
+        self.box_size = 0.5
+        self.ramp_size = 0.5
 
     def restart_sampling(self):
         starts = []
@@ -75,35 +78,23 @@ class goal_proposal():
             unif_start_idx = num_restart
         return starts, unif_start_idx
 
-    def update_buffer(self, states, scores, unif_states, unif_scores):
+    def update_buffer(self, states, scores):
         # states : list, scores : list, returns : dict, {role: list}
         all_states = states.copy()
         all_scores = scores.copy()
-
-        add_unif_states = unif_states.copy()
-        add_unif_scores = unif_scores.copy()
              
         # delete illegal states
         for state_id in reversed(range(len(all_states))):
-            if self.illegal_task(all_states[state_id]):
+            if self.illegal_task_xyz(all_states[state_id]):
                 del all_states[state_id]
                 del all_scores[state_id]
-        for state_id in reversed(range(len(add_unif_states))):
-            if self.illegal_task(add_unif_states[state_id]):
-                del add_unif_states[state_id]
-                del add_unif_scores[state_id]
 
-        if self.empty_buffer:
-            self.buffer = []
-            self.buffer_priority = []
-            self.buffer_dist = []
-        else:
-            # update priority of old tasks in the buffer
-            if len(self.buffer) > 0:
-                self.buffer_priority = self.update_priority_bydist_ablation(self.buffer, self.buffer_priority, all_states, all_scores, self.device)
+        # update priority of old tasks in the buffer
+        if len(self.buffer) > 0:
+            self.buffer_priority = self.update_priority_bydist_ablation(self.buffer, self.buffer_priority, all_states, all_scores, self.device)
 
         # get uniform threshold
-        threshold = np.mean(add_unif_scores)
+        threshold = np.mean(self.buffer_priority) if len(self.buffer) > 0 else 0.0
         for idx, all_score in enumerate(all_scores):
             if all_score > threshold:
                 self.buffer.append(all_states[idx])
@@ -145,189 +136,7 @@ class goal_proposal():
             self.buffer = copy.deepcopy(max_subset)
             self.buffer_priority = copy.deepcopy(max_subset_value)
 
-        self.buffer = [np.array(state, dtype=int) for state in self.buffer]
-
-    def update_buffer_system(self, states, scores):
-        # states : list, scores : list, returns : dict, {role: list}
-        all_states = states.copy()
-        all_scores = scores.copy()
-
-             
-        # delete illegal states
-        for state_id in reversed(range(len(all_states))):
-            if self.illegal_task(all_states[state_id]):
-                del all_states[state_id]
-                del all_scores[state_id]
-
-        # update priority of old tasks in the buffer
-        if len(self.buffer) > 0:
-            self.buffer_priority = self.update_priority_bydist_ablation(self.buffer, self.buffer_priority, all_states, all_scores, self.device)
-
-        # get uniform threshold
-        if len(self.buffer) > 0:
-            threshold = np.mean(self.buffer_priority)
-            for idx, all_score in enumerate(all_scores):
-                if all_score > threshold:
-                    self.buffer.append(all_states[idx])
-                    self.buffer_priority.append(all_scores[idx])
-
-        # delete states by novelty
-        if len(self.buffer) > self.buffer_capacity:
-            self.buffer_dist = self.get_dist(self.buffer, self.device)
-            strata = np.percentile(self.buffer_dist, np.linspace(0, 100, self.buffer_capacity+1))
-
-            max_subset = []
-            max_subset_value = []
-            max_subset_dist = 0.0
-            sample_time = 0
-            while sample_time <= 3:
-                # Initialize the subset
-                subset = []
-                subset_value = []
-                # Loop through each stratum
-                for i in range(self.buffer_capacity):
-                    # Calculate the indices of the vectors in the current stratum
-                    indices = np.where((self.buffer_dist >= strata[i]) & (self.buffer_dist < strata[i+1]))[0]
-                    
-                    # Randomly sample one vector from the current stratum
-                    if indices.shape[0] > 0:
-                        # if not empty
-                        index = np.random.choice(indices, 1)[0]
-                        
-                        # Add the vector to the subset
-                        subset.append(self.buffer[index])
-                        subset_value.append(self.buffer_priority[index])
-                subset_dist = np.mean(self.get_dist(subset, self.device))
-                if subset_dist > max_subset_dist:
-                    max_subset = copy.deepcopy(subset)
-                    max_subset_value = copy.deepcopy(subset_value)
-                    max_subset_dist = subset_dist
-                sample_time += 1
-            print('max_subset_dist', max_subset_dist)
-            self.buffer = copy.deepcopy(max_subset)
-            self.buffer_priority = copy.deepcopy(max_subset_value)
-
-        self.buffer = [np.array(state, dtype=int) for state in self.buffer]
-
-    def add_NovelandEasy_states_accurate(self, states, scores, start_states, start_scores):
-        # states : list, scores : list, returns : dict, {role: list}
-        all_states = states.copy()
-        all_scores = scores.copy()
-
-        new_states = start_states.copy()
-        new_scores = start_scores.copy()
-             
-        # delete illegal states
-        for state_id in reversed(range(len(all_states))):
-            if self.illegal_task(all_states[state_id]):
-                del all_states[state_id]
-                del all_scores[state_id]
-        for state_id in reversed(range(len(new_states))):
-            if self.illegal_task(new_states[state_id]):
-                del new_states[state_id]
-                del new_scores[state_id]
-
-        # update priority
-        if len(self.buffer) > 0:
-            self.buffer_priority = self.update_priority_bydist(self.buffer, all_states, all_scores, self.device)
-
-        # get dist of all_states and buffer, only add states with dist > threshold
-        if len(self.buffer) > 0:
-            for idx in reversed(range(len(new_states))):
-                dist_one = self.get_dist_task2buffer(new_states[idx], self.buffer, self.device)
-                if dist_one > self.threshold:
-                    self.buffer.append(new_states[idx])
-                    self.buffer_priority.append(new_scores[idx])
-        else:
-            self.buffer += new_states
-            self.buffer_priority += new_scores
-
-        # delete states by novelty
-        if len(self.buffer) > self.buffer_capacity:
-            self.buffer_priority, self.buffer = self.buffer_sort(self.buffer_priority, self.buffer)
-            self.buffer = self.buffer[len(self.buffer)-self.buffer_capacity:]
-            self.buffer_priority = self.buffer_priority[len(self.buffer_priority)-self.buffer_capacity:]
-
-        self.buffer = [np.array(state, dtype=int) for state in self.buffer]
-
-    def add_NovelandEasy_states_batch(self, states, scores, start_states, start_scores):
-        # states : list, scores : list, returns : dict, {role: list}
-        all_states = states.copy()
-        all_scores = scores.copy()
-
-        new_states = start_states.copy()
-        new_scores = start_scores.copy()
-             
-        # delete illegal states
-        for state_id in reversed(range(len(all_states))):
-            if self.illegal_task(all_states[state_id]):
-                del all_states[state_id]
-                del all_scores[state_id]
-        for state_id in reversed(range(len(new_states))):
-            if self.illegal_task(new_states[state_id]):
-                del new_states[state_id]
-                del new_scores[state_id]
-
-        # update priority
-        if len(self.buffer) > 0:
-            self.buffer_priority = self.update_priority_bydist(self.buffer, all_states, all_scores, self.device)
-
-        # get dist of all_states and buffer, only add states with dist > threshold
-        if len(self.buffer) > 0:
-            new_dists = self.get_dist_batch2buffer(new_states, self.buffer, self.device)
-            for idx in range(len(new_dists)):
-                if new_dists[idx] > self.threshold:
-                    self.buffer.append(new_states[idx])
-                    self.buffer_priority.append(new_scores[idx])
-        else:
-            self.buffer += new_states
-            self.buffer_priority += new_scores
-
-        # delete states by novelty
-        if len(self.buffer) > self.buffer_capacity:
-            self.buffer_priority, self.buffer = self.buffer_sort(self.buffer_priority, self.buffer)
-            self.buffer = self.buffer[len(self.buffer)-self.buffer_capacity:]
-            self.buffer_priority = self.buffer_priority[len(self.buffer_priority)-self.buffer_capacity:]
-
-        self.buffer = [np.array(state, dtype=int) for state in self.buffer]
-
-    def add_NovelandEasy_states_globalexploration(self, states, scores, start_states, start_scores):
-        # states : list, scores : list, returns : dict, {role: list}
-        all_states = states.copy()
-        all_scores = scores.copy()
-
-        new_states = start_states.copy()
-        new_scores = start_scores.copy()
-             
-        # delete illegal states
-        for state_id in reversed(range(len(all_states))):
-            if self.illegal_task(all_states[state_id]):
-                del all_states[state_id]
-                del all_scores[state_id]
-        for state_id in reversed(range(len(new_states))):
-            if self.illegal_task(new_states[state_id]):
-                del new_states[state_id]
-                del new_scores[state_id]
-
-        # update priority
-        if len(self.buffer) > 0:
-            self.buffer_priority = self.update_priority_bydist(self.buffer, all_states, all_scores, self.device)
-
-        # add states and scores to buffer
-        self.buffer += new_states
-        self.buffer_priority += new_scores
-
-        # update dist
-        self.buffer_dist = (self.get_dist(self.buffer, self.device)).tolist()
-
-        # delete states by novelty
-        if len(self.buffer) > self.buffer_capacity:
-            self.buffer_dist, self.buffer_priority, self.buffer = self.buffer_sort(self.buffer_dist, self.buffer_priority, self.buffer)
-            self.buffer_dist = self.buffer_dist[len(self.buffer_dist)-self.buffer_capacity:]
-            self.buffer = self.buffer[len(self.buffer)-self.buffer_capacity:]
-            self.buffer_priority = self.buffer_priority[len(self.buffer_priority)-self.buffer_capacity:]
-
-        self.buffer = [np.array(state, dtype=int) for state in self.buffer]
+        self.buffer = [np.array(state, dtype=float) for state in self.buffer]
 
     def uniform_from_buffer(self, buffer, starts_length):
         sample_length = [starts_length // 2, starts_length - starts_length // 2]
@@ -408,11 +217,14 @@ class goal_proposal():
             ramp = []
         return archive
 
-    def update_priority_bydist(self, origin_buffer, target_buffer, target_scores, device):
+    def update_priority_bydist_ablation(self, origin_buffer, origin_scores, target_buffer, target_scores, device):
         n = len(origin_buffer)
         origin_buffer_array = torch.from_numpy(np.array(origin_buffer)).float().to(device)
         target_buffer_array = torch.from_numpy(np.array(target_buffer)).float().to(device)
-        topk = 5
+        if self.update_by_allnearest:
+            topk = len(target_buffer)
+        else:
+            topk = self.nearest_k
         if n // 500 > 5:
             chunk = n // 500
             dist = []
@@ -423,22 +235,30 @@ class goal_proposal():
                 # d = torch.matmul(b, buffer_array.transpose(0,1))
                 dist_nearest_chunk, dist_chunk_index = torch.topk(d, k=topk, dim=1, largest=False)
                 dist_nearest_chunk = dist_nearest_chunk.cpu().numpy()
-                # delete self dist and index
-                dist_weight = np.exp(-dist_nearest_chunk) / np.sum(np.exp(-dist_nearest_chunk),axis=1).reshape(-1,1)
                 nearest_buffer_priority = np.array(target_scores)[dist_chunk_index.cpu().numpy()]
-                priority_chunk = np.sum(dist_weight * nearest_buffer_priority, axis=1)
-                priority.append(priority_chunk.copy())
+                if self.use_Guassian_smoothing:
+                    # delete self dist and index
+                    dist_weight = np.exp(-dist_nearest_chunk) / np.sum(np.exp(-dist_nearest_chunk),axis=1).reshape(-1,1)
+                    priority_chunk = np.sum(dist_weight * nearest_buffer_priority, axis=1)
+                    priority.append(priority_chunk.copy())
+                else:
+                    priority.append(np.mean(nearest_buffer_priority, axis=1))
             priority = np.concatenate(priority, axis=0)
         else:
             d = self._euclidean_dist(origin_buffer_array, target_buffer_array)
             dist_nearest, dist_index = torch.topk(d, k=topk, dim=1, largest=False)
             dist_nearest = dist_nearest.cpu().numpy()
-            # delete self dist and index
-            dist_weight = np.exp(-dist_nearest) / np.sum(np.exp(-dist_nearest),axis=1).reshape(-1,1)
             nearest_buffer_priority = np.array(target_scores)[dist_index.cpu().numpy()]
-            priority = np.sum(dist_weight * nearest_buffer_priority, axis=1)
+            if self.use_Guassian_smoothing:
+                # delete self dist and index
+                dist_weight = np.exp(-dist_nearest) / np.sum(np.exp(-dist_nearest),axis=1).reshape(-1,1)
+                priority = np.sum(dist_weight * nearest_buffer_priority, axis=1)
+            else:
+                priority = np.mean(nearest_buffer_priority, axis=1)
         
-        return priority.tolist()
+        # 0.0 : latest variance, 1.0 : past variance, 0.5 : running average
+        real_priority = np.array(origin_scores) * self.priority_lambda + priority * (1.0 - self.priority_lambda)
+        return real_priority.tolist()
 
     def get_dist_and_update_priority_bytime(self, buffer, buffer_priority, buffer_age, device):
         n = len(buffer)
@@ -657,108 +477,48 @@ class goal_proposal():
             for line in self.buffer_priority:
                 fp.write(str(np.array(line).reshape(-1))+'\n')
 
-    def illegal_task(self, task):
-        def in_quadrant(pos, obj_size):
-            if pos[0] >= self.grid_size // 2 and pos[0] <= self.grid_size - obj_size - 1:
-                if pos[1] >= 1 and pos[1] <= self.grid_size // 2 - obj_size - 1:
-                    return True
-            return False
-        
+    def illegal_task_xyz(self, task):
         def outside_quadrant(pos, obj_size):
-            if pos[0] >= 1 and pos[0] <= self.grid_size // 2 - obj_size - 1:
-                if pos[1] >= 1 and pos[1] <= self.grid_size // 2 - obj_size - 1:
+            if pos[0] > 0.0 and pos[0] <= self.floor_size / 2 - obj_size:
+                if pos[1] > 0.0 and pos[1] <= self.floor_size / 2 - obj_size:
                     return True
-                elif pos[1] >= self.grid_size // 2 and pos[1] <= self.grid_size - obj_size - 1:
+                elif pos[1] >= self.floor_size / 2 and pos[1] <= self.floor_size - obj_size:
                     return True
-            elif pos[0] >= self.grid_size // 2 and pos[0] <= self.grid_size - obj_size - 1:
-                if pos[1] >= self.grid_size // 2 and pos[1] <= self.grid_size - obj_size - 1:
+            elif pos[0] >= self.floor_size / 2 and pos[0] <= self.floor_size - obj_size:
+                if pos[1] >= self.floor_size / 2 and pos[1] <= self.floor_size - obj_size:
                     return True
             return False
 
         def in_map(pos, obj_size):
-            if pos[0] >= 1 and pos[0] <= self.grid_size - obj_size - 1:
-                if pos[1] >= 1 and pos[1] <= self.grid_size - obj_size - 1:
+            if pos[0] > 0.0 and pos[0] <= self.floor_size - obj_size:
+                if pos[1] > 0.0 and pos[1] <= self.floor_size - obj_size:
                     return True
             return False
 
-        hider_pos = task[:self.num_hiders * 2]
+        hider_pos = task[:self.num_hiders * 3]
         for hider_id in range(self.num_hiders):
-            if in_map(hider_pos[hider_id * 2 : (hider_id + 1) * 2], self.agent_size):
+            if in_map(hider_pos[hider_id * 3 : (hider_id + 1) * 3 - 1], self.agent_size):
                 continue
             else:
                 return True
 
-        seeker_pos = task[self.num_hiders * 2: self.num_hiders * 2 + self.num_seekers * 2]
+        seeker_pos = task[self.num_hiders * 3: self.num_hiders * 3 + self.num_seekers * 3]
         for seeker_id in range(self.num_seekers):
-            if outside_quadrant(seeker_pos[seeker_id * 2 : (seeker_id + 1) * 2], self.agent_size):
+            if outside_quadrant(seeker_pos[seeker_id * 3 : (seeker_id + 1) * 3 - 1], self.agent_size):
                 continue
             else:
                 return True
 
-        box_pos = task[(self.num_hiders + self.num_seekers) * 2 : (self.num_hiders + self.num_seekers) * 2 + self.num_boxes * 2]
+        box_pos = task[(self.num_hiders + self.num_seekers) * 3 : (self.num_hiders + self.num_seekers) * 3 + self.num_boxes * 3]
         for box_id in range(self.num_boxes):
-            if in_map(box_pos[box_id * 2 : (box_id + 1) * 2], self.box_size):
+            if in_map(box_pos[box_id * 3 : (box_id + 1) * 3 - 1], self.box_size):
                 continue
             else:
                 return True
         
-        ramp_pos = task[(self.num_hiders + self.num_seekers) * 2 + self.num_boxes * 2 : (self.num_hiders + self.num_seekers) * 2 + self.num_boxes * 2 + self.num_ramps * 2]
+        ramp_pos = task[(self.num_hiders + self.num_seekers) * 3 + self.num_boxes * 3 : (self.num_hiders + self.num_seekers) * 3 + self.num_boxes * 3 + self.num_ramps * 3]
         for ramp_id in range(self.num_ramps):
-            if in_map(ramp_pos[ramp_id * 2 : (ramp_id + 1) * 2], self.ramp_size):
-            # if in_map(ramp_pos[ramp_id * 2 : (ramp_id + 1) * 2], self.ramp_size):
-                continue
-            else:
-                return True
-        return False
-
-    def illegal_task_old(self, task):
-        def in_quadrant(pos, obj_size):
-            if pos[0] >= self.grid_size // 2 and pos[0] <= self.grid_size - obj_size - 1:
-                if pos[1] >= 1 and pos[1] <= self.grid_size // 2 - obj_size - 1:
-                    return True
-            return False
-        
-        def outside_quadrant(pos, obj_size):
-            if pos[0] >= 1 and pos[0] <= self.grid_size // 2 - obj_size - 1:
-                if pos[1] >= 1 and pos[1] <= self.grid_size // 2 - obj_size - 1:
-                    return True
-                elif pos[1] >= self.grid_size // 2 and pos[1] <= self.grid_size - obj_size - 1:
-                    return True
-            elif pos[0] >= self.grid_size // 2 and pos[0] <= self.grid_size - obj_size - 1:
-                if pos[1] >= self.grid_size // 2 and pos[1] <= self.grid_size - obj_size - 1:
-                    return True
-            return False
-
-        def in_map(pos, obj_size):
-            if pos[0] >= 1 and pos[0] <= self.grid_size - obj_size - 1:
-                if pos[1] >= 1 and pos[1] <= self.grid_size - obj_size - 1:
-                    return True
-            return False
-
-        hider_pos = task[:self.num_hiders * 2]
-        for hider_id in range(self.num_hiders):
-            if in_map(hider_pos[hider_id * 2 : (hider_id + 1) * 2], self.agent_size):
-                continue
-            else:
-                return True
-
-        seeker_pos = task[self.num_hiders * 2: self.num_hiders * 2 + self.num_seekers * 2]
-        for seeker_id in range(self.num_seekers):
-            if outside_quadrant(seeker_pos[seeker_id * 2 : (seeker_id + 1) * 2], self.agent_size):
-                continue
-            else:
-                return True
-
-        box_pos = task[(self.num_hiders + self.num_seekers) * 2 : (self.num_hiders + self.num_seekers) * 2 + self.num_boxes * 2]
-        for box_id in range(self.num_boxes):
-            if in_quadrant(box_pos[box_id * 2 : (box_id + 1) * 2], self.box_size):
-                continue
-            else:
-                return True
-        
-        ramp_pos = task[(self.num_hiders + self.num_seekers) * 2 + self.num_boxes * 2 : (self.num_hiders + self.num_seekers) * 2 + self.num_boxes * 2 + self.num_ramps * 2]
-        for ramp_id in range(self.num_ramps):
-            if outside_quadrant(ramp_pos[ramp_id * 2 : (ramp_id + 1) * 2], self.ramp_size):
+            if in_map(ramp_pos[ramp_id * 3 : (ramp_id + 1) * 3 - 1], self.ramp_size):
             # if in_map(ramp_pos[ramp_id * 2 : (ramp_id + 1) * 2], self.ramp_size):
                 continue
             else:
@@ -1091,7 +851,6 @@ class Trainer:
         
         # TODO sample tasks from goal_proposal
         new_tasks, _ = self.goals.restart_sampling()
-        print('new_tasks', new_tasks)
         for idx in range(len(new_tasks)):
             # numpy_msg = np.ones(5) * np.random.randint(0,10)
             msg.append(str(new_tasks[idx]).encode('ascii'))
@@ -1125,7 +884,6 @@ class Trainer:
 
         with timing.time_avg('one_training_step'):
             for sample, all_tasks, all_values in data_generator:
-                # TODO, add all_tasks and all_values to goal_proposal
                 # all_tasks: episode_length * envs * dim, all_values: episode_length * envs
                 if update_cl_archive:
                     all_tasks_flatten = all_tasks.reshape(-1, all_tasks.shape[-1]).tolist()
@@ -1134,9 +892,9 @@ class Trainer:
                     start_values = all_values[0].tolist()
                     start1 = time.time()
                     if self.policy_version > self.cfg.sample_reuse * 4:
-                        self.goals.update_buffer_system(all_tasks_flatten, all_values_flatten)
+                        self.goals.update_buffer(all_tasks_flatten, all_values_flatten)
                     end1 = time.time()
-                    print('start_tasks', len(start_tasks), 'time', end1-start1)
+                    print('buffer length', len(self.goals.buffer), 'all_tasks_flatten', len(all_tasks_flatten), 'time', end1-start1)
                     # cl, send new distribution
                     self.send_reset_task()
 
