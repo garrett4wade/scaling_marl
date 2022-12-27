@@ -4,12 +4,12 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: chenjy
-experiment_name: unif_batch57k
+experiment_name: unif_batch57k_unifboxramp
 # experiment_name: debug
 benchmark: false
 cuda: true
 cuda_deterministic: true
-seed: 2
+seed: 1
 no_summary: false
 use_wandb: true
 use_eval: false
@@ -35,15 +35,15 @@ qsize: 5
 min_num_requests: -1
 
 ddp_init_methods:
-  - tcp://localhost:6676
-task_dispatcher_addr: tcp://localhost:8897
-task_result_addr: tcp://localhost:8896
+  - tcp://localhost:6776
+task_dispatcher_addr: tcp://localhost:8997
+task_result_addr: tcp://localhost:8996
 model_weights_addrs:  # every learner has a model_weights_addr and len(model_weights_adddrs) == num_policies == num_leraners
-  - tcp://localhost:8899
+  - tcp://localhost:8999
 reset_addrs:
-  - tcp://localhost:9000
+  - tcp://localhost:9100
 seg_addrs:  # every worker node has seg_addrs connecting to all learners
-  - - tcp://localhost:12366
+  - - tcp://localhost:13366
 
 num_reanalyzers_per_trainer: 1
 num_value_tracers_per_trainer: 1
