@@ -196,7 +196,7 @@ class ActorWorker:
                     if msg_str == 'None':
                         data = None
                     else:
-                        data = np.array(msg_str[1:-1].split(),dtype=int)
+                        data = np.array(msg_str[1:-1].split(), dtype=int)
                     new_msg.append(data)
                 self.reset_tasks_queue = new_msg.copy()
     
