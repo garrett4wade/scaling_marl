@@ -136,7 +136,7 @@ class goal_proposal():
             max_subset_value = []
             max_subset_dist = 0.0
             sample_time = 0
-            while sample_time <= 3:
+            while sample_time <= 1:
                 # Initialize the subset
                 subset = []
                 subset_value = []
@@ -597,61 +597,6 @@ class goal_proposal():
             else:
                 return True
         return False
-
-    def illegal_task_old(self, task):
-        def in_quadrant(pos, obj_size):
-            if pos[0] >= self.grid_size // 2 and pos[0] <= self.grid_size - obj_size - 1:
-                if pos[1] >= 1 and pos[1] <= self.grid_size // 2 - obj_size - 1:
-                    return True
-            return False
-        
-        def outside_quadrant(pos, obj_size):
-            if pos[0] >= 1 and pos[0] <= self.grid_size // 2 - obj_size - 1:
-                if pos[1] >= 1 and pos[1] <= self.grid_size // 2 - obj_size - 1:
-                    return True
-                elif pos[1] >= self.grid_size // 2 and pos[1] <= self.grid_size - obj_size - 1:
-                    return True
-            elif pos[0] >= self.grid_size // 2 and pos[0] <= self.grid_size - obj_size - 1:
-                if pos[1] >= self.grid_size // 2 and pos[1] <= self.grid_size - obj_size - 1:
-                    return True
-            return False
-
-        def in_map(pos, obj_size):
-            if pos[0] >= 1 and pos[0] <= self.grid_size - obj_size - 1:
-                if pos[1] >= 1 and pos[1] <= self.grid_size - obj_size - 1:
-                    return True
-            return False
-
-        hider_pos = task[:self.num_hiders * 2]
-        for hider_id in range(self.num_hiders):
-            if in_map(hider_pos[hider_id * 2 : (hider_id + 1) * 2], self.agent_size):
-                continue
-            else:
-                return True
-
-        seeker_pos = task[self.num_hiders * 2: self.num_hiders * 2 + self.num_seekers * 2]
-        for seeker_id in range(self.num_seekers):
-            if outside_quadrant(seeker_pos[seeker_id * 2 : (seeker_id + 1) * 2], self.agent_size):
-                continue
-            else:
-                return True
-
-        box_pos = task[(self.num_hiders + self.num_seekers) * 2 : (self.num_hiders + self.num_seekers) * 2 + self.num_boxes * 2]
-        for box_id in range(self.num_boxes):
-            if in_quadrant(box_pos[box_id * 2 : (box_id + 1) * 2], self.box_size):
-                continue
-            else:
-                return True
-        
-        ramp_pos = task[(self.num_hiders + self.num_seekers) * 2 + self.num_boxes * 2 : (self.num_hiders + self.num_seekers) * 2 + self.num_boxes * 2 + self.num_ramps * 2]
-        for ramp_id in range(self.num_ramps):
-            if outside_quadrant(ramp_pos[ramp_id * 2 : (ramp_id + 1) * 2], self.ramp_size):
-            # if in_map(ramp_pos[ramp_id * 2 : (ramp_id + 1) * 2], self.ramp_size):
-                continue
-            else:
-                return True
-        return False
-
 class Trainer:
     def __init__(self, cfg, gpu_rank, nodes_ready_events, trainer_ready_event, shm_state_dict):
         self.cfg = cfg
