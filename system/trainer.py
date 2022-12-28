@@ -31,13 +31,10 @@ class goal_proposal():
         self.use_smooth_weight = True
         self.use_Guassian_smoothing = True
         self.use_Guassian_diversified = True
-        self.update_by_allnearest = True
+        self.update_by_allnearest = False
         self.nearest_k = 5
         self.grid_size = 30
         self.priority_lambda = 0.0
-        self.quadrant_game_hider_uniform_placement = True
-        self.quadrant_game_ramp_uniform_placement = True
-        self.threshold = 2.0
     
     def init_env_config(self):
         self.num_hiders = 2
@@ -95,14 +92,21 @@ class goal_proposal():
 
         # get uniform threshold
         threshold = np.mean(self.buffer_priority) if len(self.buffer) > 0 else 0.0
+        print('threshold', threshold)
+        add_num = 0
         for idx, all_score in enumerate(all_scores):
             if all_score > threshold:
                 self.buffer.append(all_states[idx])
                 self.buffer_priority.append(all_scores[idx])
+                add_num += 1
+        print('add states', add_num)
 
         # delete states by novelty
         if len(self.buffer) > self.buffer_capacity:
+            start = time.time()
             self.buffer_dist = self.get_dist(self.buffer, self.device)
+            end = time.time()
+            print('get all dists', end - start)
             strata = np.percentile(self.buffer_dist, np.linspace(0, 100, self.buffer_capacity+1))
 
             max_subset = []
