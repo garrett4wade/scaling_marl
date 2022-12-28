@@ -1061,7 +1061,7 @@ class Trainer:
 
     def restore(self):
         """Restore policy's networks from a saved model."""
-        self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model_47200.pt'))
+        self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model_25000.pt'))
 
     def report(self, infos):
         if not infos or self.replicate_rank != 0:
