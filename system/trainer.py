@@ -224,25 +224,20 @@ class goal_proposal():
                 seeker_pos = seeker_poses[np.random.randint(0, 3)]
                 seeker.append(copy.deepcopy(seeker_pos))
             for i in range(self.num_boxes):
-                box_pos = np.array([np.random.randint(self.grid_size // 2, self.grid_size - box_size - 1), np.random.randint(1,self.grid_size // 2 - box_size - 1)])
+                box_pos = np.array([np.random.randint(1, self.grid_size - box_size - 1),
+                                np.random.randint(1, self.grid_size - box_size - 1)])
                 box.append(copy.deepcopy(box_pos))
 
             for i in range(self.num_ramps):
-                ramp_poses = [
-                    np.array([np.random.randint(1,self.grid_size // 2 - ramp_size), np.random.randint(1, self.grid_size // 2 - ramp_size)]),
-                    np.array([np.random.randint(1,self.grid_size // 2 - ramp_size), np.random.randint(self.grid_size // 2, self.grid_size - ramp_size)]),
-                    np.array([np.random.randint(self.grid_size // 2, self.grid_size - ramp_size),np.random.randint(self.grid_size // 2, self.grid_size - ramp_size)])
-                    ]
-                ramp_pos = ramp_poses[np.random.randint(0, 3)]
+                # ramp_poses = [
+                #     np.array([np.random.randint(1,self.grid_size // 2 - ramp_size), np.random.randint(1, self.grid_size // 2 - ramp_size)]),
+                #     np.array([np.random.randint(1,self.grid_size // 2 - ramp_size), np.random.randint(self.grid_size // 2, self.grid_size - ramp_size)]),
+                #     np.array([np.random.randint(self.grid_size // 2, self.grid_size - ramp_size),np.random.randint(self.grid_size // 2, self.grid_size - ramp_size)])
+                #     ]
+                # ramp_pos = ramp_poses[np.random.randint(0, 3)]
+                ramp_pos = np.array([np.random.randint(1, self.grid_size - ramp_size - 1),
+                            np.random.randint(1, self.grid_size - ramp_size - 1)])
                 ramp.append(copy.deepcopy(ramp_pos))
-
-            # for i in range(self.num_ramps):
-            #     ramp_pos = np.array([np.random.randint(1, self.grid_size - ramp_size - 1),
-            #                     np.random.randint(1, self.grid_size - ramp_size - 1)])
-            #     ramp.append(copy.deepcopy(ramp_pos))
-            
-            # door_poses = [np.array([15, np.random.randint(1,14)]),np.array([np.random.randint(15,28),15])]
-            # door_pos = [door_poses[np.random.randint(0,2)]]
 
             # archive.append((np.concatenate(hider + seeker + box + ramp + door_pos)).astype(int))
             archive.append((np.concatenate(hider + seeker + box + ramp)).astype(int))
