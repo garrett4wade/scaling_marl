@@ -43,6 +43,7 @@ class goal_proposal_debug():
         for index in self.choose_index:
             starts.append(self.buffer[index])
         return starts
+
 class goal_proposal():
     def __init__(self, device='cuda:0'):
         self.alpha = 3.0
@@ -592,6 +593,7 @@ class goal_proposal():
             else:
                 return True
         return False
+
 class Trainer:
     def __init__(self, cfg, gpu_rank, nodes_ready_events, trainer_ready_event, shm_state_dict):
         self.cfg = cfg
@@ -959,7 +961,7 @@ class Trainer:
                     start_tasks = all_tasks[0].tolist()
                     start_values = all_values[0].tolist()
                     start1 = time.time()
-                    self.goals.update_buffer_system(all_tasks_flatten, all_values_flatten)
+                    # self.goals.update_buffer_system(all_tasks_flatten, all_values_flatten)
                     end1 = time.time()
                     print('start_tasks', len(start_tasks), 'time', end1-start1)
                     # cl, send new distribution

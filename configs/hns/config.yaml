@@ -4,7 +4,7 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: chenjy
-experiment_name: ZACL_unifboxramp_discrete_loadlockbox
+experiment_name: ZACL_discrete_load25000
 # experiment_name: debug
 benchmark: false
 cuda: true
@@ -27,7 +27,7 @@ summary_dir: './logs'
 
 # system parameters
 num_tasks_per_node: 1
-num_actors: 256
+num_actors: 128
 actor_group_size: 1
 envs_per_actor: 20
 num_policy_workers: 4
