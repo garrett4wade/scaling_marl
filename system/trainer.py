@@ -16,6 +16,8 @@ from algorithms.registries import ALGORITHM_SUMMARY_KEYS
 import copy
 from pathlib import Path
 
+np.set_printoptions(linewidth=1000)
+
 class goal_proposal():
     def __init__(self, device='cuda:0'):
         self.alpha = 3.0
@@ -103,11 +105,11 @@ class goal_proposal():
 
         # delete states by novelty
         if len(self.buffer) > self.buffer_capacity:
-            start = time.time()
-            self.buffer_dist = self.get_dist(self.buffer, self.device)
-            end = time.time()
-            print('get all dists', end - start)
-            strata = np.percentile(self.buffer_dist, np.linspace(0, 100, self.buffer_capacity+1))
+            # start = time.time()
+            # self.buffer_dist = self.get_dist(self.buffer, self.device)
+            # end = time.time()
+            # print('get all dists', end - start)
+            strata = np.percentile(self.buffer_priority, np.linspace(0, 100, self.buffer_capacity+1))
 
             max_subset = []
             max_subset_value = []
@@ -120,7 +122,7 @@ class goal_proposal():
                 # Loop through each stratum
                 for i in range(self.buffer_capacity):
                     # Calculate the indices of the vectors in the current stratum
-                    indices = np.where((self.buffer_dist >= strata[i]) & (self.buffer_dist < strata[i+1]))[0]
+                    indices = np.where((self.buffer_priority >= strata[i]) & (self.buffer_priority < strata[i+1]))[0]
                     
                     # Randomly sample one vector from the current stratum
                     if indices.shape[0] > 0:
