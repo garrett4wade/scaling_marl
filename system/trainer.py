@@ -21,8 +21,8 @@ np.set_printoptions(linewidth=1000)
 class goal_proposal():
     def __init__(self, device='cuda:0'):
         self.alpha = 3.0
-        self.buffer_capacity = 10000
-        self.proposal_batch = 10000
+        self.buffer_capacity = 2000
+        self.proposal_batch = 2000
         # active: restart_p, easy: restart_easy, unif: 1-restart_p-restart_easy
         self.restart_p = 0.7
         self.buffer = [] # store restart states
@@ -77,39 +77,26 @@ class goal_proposal():
             unif_start_idx = num_restart
         return starts, unif_start_idx
 
-    def update_buffer(self, states, scores):
+    def update_buffer_system(self, states, scores):
         # states : list, scores : list, returns : dict, {role: list}
         all_states = states.copy()
         all_scores = scores.copy()
-             
+  
         # delete illegal states
         for state_id in reversed(range(len(all_states))):
             if self.illegal_task_xyz(all_states[state_id]):
                 del all_states[state_id]
                 del all_scores[state_id]
 
-        # update priority of old tasks in the buffer
-        if len(self.buffer) > 0:
-            self.buffer_priority = self.update_priority_bydist_ablation(self.buffer, self.buffer_priority, all_states, all_scores, self.device)
-
-        # get uniform threshold
-        threshold = np.mean(self.buffer_priority) if len(self.buffer) > 0 else 0.0
-        print('threshold', threshold)
-        add_num = 0
-        for idx, all_score in enumerate(all_scores):
-            if all_score > threshold:
-                self.buffer.append(all_states[idx])
-                self.buffer_priority.append(all_scores[idx])
-                add_num += 1
-        print('add states', add_num)
+        self.buffer = []
+        self.buffer_priority = []
+        self.buffer += all_states
+        self.buffer_priority += all_scores
 
         # delete states by novelty
         if len(self.buffer) > self.buffer_capacity:
-            # start = time.time()
-            # self.buffer_dist = self.get_dist(self.buffer, self.device)
-            # end = time.time()
-            # print('get all dists', end - start)
-            strata = np.percentile(self.buffer_priority, np.linspace(0, 100, self.buffer_capacity+1))
+            self.buffer_dist = self.get_dist(self.buffer, self.device)
+            strata = np.percentile(self.buffer_dist, np.linspace(0, 100, self.buffer_capacity+1))
 
             max_subset = []
             max_subset_value = []
@@ -122,7 +109,7 @@ class goal_proposal():
                 # Loop through each stratum
                 for i in range(self.buffer_capacity):
                     # Calculate the indices of the vectors in the current stratum
-                    indices = np.where((self.buffer_priority >= strata[i]) & (self.buffer_priority < strata[i+1]))[0]
+                    indices = np.where((self.buffer_dist >= strata[i]) & (self.buffer_dist < strata[i+1]))[0]
                     
                     # Randomly sample one vector from the current stratum
                     if indices.shape[0] > 0:
@@ -897,7 +884,7 @@ class Trainer:
                     start_tasks = all_tasks[0].tolist()
                     start_values = all_values[0].tolist()
                     start1 = time.time()
-                    self.goals.update_buffer(all_tasks_flatten, all_values_flatten)
+                    self.goals.update_buffer_system(all_tasks_flatten, all_values_flatten)
                     end1 = time.time()
                     print('buffer length', len(self.goals.buffer), 'all_tasks_flatten', len(all_tasks_flatten), 'time', end1-start1)
                     # cl, send new distribution
