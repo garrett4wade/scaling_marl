@@ -539,10 +539,6 @@ def make_env(n_substeps=15,
         
         agent_placement_fn = [hider_placement] * \
             n_hiders + [outside_agent_set_placement] * n_seekers
-        # box_placement_fn = quadrant_placement
-        # ramp_placement_fn = uniform_placement
-        # hider_placement = uniform_placement if quadrant_game_hider_uniform_placement else quadrant_placement
-        # agent_placement_fn = [hider_placement] * n_hiders + [outside_quadrant_placement] * n_seekers
     else:
         raise ValueError(f"Scenario {scenario} not supported.")
     env.add_module(

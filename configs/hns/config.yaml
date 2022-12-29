@@ -4,8 +4,8 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: chenjy
-experiment_name: ZACL_unifboxramp_debug_fixbugs
-# experiment_name: debug
+# experiment_name: ZACL_unifboxramp_debug_fixbugs
+experiment_name: debug
 benchmark: false
 cuda: true
 cuda_deterministic: true
