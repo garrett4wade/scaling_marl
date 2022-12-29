@@ -47,8 +47,8 @@ class goal_proposal_debug():
 class goal_proposal():
     def __init__(self, device='cuda:0'):
         self.alpha = 3.0
-        self.buffer_capacity = 10000
-        self.proposal_batch = 10000
+        self.buffer_capacity = 2000
+        self.proposal_batch = 2000
         # active: restart_p, easy: restart_easy, unif: 1-restart_p-restart_easy
         self.restart_p = 0.7
         self.buffer = [] # store restart states
@@ -107,32 +107,22 @@ class goal_proposal():
         # states : list, scores : list, returns : dict, {role: list}
         all_states = states.copy()
         all_scores = scores.copy()
-             
+  
         # delete illegal states
         for state_id in reversed(range(len(all_states))):
             if self.illegal_task(all_states[state_id]):
                 del all_states[state_id]
                 del all_scores[state_id]
 
-        # update priority of old tasks in the buffer
-        start1 = time.time()
-        if len(self.buffer) > 0:
-            self.buffer_priority = self.update_priority_bydist_ablation(self.buffer, self.buffer_priority, all_states, all_scores, self.device)
-        end1 = time.time()
-        print('update priority', end1 - start1)
-        print('device', self.device)
-
-        # get uniform threshold
-        threshold = np.mean(self.buffer_priority) if len(self.buffer) > 0 else 0.0
-        for idx, all_score in enumerate(all_scores):
-            if all_score > threshold:
-                self.buffer.append(all_states[idx])
-                self.buffer_priority.append(all_scores[idx])
+        self.buffer = []
+        self.buffer_priority = []
+        self.buffer += all_states
+        self.buffer_priority += all_scores
 
         # delete states by novelty
         if len(self.buffer) > self.buffer_capacity:
-            # self.buffer_dist = self.get_dist(self.buffer, self.device)
-            strata = np.percentile(self.buffer_priority, np.linspace(0, 100, self.buffer_capacity+1))
+            self.buffer_dist = self.get_dist(self.buffer, self.device)
+            strata = np.percentile(self.buffer_dist, np.linspace(0, 100, self.buffer_capacity+1))
 
             max_subset = []
             max_subset_value = []
@@ -143,10 +133,9 @@ class goal_proposal():
                 subset = []
                 subset_value = []
                 # Loop through each stratum
-                start1 = time.time()
                 for i in range(self.buffer_capacity):
                     # Calculate the indices of the vectors in the current stratum
-                    indices = np.where((self.buffer_priority >= strata[i]) & (self.buffer_priority < strata[i+1]))[0]
+                    indices = np.where((self.buffer_dist >= strata[i]) & (self.buffer_dist < strata[i+1]))[0]
                     
                     # Randomly sample one vector from the current stratum
                     if indices.shape[0] > 0:
@@ -156,17 +145,12 @@ class goal_proposal():
                         # Add the vector to the subset
                         subset.append(self.buffer[index])
                         subset_value.append(self.buffer_priority[index])
-                end1 = time.time()
-                print('find indices', end1 - start1)
-                start1 = time.time()
                 subset_dist = np.mean(self.get_dist(subset, self.device))
                 if subset_dist > max_subset_dist:
                     max_subset = copy.deepcopy(subset)
                     max_subset_value = copy.deepcopy(subset_value)
                     max_subset_dist = subset_dist
                 sample_time += 1
-                end1 = time.time()
-                print('get dists', end1 - start1)
             print('max_subset_dist', max_subset_dist)
             self.buffer = copy.deepcopy(max_subset)
             self.buffer_priority = copy.deepcopy(max_subset_value)
@@ -303,197 +287,6 @@ class goal_proposal():
         real_priority = np.array(origin_scores) * self.priority_lambda + priority * (1.0 - self.priority_lambda)
         return real_priority.tolist()
 
-    def update_priority_bydist(self, origin_buffer, target_buffer, target_scores, device):
-        n = len(origin_buffer)
-        origin_buffer_array = torch.from_numpy(np.array(origin_buffer)).float().to(device)
-        target_buffer_array = torch.from_numpy(np.array(target_buffer)).float().to(device)
-        topk = 5
-        if n // 500 > 5:
-            chunk = n // 500
-            dist = []
-            priority = []
-            for i in range((n // chunk) + 1):
-                b = origin_buffer_array[i * chunk : (i+1) * chunk]
-                d = self._euclidean_dist(b, target_buffer_array)
-                # d = torch.matmul(b, buffer_array.transpose(0,1))
-                dist_nearest_chunk, dist_chunk_index = torch.topk(d, k=topk, dim=1, largest=False)
-                dist_nearest_chunk = dist_nearest_chunk.cpu().numpy()
-                # delete self dist and index
-                dist_weight = np.exp(-dist_nearest_chunk) / np.sum(np.exp(-dist_nearest_chunk),axis=1).reshape(-1,1)
-                nearest_buffer_priority = np.array(target_scores)[dist_chunk_index.cpu().numpy()]
-                priority_chunk = np.sum(dist_weight * nearest_buffer_priority, axis=1)
-                priority.append(priority_chunk.copy())
-            priority = np.concatenate(priority, axis=0)
-        else:
-            d = self._euclidean_dist(origin_buffer_array, target_buffer_array)
-            dist_nearest, dist_index = torch.topk(d, k=topk, dim=1, largest=False)
-            dist_nearest = dist_nearest.cpu().numpy()
-            # delete self dist and index
-            dist_weight = np.exp(-dist_nearest) / np.sum(np.exp(-dist_nearest),axis=1).reshape(-1,1)
-            nearest_buffer_priority = np.array(target_scores)[dist_index.cpu().numpy()]
-            priority = np.sum(dist_weight * nearest_buffer_priority, axis=1)
-        
-        return priority.tolist()
-
-    def get_dist_and_update_priority_bytime(self, buffer, buffer_priority, buffer_age, device):
-        n = len(buffer)
-        buffer_array = torch.from_numpy(np.array(buffer)).float().to(device)
-        topk = 5
-        if n // 500 > 5:
-            chunk = n // 500
-            dist = []
-            priority = []
-            age = []
-            for i in range((n // chunk) + 1):
-                b = buffer_array[i * chunk : (i+1) * chunk]
-                d = self._euclidean_dist(b, buffer_array)
-                # d = torch.matmul(b, buffer_array.transpose(0,1))
-                dist_nearest_chunk, dist_chunk_index = torch.topk(d, k=topk, dim=1, largest=False)
-                dist_nearest_chunk = dist_nearest_chunk.cpu().numpy()
-                nearest_age_chunk = np.array(buffer_age)[dist_chunk_index.cpu().numpy()]
-                nearest_buffer_priority = np.array(buffer_priority)[dist_chunk_index.cpu().numpy()]
-                # get age, update priority by the youngest task
-                min_age = np.argmin(nearest_age_chunk, axis=1)
-                priority.append(nearest_buffer_priority[np.arange(nearest_buffer_priority.shape[0]),min_age])
-                age.append(nearest_age_chunk[np.arange(nearest_age_chunk.shape[0]),min_age])
-                dist.append(np.mean(dist_nearest_chunk,axis=1))
-            dist = np.concatenate(dist, axis=0)
-            priority = np.concatenate(priority, axis=0)
-            age = np.concatenate(age, axis=0)
-        else:
-            d = self._euclidean_dist(buffer_array, buffer_array)
-            dist_nearest, dist_index = torch.topk(d, k=topk, dim=1, largest=False)
-            dist_nearest = dist_nearest.cpu().numpy()
-            # ages of nearest tasks
-            nearest_age = np.array(buffer_age)[dist_index.cpu().numpy()]
-            nearest_buffer_priority = np.array(buffer_priority)[dist_index.cpu().numpy()]
-            # get the index of the youngest task
-            min_age = np.argmin(nearest_age, axis=1)
-            # update priority by the youngest task
-            priority = nearest_buffer_priority[np.arange(nearest_buffer_priority.shape[0]),min_age]
-            age = nearest_age[np.arange(nearest_age.shape[0]),min_age]
-            dist = np.mean(dist_nearest,axis=1)
-        if self.use_smooth_weight:
-            self.buffer_priority = priority.tolist().copy()
-            self.buffer_age = age.tolist().copy()
-        return dist
-
-    def get_dist_and_update_priority(self, buffer, buffer_priority, device):
-        # topk=5
-        # dist = cdist(np.array(buffer).reshape(len(buffer),-1),np.array(buffer).reshape(len(buffer),-1),metric='euclidean')
-        # if len(buffer) < topk+1:
-        #     dist_k = dist
-        #     novelty = np.sum(dist_k,axis=1)/len(buffer)
-        # else:
-        #     dist_k = np.partition(dist,topk,axis=1)[:,0:topk]
-        #     novelty = np.sum(dist_k,axis=1)/topk
-
-        n = len(buffer)
-        buffer_array = torch.from_numpy(np.array(buffer)).float().to(device)
-        topk = 5
-        if n // 500 > 5:
-            chunk = n // 500
-            dist = []
-            priority = []
-            for i in range((n // chunk) + 1):
-                b = buffer_array[i * chunk : (i+1) * chunk]
-                d = self._euclidean_dist(b, buffer_array)
-                # d = torch.matmul(b, buffer_array.transpose(0,1))
-                dist_nearest_chunk, dist_chunk_index = torch.topk(d, k=topk, dim=1, largest=False)
-                dist_nearest_chunk = dist_nearest_chunk.cpu().numpy()
-                if self.use_Guassian_smoothing or self.use_Guassian_diversified:
-                    # delete self dist and index
-                    dist_nearest_chunk_other = dist_nearest_chunk[:,1:]
-                    dist_chunk_index_other = dist_chunk_index[:,1:]
-                    dist_weight = np.exp(-dist_nearest_chunk_other) / np.sum(np.exp(-dist_nearest_chunk_other),axis=1).reshape(-1,1)
-                    nearest_buffer_priority = np.array(buffer_priority)[dist_chunk_index_other.cpu().numpy()]
-                    priority_chunk = np.sum(dist_weight * nearest_buffer_priority, axis=1)
-                    priority.append(priority_chunk.copy())
-                else: # box kernel
-                    priority.append(np.mean(np.array(buffer_priority)[dist_chunk_index.cpu().numpy()],axis=1))
-                if self.use_Guassian_diversified:
-                    dist.append(np.sum(dist_weight * dist_nearest_chunk_other, axis=1))
-                else:
-                    dist.append(np.mean(dist_nearest_chunk,axis=1))
-            dist = np.concatenate(dist, axis=0)
-            priority = np.concatenate(priority, axis=0)
-        else:
-            d = self._euclidean_dist(buffer_array, buffer_array)
-            dist_nearest, dist_index = torch.topk(d, k=topk, dim=1, largest=False)
-            dist_nearest = dist_nearest.cpu().numpy()
-            if self.use_Guassian_smoothing or self.use_Guassian_diversified:
-                # delete self dist and index
-                dist_nearest_other = dist_nearest[:,1:]
-                dist_index_other = dist_index[:,1:]
-                dist_weight = np.exp(-dist_nearest_other) / np.sum(np.exp(-dist_nearest_other),axis=1).reshape(-1,1)
-                nearest_buffer_priority = np.array(buffer_priority)[dist_index_other.cpu().numpy()]
-                priority = np.sum(dist_weight * nearest_buffer_priority, axis=1)
-            else:
-                priority = np.mean(np.array(buffer_priority)[dist_index.cpu().numpy()],axis=1)
-            if self.use_Guassian_diversified:
-                dist = np.sum(dist_weight * dist_nearest_other, axis=1)
-            else:
-                dist = np.mean(dist_nearest,axis=1)
-        if self.use_smooth_weight:
-            self.buffer_priority = priority.tolist().copy()
-        return dist
-
-    def get_dist_task2buffer(self, task, target_buffer, device):
-        origin_buffer_array = torch.from_numpy(np.array([task])).float().to(device)
-        target_buffer_array = torch.from_numpy(np.array(target_buffer)).float().to(device)
-        topk = 1
-        d = self._euclidean_dist(origin_buffer_array, target_buffer_array)
-        dist_nearest, dist_index = torch.topk(d, k=topk, dim=1, largest=False)
-        dist_nearest = dist_nearest.cpu().numpy()
-        dist = dist_nearest.copy()
-        
-        return dist
-
-    def get_dist_batch2buffer(self, batch, buffer, device):
-        n = len(batch)
-        bacth_array = torch.from_numpy(np.array(batch)).float().to(device)
-        buffer_array = torch.from_numpy(np.array(buffer)).float().to(device)
-        topk = 1
-        if n // 500 > 5:
-            chunk = n // 500
-            dist = []
-            for i in range((n // chunk) + 1):
-                b = bacth_array[i * chunk : (i+1) * chunk]
-                d = self._euclidean_dist(b, buffer_array)
-                # d = torch.matmul(b, buffer_array.transpose(0,1))
-                dist_nearest_chunk, dist_chunk_index = torch.topk(d, k=topk, dim=1, largest=False)
-                dist_nearest_chunk = dist_nearest_chunk.cpu().numpy()
-                dist.append(np.mean(dist_nearest_chunk,axis=1))
-            dist = np.concatenate(dist, axis=0)
-        else:
-            d = self._euclidean_dist(bacth_array, buffer_array)
-            dist_nearest, dist_index = torch.topk(d, k=topk, dim=1, largest=False)
-            dist_nearest = dist_nearest.cpu().numpy()
-            dist = np.mean(dist_nearest,axis=1)
-        return dist
-
-    def get_dist(self, buffer, device):
-        n = len(buffer)
-        buffer_array = torch.from_numpy(np.array(buffer)).float().to(device)
-        topk = 5
-        if n // 500 > 5:
-            chunk = n // 500
-            dist = []
-            for i in range((n // chunk) + 1):
-                b = buffer_array[i * chunk : (i+1) * chunk]
-                d = self._euclidean_dist(b, buffer_array)
-                # d = torch.matmul(b, buffer_array.transpose(0,1))
-                dist_nearest_chunk, dist_chunk_index = torch.topk(d, k=topk, dim=1, largest=False)
-                dist_nearest_chunk = dist_nearest_chunk.cpu().numpy()
-                dist.append(np.mean(dist_nearest_chunk,axis=1))
-            dist = np.concatenate(dist, axis=0)
-        else:
-            d = self._euclidean_dist(buffer_array, buffer_array)
-            dist_nearest, dist_index = torch.topk(d, k=topk, dim=1, largest=False)
-            dist_nearest = dist_nearest.cpu().numpy()
-            dist = np.mean(dist_nearest,axis=1)
-        return dist
-
     def _euclidean_dist(self, x, y):
         """
         Args:
@@ -517,6 +310,28 @@ class goal_proposal():
         sort_zipped = sorted(zipped,key=lambda x:(x[0],np.mean(x[1])))
         result = zip(*sort_zipped)
         return [list(x) for x in result]
+
+    def get_dist(self, buffer, device):
+        n = len(buffer)
+        buffer_array = torch.from_numpy(np.array(buffer)).float().to(device)
+        topk = 5
+        if n // 500 > 5:
+            chunk = n // 500
+            dist = []
+            for i in range((n // chunk) + 1):
+                b = buffer_array[i * chunk : (i+1) * chunk]
+                d = self._euclidean_dist(b, buffer_array)
+                # d = torch.matmul(b, buffer_array.transpose(0,1))
+                dist_nearest_chunk, dist_chunk_index = torch.topk(d, k=topk, dim=1, largest=False)
+                dist_nearest_chunk = dist_nearest_chunk.cpu().numpy()
+                dist.append(np.mean(dist_nearest_chunk,axis=1))
+            dist = np.concatenate(dist, axis=0)
+        else:
+            d = self._euclidean_dist(buffer_array, buffer_array)
+            dist_nearest, dist_index = torch.topk(d, k=topk, dim=1, largest=False)
+            dist_nearest = dist_nearest.cpu().numpy()
+            dist = np.mean(dist_nearest,axis=1)
+        return dist
 
     def load_node(self, mode_path, load_episode):
         data_dir = mode_path + '/starts/starts_' + str(load_episode)
@@ -973,8 +788,6 @@ class Trainer:
                     all_values_flatten = all_values.reshape(-1).tolist()
                     start_tasks = all_tasks[0].tolist()
                     start_values = all_values[0].tolist()
-                    start1 = time.time()
-                    # if self.policy_version > self.cfg.sample_reuse * 4:
                     self.goals.update_buffer_system(all_tasks_flatten, all_values_flatten)
                     end1 = time.time()
                     print('buffer length', len(self.goals.buffer), 'time', end1-start1)

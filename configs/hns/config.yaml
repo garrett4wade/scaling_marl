@@ -11,7 +11,7 @@ cuda: true
 cuda_deterministic: true
 seed: 1
 no_summary: false
-use_wandb: true
+use_wandb: false
 use_eval: false
 use_render: false
 
