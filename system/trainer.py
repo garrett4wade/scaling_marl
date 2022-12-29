@@ -60,9 +60,8 @@ class goal_proposal():
         self.use_Guassian_smoothing = True
         self.use_Guassian_diversified = True
         self.grid_size = 30
-        self.quadrant_game_hider_uniform_placement = True
-        self.quadrant_game_ramp_uniform_placement = True
-        self.threshold = 2.0
+        self.update_by_allnearest = True
+        self.nearest_k = 5
     
     def init_env_config(self):
         self.num_hiders = 2
@@ -191,17 +190,16 @@ class goal_proposal():
             self.buffer_priority = self.update_priority_bydist_ablation(self.buffer, self.buffer_priority, all_states, all_scores, self.device)
 
         # get uniform threshold
-        if len(self.buffer) > 0:
-            threshold = np.mean(self.buffer_priority)
-            for idx, all_score in enumerate(all_scores):
-                if all_score > threshold:
-                    self.buffer.append(all_states[idx])
-                    self.buffer_priority.append(all_scores[idx])
+        threshold = np.mean(self.buffer_priority) if len(self.buffer) > 0 else 0.0
+        for idx, all_score in enumerate(all_scores):
+            if all_score > threshold:
+                self.buffer.append(all_states[idx])
+                self.buffer_priority.append(all_scores[idx])
 
         # delete states by novelty
         if len(self.buffer) > self.buffer_capacity:
-            self.buffer_dist = self.get_dist(self.buffer, self.device)
-            strata = np.percentile(self.buffer_dist, np.linspace(0, 100, self.buffer_capacity+1))
+            # self.buffer_dist = self.get_dist(self.buffer, self.device)
+            strata = np.percentile(self.buffer_priority, np.linspace(0, 100, self.buffer_capacity+1))
 
             max_subset = []
             max_subset_value = []
@@ -214,7 +212,7 @@ class goal_proposal():
                 # Loop through each stratum
                 for i in range(self.buffer_capacity):
                     # Calculate the indices of the vectors in the current stratum
-                    indices = np.where((self.buffer_dist >= strata[i]) & (self.buffer_dist < strata[i+1]))[0]
+                    indices = np.where((self.buffer_priority >= strata[i]) & (self.buffer_priority < strata[i+1]))[0]
                     
                     # Randomly sample one vector from the current stratum
                     if indices.shape[0] > 0:
@@ -322,6 +320,49 @@ class goal_proposal():
             box = []
             ramp = []
         return archive
+
+    def update_priority_bydist_ablation(self, origin_buffer, origin_scores, target_buffer, target_scores, device):
+        n = len(origin_buffer)
+        origin_buffer_array = torch.from_numpy(np.array(origin_buffer)).float().to(device)
+        target_buffer_array = torch.from_numpy(np.array(target_buffer)).float().to(device)
+        if self.update_by_allnearest:
+            topk = len(target_buffer)
+        else:
+            topk = self.nearest_k
+        if n // 500 > 5:
+            chunk = n // 500
+            dist = []
+            priority = []
+            for i in range((n // chunk) + 1):
+                b = origin_buffer_array[i * chunk : (i+1) * chunk]
+                d = self._euclidean_dist(b, target_buffer_array)
+                # d = torch.matmul(b, buffer_array.transpose(0,1))
+                dist_nearest_chunk, dist_chunk_index = torch.topk(d, k=topk, dim=1, largest=False)
+                dist_nearest_chunk = dist_nearest_chunk.cpu().numpy()
+                nearest_buffer_priority = np.array(target_scores)[dist_chunk_index.cpu().numpy()]
+                if self.use_Guassian_smoothing:
+                    # delete self dist and index
+                    dist_weight = np.exp(-dist_nearest_chunk) / np.sum(np.exp(-dist_nearest_chunk),axis=1).reshape(-1,1)
+                    priority_chunk = np.sum(dist_weight * nearest_buffer_priority, axis=1)
+                    priority.append(priority_chunk.copy())
+                else:
+                    priority.append(np.mean(nearest_buffer_priority, axis=1))
+            priority = np.concatenate(priority, axis=0)
+        else:
+            d = self._euclidean_dist(origin_buffer_array, target_buffer_array)
+            dist_nearest, dist_index = torch.topk(d, k=topk, dim=1, largest=False)
+            dist_nearest = dist_nearest.cpu().numpy()
+            nearest_buffer_priority = np.array(target_scores)[dist_index.cpu().numpy()]
+            if self.use_Guassian_smoothing:
+                # delete self dist and index
+                dist_weight = np.exp(-dist_nearest) / np.sum(np.exp(-dist_nearest),axis=1).reshape(-1,1)
+                priority = np.sum(dist_weight * nearest_buffer_priority, axis=1)
+            else:
+                priority = np.mean(nearest_buffer_priority, axis=1)
+        
+        # 0.0 : latest variance, 1.0 : past variance, 0.5 : running average
+        real_priority = np.array(origin_scores) * self.priority_lambda + priority * (1.0 - self.priority_lambda)
+        return real_priority.tolist()
 
     def update_priority_bydist(self, origin_buffer, target_buffer, target_scores, device):
         n = len(origin_buffer)
@@ -998,7 +1039,7 @@ class Trainer:
                         self.goals.update_buffer_system(all_tasks_flatten, all_values_flatten)
                         # self.goals.add_NovelandEasy_states_batch(all_tasks_flatten, all_values_flatten, start_tasks, start_values)
                     end1 = time.time()
-                    print('start_tasks', len(start_tasks), 'time', end1-start1)
+                    print('buffer length', len(self.goals.buffer), 'time', end1-start1)
                     # cl, send new distribution
                     self.send_reset_task()
 
