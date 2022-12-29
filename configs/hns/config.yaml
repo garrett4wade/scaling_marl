@@ -4,7 +4,7 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: chenjy
-experiment_name: ZACL_unifboxramp
+experiment_name: ZACL_unifboxramp_debug
 # experiment_name: debug
 benchmark: false
 cuda: true
@@ -119,7 +119,7 @@ no_value_active_masks: true
 no_policy_active_masks: true
 
 # setup configs, use absolute dir
-cwd: "/home/jiayu-ch15/scaling_marl"
+cwd: "/home/yuchao/scaling_marl"
 trainer_dir: "run_learner_node.py"
 worker_dir: "run_worker_node_on_smac.py"
 monitor_dir: "run_monitor.py"
