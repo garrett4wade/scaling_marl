@@ -788,6 +788,7 @@ class Trainer:
                     all_values_flatten = all_values.reshape(-1).tolist()
                     start_tasks = all_tasks[0].tolist()
                     start_values = all_values[0].tolist()
+                    start1 = time.time()
                     self.goals.update_buffer_system(all_tasks_flatten, all_values_flatten)
                     end1 = time.time()
                     print('buffer length', len(self.goals.buffer), 'time', end1-start1)
@@ -949,7 +950,7 @@ class Trainer:
 
     def restore(self):
         """Restore policy's networks from a saved model."""
-        self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model_7200.pt'))
+        self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model_25000.pt'))
 
     def report(self, infos):
         if not infos or self.replicate_rank != 0:
