@@ -4,12 +4,12 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: chenjy
-experiment_name: unif_unifboxramp_load77800
+experiment_name: unif_unifboxramp_load77800_add42400_add82200
 # experiment_name: debug
 benchmark: false
 cuda: true
 cuda_deterministic: true
-seed: 3
+seed: 4
 no_summary: false
 use_wandb: true
 use_eval: false
@@ -21,7 +21,7 @@ num_critic: 1
 num_env_steps: 200.0e+9
 train_for_env_steps: 200.0e+9
 train_for_seconds: 10000000000000000
-model_dir: '/home/yuchao/scaling_marl/models/HideAndSeek/rmappo/unif_unifboxramp/policy_0'
+model_dir: '/home/yuchao/scaling_marl/models/HideAndSeek/rmappo/unif_unifboxramp_load77800_add42400/policy_0'
 save_dir: './models'
 summary_dir: './logs'
 
