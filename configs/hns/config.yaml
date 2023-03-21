@@ -9,7 +9,7 @@ experiment_name: ZACL_icml_reuse4
 benchmark: false
 cuda: true
 cuda_deterministic: true
-seed: 1
+seed: 2
 no_summary: false
 use_wandb: true
 use_eval: false

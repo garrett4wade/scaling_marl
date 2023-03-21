@@ -119,10 +119,14 @@ class goal_proposal():
         self.buffer += all_states
         self.buffer_priority += all_scores
 
+        # to array
+        self.buffer_priority = np.array(self.buffer_priority)
+
         # delete states by novelty
+        start1 = time.time()
         if len(self.buffer) > self.buffer_capacity:
-            self.buffer_dist = self.get_dist(self.buffer, self.device)
-            strata = np.percentile(self.buffer_dist, np.linspace(0, 100, self.buffer_capacity+1))
+            # self.buffer_dist = self.get_dist(self.buffer, self.device)
+            strata = np.percentile(self.buffer_priority, np.linspace(0, 100, self.buffer_capacity+1))
 
             max_subset = []
             max_subset_value = []
@@ -135,7 +139,7 @@ class goal_proposal():
                 # Loop through each stratum
                 for i in range(self.buffer_capacity):
                     # Calculate the indices of the vectors in the current stratum
-                    indices = np.where((self.buffer_dist >= strata[i]) & (self.buffer_dist < strata[i+1]))[0]
+                    indices = np.where((self.buffer_priority >= strata[i]) & (self.buffer_priority < strata[i+1]))[0]
                     
                     # Randomly sample one vector from the current stratum
                     if indices.shape[0] > 0:
@@ -155,6 +159,8 @@ class goal_proposal():
             self.buffer = copy.deepcopy(max_subset)
             self.buffer_priority = copy.deepcopy(max_subset_value)
 
+        end1 = time.time()
+        print('delete time', end1 - start1)
         self.buffer = [np.array(state, dtype=int) for state in self.buffer]
 
     def uniform_from_buffer(self, buffer, starts_length):
