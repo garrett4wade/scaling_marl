@@ -15,6 +15,7 @@ import torch.distributed as dist
 from algorithms.registries import ALGORITHM_SUMMARY_KEYS
 import copy
 from pathlib import Path
+from dgl.geometry import farthest_point_sampler
 
 class goal_proposal_debug():
     def __init__(self):
@@ -47,8 +48,8 @@ class goal_proposal_debug():
 class goal_proposal():
     def __init__(self, device='cuda:0'):
         self.alpha = 3.0
-        self.buffer_capacity = 10000
-        self.proposal_batch = 10000
+        self.buffer_capacity = 2000
+        self.proposal_batch = 2000
         # active: restart_p, easy: restart_easy, unif: 1-restart_p-restart_easy
         self.restart_p = 0.7
         self.buffer = [] # store restart states
@@ -102,6 +103,35 @@ class goal_proposal():
             # starts += self.uniform_sampling(self.proposal_batch - num_restart)
             unif_start_idx = num_restart
         return starts, unif_start_idx
+
+    def update_buffer_oracle(self, states, scores):
+        # states : list, scores : list, returns : dict, {role: list}
+        all_states = states.copy()
+        all_scores = scores.copy()
+             
+        # delete illegal states
+        for state_id in reversed(range(len(all_states))):
+            if self.illegal_task(all_states[state_id]):
+                del all_states[state_id]
+                del all_scores[state_id]
+
+        start1 = time.time()
+        if len(all_states) > self.buffer_capacity:
+            # delete states by novelty
+            all_states = torch.tensor(np.array([all_states])).to(self.device)
+            sample_idx = farthest_point_sampler(all_states, self.buffer_capacity).cpu().numpy()[0]
+            self.buffer = np.array(all_states.cpu())[0, sample_idx]
+            # all_states = torch.tensor(np.array([all_states]))
+            # sample_idx = farthest_point_sampler(all_states, self.buffer_capacity).numpy()[0]
+            # self.buffer = np.array(all_states)[0, sample_idx]
+            self.buffer_priority = np.array(all_scores)[sample_idx]
+        else:
+            self.buffer = np.array(all_states)
+            self.buffer_priority = np.array(all_scores)
+
+        end1 = time.time()
+        print('delete all time', end1 - start1)
+        self.buffer = [np.array(state, dtype=int) for state in self.buffer]
 
     def update_buffer_system(self, states, scores):
         # states : list, scores : list, returns : dict, {role: list}
@@ -795,7 +825,7 @@ class Trainer:
                     start_tasks = all_tasks[0].tolist()
                     start_values = all_values[0].tolist()
                     start1 = time.time()
-                    self.goals.update_buffer_system(all_tasks_flatten, all_values_flatten)
+                    self.goals.update_buffer_oracle(all_tasks_flatten, all_values_flatten)
                     end1 = time.time()
                     print('buffer length', len(self.goals.buffer), 'time', end1-start1)
                     # cl, send new distribution
