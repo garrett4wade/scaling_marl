@@ -19,7 +19,10 @@ class PreparationPhase(gym.Wrapper):
         self.observation_space = update_obs_space(self, {'prep_obs': [self.n_agents, 1]})
 
     def reset(self):
-        self.step_counter = 0
+        if 'step_counter' in self.env.metadata:
+            self.step_counter = self.env.metadata['step_counter']
+        else:
+            self.step_counter = 0
         self.in_prep_phase = True
         return self.observation(self.env.reset())
 

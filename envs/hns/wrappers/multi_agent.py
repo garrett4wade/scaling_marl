@@ -179,6 +179,8 @@ class SelectKeysWrapper(gym.ObservationWrapper):
                 del self.env.metadata['set_box_state']
             if 'set_ramp_state' in self.env.metadata:
                 del self.env.metadata['set_ramp_state']
+            if 'step_counter' in self.env.metadata:
+                del self.env.metadata['step_counter']
             # if 'set_door_state' in self.env.metadata:
             #     del self.env.metadata['set_door_state']
             observation = self.env.reset()
@@ -191,61 +193,9 @@ class SelectKeysWrapper(gym.ObservationWrapper):
                 self.env.metadata['set_ramp_state'] = start[self.n_agents * 2 + self.n_boxes * 2 : self.n_agents * 2 + self.n_boxes * 2 + self.n_ramps * 2].reshape(-1,2).astype(np.int16)
             
             # self.env.metadata['set_door_state'] = start[-2:].reshape(-1,2).astype(np.int16)
-
+            self.env.metadata['step_counter'] = start[-1] * (self.prep_time + 1e-5)
             observation = self.env.reset()
-        
+
         obs = self.observation(observation)
 
         return obs
-    
-    # def step(self, action):
-    #     observation, rew, done, info = self.env.step(action)
-
-    #     obs = self.observation(observation)
-
-    #     task = []
-    #     for i in range(self.n_agents):
-    #         task.append(self.env.metadata[f'agent{i}_pos'])
-    #     for i in range(self.n_boxes):
-    #         task.append(self.env.metadata[f'box{i}_pos'])
-    #     for i in range(self.n_ramps):
-    #         task.append(self.env.metadata[f'ramp{i}_pos'])
-    #     task.append(self.env.metadata['doors'].reshape(-1))
-    #     obs['task'] = np.concatenate(task)
-
-    #     return obs, rew, done, info
-
-# class GetStateWrapper(gym.ObservationWrapper):
-#     def __init__(self, env):
-#         super().__init__(env)
-#         self.observation = self.env.observation
-    
-#     def reset(self, start=None):
-#         if start is None:
-#             observation = self.env.reset()
-#         else:
-#             observation = self.env.reset(start)
-#         obs = self.observation(observation)
-#         task = []
-#         for i in range(self.n_agents):
-#             task.append(self.env.metadata[f'agent{i}_initpos'])
-#         for i in range(self.n_boxes):
-#             task.append(self.env.metadata[f'box{i}_initpos'])
-#         for i in range(self.n_ramps):
-#             task.append(self.env.metadata[f'ramp{i}_initpos'])
-#         task.append(self.env.metadata['doors'])
-#         obs['task'] = np.concatenate(task)
-#         return obs
-    
-#     def step(self, action):
-#         obs, rew, done, info = self.env.step(action)
-#         task = []
-#         for i in range(self.n_agents):
-#             task.append(self.env.metadata[f'agent{i}_pos'])
-#         for i in range(self.n_boxes):
-#             task.append(self.env.metadata[f'box{i}_pos'])
-#         for i in range(self.n_ramps):
-#             task.append(self.env.metadata[f'ramp{i}_pos'])
-#         task.append(self.env.metadata['doors'])
-#         obs['task'] = np.concatenate(task)
-#         return obs, rew, done, info

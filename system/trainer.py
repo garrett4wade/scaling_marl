@@ -99,7 +99,7 @@ class goal_proposal():
             unif_start_idx = num_restart
         return starts, unif_start_idx
 
-    def update_buffer_oracle(self, states, scores):
+    def update_buffer(self, states, scores):
         # states : list, scores : list, returns : dict, {role: list}
         all_states = states.copy()
         all_scores = scores.copy()
@@ -123,7 +123,7 @@ class goal_proposal():
 
         end1 = time.time()
         print('delete all time', end1 - start1)
-        self.buffer = [np.array(state, dtype=int) for state in self.buffer]
+        self.buffer = [np.array(state) for state in self.buffer]
 
     def uniform_from_buffer(self, buffer, starts_length):
         sample_length = [starts_length // 2, starts_length - starts_length // 2]
@@ -184,6 +184,7 @@ class goal_proposal():
                 fp.write(str(np.array(line).reshape(-1))+'\n')
 
     def illegal_task(self, task):
+        # task [hider + seeker + box + ramp + prep_obs]
         def in_quadrant(pos, obj_size):
             if pos[0] >= self.grid_size // 2 and pos[0] <= self.grid_size - obj_size - 1:
                 if pos[1] >= 1 and pos[1] <= self.grid_size // 2 - obj_size - 1:
@@ -207,6 +208,10 @@ class goal_proposal():
                     return True
             return False
 
+        # prep_obs: < 1 in prep_phase and >=1 in other_phase
+        prep_obs = task[-1]
+
+        # hider : outside or inside
         hider_pos = task[:self.num_hiders * 2]
         for hider_id in range(self.num_hiders):
             if in_map(hider_pos[hider_id * 2 : (hider_id + 1) * 2], self.agent_size):
@@ -214,9 +219,11 @@ class goal_proposal():
             else:
                 return True
 
+        # seeker : outside in prep_phase, outside or inside in other_phase
         seeker_pos = task[self.num_hiders * 2: self.num_hiders * 2 + self.num_seekers * 2]
         for seeker_id in range(self.num_seekers):
-            if outside_quadrant(seeker_pos[seeker_id * 2 : (seeker_id + 1) * 2], self.agent_size):
+            flag = outside_quadrant(seeker_pos[seeker_id * 2 : (seeker_id + 1) * 2], self.agent_size) if prep_obs < 1 else in_map(seeker_pos[seeker_id * 2 : (seeker_id + 1) * 2], self.agent_size)
+            if flag:
                 continue
             else:
                 return True
@@ -605,7 +612,7 @@ class Trainer:
                     start_tasks = all_tasks[0].tolist()
                     start_values = all_values[0].tolist()
                     start1 = time.time()
-                    self.goals.update_buffer_oracle(all_tasks_flatten, all_values_flatten)
+                    self.goals.update_buffer(all_tasks_flatten, all_values_flatten)
                     end1 = time.time()
                     print('buffer length', len(self.goals.buffer), 'time', end1-start1)
                     # cl, send new distribution
