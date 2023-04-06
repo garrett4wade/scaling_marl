@@ -4,8 +4,8 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: chenjy
-experiment_name: ZACL_icml_reuse4_buffer2000_newupdaterule
-# experiment_name: debug
+# experiment_name: ZACL_icml_reuse4_buffer2000_newupdaterule
+experiment_name: debug
 benchmark: false
 cuda: true
 cuda_deterministic: true

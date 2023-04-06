@@ -47,7 +47,7 @@ class goal_proposal_debug():
 
 class goal_proposal():
     def __init__(self, device='cuda:0'):
-        self.alpha = 3.0
+        self.alpha = 1.0
         self.buffer_capacity = 2000
         self.proposal_batch = 2000
         # active: restart_p, easy: restart_easy, unif: 1-restart_p-restart_easy
@@ -56,12 +56,7 @@ class goal_proposal():
         self.buffer_priority = []# store the priority of restart states, means value errors
         self.buffer_dist = [] # for diversified buffer
         self.device = device
-        self.use_diversified = True
-        self.use_smooth_weight = True
-        self.use_Guassian_smoothing = True
-        self.use_Guassian_diversified = True
         self.grid_size = 30
-        self.update_by_allnearest = True
         self.nearest_k = 5
         self.priority_lambda = 0.0
     
@@ -121,9 +116,6 @@ class goal_proposal():
             all_states = torch.tensor(np.array([all_states])).to(self.device)
             sample_idx = farthest_point_sampler(all_states, self.buffer_capacity).cpu().numpy()[0]
             self.buffer = np.array(all_states.cpu())[0, sample_idx]
-            # all_states = torch.tensor(np.array([all_states]))
-            # sample_idx = farthest_point_sampler(all_states, self.buffer_capacity).numpy()[0]
-            # self.buffer = np.array(all_states)[0, sample_idx]
             self.buffer_priority = np.array(all_scores)[sample_idx]
         else:
             self.buffer = np.array(all_states)
@@ -131,66 +123,6 @@ class goal_proposal():
 
         end1 = time.time()
         print('delete all time', end1 - start1)
-        self.buffer = [np.array(state, dtype=int) for state in self.buffer]
-
-    def update_buffer_system(self, states, scores):
-        # states : list, scores : list, returns : dict, {role: list}
-        all_states = states.copy()
-        all_scores = scores.copy()
-  
-        # delete illegal states
-        for state_id in reversed(range(len(all_states))):
-            if self.illegal_task(all_states[state_id]):
-                del all_states[state_id]
-                del all_scores[state_id]
-
-        self.buffer = []
-        self.buffer_priority = []
-        self.buffer += all_states
-        self.buffer_priority += all_scores
-
-        # to array
-        self.buffer_priority = np.array(self.buffer_priority)
-
-        # delete states by novelty
-        start1 = time.time()
-        if len(self.buffer) > self.buffer_capacity:
-            # self.buffer_dist = self.get_dist(self.buffer, self.device)
-            strata = np.percentile(self.buffer_priority, np.linspace(0, 100, self.buffer_capacity+1))
-
-            max_subset = []
-            max_subset_value = []
-            max_subset_dist = 0.0
-            sample_time = 0
-            while sample_time <= 3:
-                # Initialize the subset
-                subset = []
-                subset_value = []
-                # Loop through each stratum
-                for i in range(self.buffer_capacity):
-                    # Calculate the indices of the vectors in the current stratum
-                    indices = np.where((self.buffer_priority >= strata[i]) & (self.buffer_priority < strata[i+1]))[0]
-                    
-                    # Randomly sample one vector from the current stratum
-                    if indices.shape[0] > 0:
-                        # if not empty
-                        index = np.random.choice(indices, 1)[0]
-                        
-                        # Add the vector to the subset
-                        subset.append(self.buffer[index])
-                        subset_value.append(self.buffer_priority[index])
-                subset_dist = np.mean(self.get_dist(subset, self.device))
-                if subset_dist > max_subset_dist:
-                    max_subset = copy.deepcopy(subset)
-                    max_subset_value = copy.deepcopy(subset_value)
-                    max_subset_dist = subset_dist
-                sample_time += 1
-            print('max_subset_dist', max_subset_dist)
-            self.buffer = copy.deepcopy(max_subset)
-            self.buffer_priority = copy.deepcopy(max_subset_value)
-
-        end1 = time.time()
-        print('delete time', end1 - start1)
         self.buffer = [np.array(state, dtype=int) for state in self.buffer]
 
     def uniform_from_buffer(self, buffer, starts_length):
@@ -216,158 +148,6 @@ class goal_proposal():
         for index in self.choose_index:
             starts.append(self.buffer[index])
         return starts, self.choose_index
-
-    def rank_sampling(self, buffer, starts_length):
-        self.choose_index = [i + len(buffer) - starts_length for i in range(starts_length)]
-        starts = self.buffer[(len(buffer) - starts_length):]
-        return starts, self.choose_index
-
-    def uniform_sampling(self, starts_length):
-        '''
-            hider and box quadrant placement, seeker and ramp outside placement
-            quadrant_pos = {'x':[self.grid_size // 2, self.grid_size], 'y': [0, self.grid_size // 2] }
-            agent size : 2, box_size 3, ramp_size 3
-            timestep: current_step = 0
-        '''
-        hider = []
-        seeker = []
-        box = []
-        ramp = []
-        archive = []
-        agent_size = 2
-        box_size = 3
-        ramp_size = 3
-        timestep = 0
-        for j in range(starts_length):
-            for i in range(self.num_hiders):
-                hider_pos = np.array([np.random.randint(1, self.grid_size - agent_size - 1),
-                                np.random.randint(1, self.grid_size - agent_size - 1)])
-                hider.append(copy.deepcopy(hider_pos))
-            for i in range(self.num_seekers):
-                seeker_poses = [
-                    np.array([np.random.randint(1,self.grid_size // 2 - agent_size - 1), np.random.randint(1,self.grid_size // 2 - agent_size - 1)]),
-                    np.array([np.random.randint(1,self.grid_size // 2 - agent_size - 1), np.random.randint(self.grid_size // 2, self.grid_size - agent_size - 1)]),
-                    np.array([np.random.randint(self.grid_size // 2, self.grid_size - agent_size - 1),np.random.randint(self.grid_size // 2, self.grid_size - agent_size - 1)])
-                    ]
-                seeker_pos = seeker_poses[np.random.randint(0, 3)]
-                seeker.append(copy.deepcopy(seeker_pos))
-            for i in range(self.num_boxes):
-                box_pos = np.array([np.random.randint(self.grid_size // 2, self.grid_size - box_size - 1), np.random.randint(1,self.grid_size // 2 - box_size - 1)])
-                box.append(copy.deepcopy(box_pos))
-
-            for i in range(self.num_ramps):
-                ramp_poses = [
-                    np.array([np.random.randint(1,self.grid_size // 2 - ramp_size), np.random.randint(1, self.grid_size // 2 - ramp_size)]),
-                    np.array([np.random.randint(1,self.grid_size // 2 - ramp_size), np.random.randint(self.grid_size // 2, self.grid_size - ramp_size)]),
-                    np.array([np.random.randint(self.grid_size // 2, self.grid_size - ramp_size),np.random.randint(self.grid_size // 2, self.grid_size - ramp_size)])
-                    ]
-                ramp_pos = ramp_poses[np.random.randint(0, 3)]
-                ramp.append(copy.deepcopy(ramp_pos))
-
-            # for i in range(self.num_ramps):
-            #     ramp_pos = np.array([np.random.randint(1, self.grid_size - ramp_size - 1),
-            #                     np.random.randint(1, self.grid_size - ramp_size - 1)])
-            #     ramp.append(copy.deepcopy(ramp_pos))
-            
-            # door_poses = [np.array([15, np.random.randint(1,14)]),np.array([np.random.randint(15,28),15])]
-            # door_pos = [door_poses[np.random.randint(0,2)]]
-
-            # archive.append((np.concatenate(hider + seeker + box + ramp + door_pos)).astype(int))
-            archive.append((np.concatenate(hider + seeker + box + ramp)).astype(int))
-            hider = []
-            seeker = []
-            box = []
-            ramp = []
-        return archive
-
-    def update_priority_bydist_ablation(self, origin_buffer, origin_scores, target_buffer, target_scores, device):
-        n = len(origin_buffer)
-        origin_buffer_array = torch.from_numpy(np.array(origin_buffer)).float().to(device)
-        target_buffer_array = torch.from_numpy(np.array(target_buffer)).float().to(device)
-        if self.update_by_allnearest:
-            topk = len(target_buffer)
-        else:
-            topk = self.nearest_k
-        if n // 500 > 5:
-            chunk = n // 500
-            dist = []
-            priority = []
-            for i in range((n // chunk) + 1):
-                b = origin_buffer_array[i * chunk : (i+1) * chunk]
-                d = self._euclidean_dist(b, target_buffer_array)
-                # d = torch.matmul(b, buffer_array.transpose(0,1))
-                dist_nearest_chunk, dist_chunk_index = torch.topk(d, k=topk, dim=1, largest=False)
-                dist_nearest_chunk = dist_nearest_chunk.cpu().numpy()
-                nearest_buffer_priority = np.array(target_scores)[dist_chunk_index.cpu().numpy()]
-                if self.use_Guassian_smoothing:
-                    # delete self dist and index
-                    dist_weight = np.exp(-dist_nearest_chunk) / np.sum(np.exp(-dist_nearest_chunk),axis=1).reshape(-1,1)
-                    priority_chunk = np.sum(dist_weight * nearest_buffer_priority, axis=1)
-                    priority.append(priority_chunk.copy())
-                else:
-                    priority.append(np.mean(nearest_buffer_priority, axis=1))
-            priority = np.concatenate(priority, axis=0)
-        else:
-            d = self._euclidean_dist(origin_buffer_array, target_buffer_array)
-            dist_nearest, dist_index = torch.topk(d, k=topk, dim=1, largest=False)
-            dist_nearest = dist_nearest.cpu().numpy()
-            nearest_buffer_priority = np.array(target_scores)[dist_index.cpu().numpy()]
-            if self.use_Guassian_smoothing:
-                # delete self dist and index
-                dist_weight = np.exp(-dist_nearest) / np.sum(np.exp(-dist_nearest),axis=1).reshape(-1,1)
-                priority = np.sum(dist_weight * nearest_buffer_priority, axis=1)
-            else:
-                priority = np.mean(nearest_buffer_priority, axis=1)
-        
-        # 0.0 : latest variance, 1.0 : past variance, 0.5 : running average
-        real_priority = np.array(origin_scores) * self.priority_lambda + priority * (1.0 - self.priority_lambda)
-        return real_priority.tolist()
-
-    def _euclidean_dist(self, x, y):
-        """
-        Args:
-          x: pytorch Variable, with shape [m, d]
-          y: pytorch Variable, with shape [n, d]
-        Returns:
-          dist: pytorch Variable, with shape [m, n]
-        """
- 
-        m, n = x.size(0), y.size(0)
-        xx = torch.pow(x, 2).sum(1, keepdim=True).expand(m, n)
-        yy = torch.pow(y, 2).sum(1, keepdim=True).expand(n, m).t()
-        dist = xx + yy
-        # dist - 2 * x * yT 
-        dist.addmm_(1, -2, x, y.t())
-        dist = dist.clamp(min=1e-12).sqrt()  # for numerical stability
-        return dist
-
-    def buffer_sort(self, list1, *args): # sort by list1, ascending order
-        zipped = zip(list1,*args)
-        sort_zipped = sorted(zipped,key=lambda x:(x[0],np.mean(x[1])))
-        result = zip(*sort_zipped)
-        return [list(x) for x in result]
-
-    def get_dist(self, buffer, device):
-        n = len(buffer)
-        buffer_array = torch.from_numpy(np.array(buffer)).float().to(device)
-        topk = 5
-        if n // 500 > 5:
-            chunk = n // 500
-            dist = []
-            for i in range((n // chunk) + 1):
-                b = buffer_array[i * chunk : (i+1) * chunk]
-                d = self._euclidean_dist(b, buffer_array)
-                # d = torch.matmul(b, buffer_array.transpose(0,1))
-                dist_nearest_chunk, dist_chunk_index = torch.topk(d, k=topk, dim=1, largest=False)
-                dist_nearest_chunk = dist_nearest_chunk.cpu().numpy()
-                dist.append(np.mean(dist_nearest_chunk,axis=1))
-            dist = np.concatenate(dist, axis=0)
-        else:
-            d = self._euclidean_dist(buffer_array, buffer_array)
-            dist_nearest, dist_index = torch.topk(d, k=topk, dim=1, largest=False)
-            dist_nearest = dist_nearest.cpu().numpy()
-            dist = np.mean(dist_nearest,axis=1)
-        return dist
 
     def load_node(self, mode_path, load_episode):
         data_dir = mode_path + '/starts/starts_' + str(load_episode)
