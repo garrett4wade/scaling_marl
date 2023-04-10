@@ -4,7 +4,7 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: chenjy
-# experiment_name: ZACL_icml_reuse4_buffer2000_newupdaterule
+# experiment_name: ZACL_add_prep_obs
 experiment_name: debug
 benchmark: false
 cuda: true
@@ -27,11 +27,11 @@ summary_dir: './logs'
 
 # system parameters
 num_tasks_per_node: 1
-# num_actors: 64
-num_actors: 2
+num_actors: 64
+# num_actors: 2
 actor_group_size: 1
-# envs_per_actor: 20
-envs_per_actor: 2
+envs_per_actor: 20
+# envs_per_actor: 2
 num_policy_workers: 4
 qsize: 5
 min_num_requests: -1
@@ -49,8 +49,8 @@ seg_addrs:  # every worker node has seg_addrs connecting to all learners
 
 num_reanalyzers_per_trainer: 1
 num_value_tracers_per_trainer: 1
-# slots_per_update: 240
-slots_per_update: 80
+slots_per_update: 240
+# slots_per_update: 80
 episode_length: 80
 
 learner_config:
