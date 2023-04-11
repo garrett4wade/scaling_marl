@@ -42,6 +42,10 @@ class ReplayBuffer:
         # storage shape configuration
         self.num_agents = num_agents
         self.episode_length = cfg.episode_length
+        
+        # TODO: reset by config
+        self.num_hiders = 2
+        self.num_seekers = 1
 
         # TODO: support n-step bootstrap
         # self.bootstrap_step = bootstrap_step = cfg.bootstrap_step
@@ -518,7 +522,9 @@ class LearnerBuffer(ReplayBuffer):
         all_tasks = np.concatenate([agents_pos.reshape(T_length,envs_per_slot,-1), box_pos[:,:,0].reshape(T_length,envs_per_slot,-1), \
             ramp_pos[:,:,0].reshape(T_length,envs_per_slot,-1), preb_obs[:,:,0].reshape(T_length,envs_per_slot,-1)], axis=-1)
         
-        values_std = np.std(np.abs(self.storage['values'][slot,:self.episode_length]), axis=-1)
+        hider_values = self.storage['values'][slot,:self.episode_length][:,:,:self.num_hiders]
+        seeker_values = self.storage['values'][slot,:self.episode_length][:,:,self.num_hiders:]
+        values_std = np.std(np.concatenate([hider_values, -seeker_values],axis=-1), axis=-1)
         all_values = values_std.reshape(T_length, envs_per_slot, -1)
         all_values = np.sum(all_values,axis=-1)
 
