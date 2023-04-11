@@ -518,7 +518,7 @@ class LearnerBuffer(ReplayBuffer):
         all_tasks = np.concatenate([agents_pos.reshape(T_length,envs_per_slot,-1), box_pos[:,:,0].reshape(T_length,envs_per_slot,-1), \
             ramp_pos[:,:,0].reshape(T_length,envs_per_slot,-1), preb_obs[:,:,0].reshape(T_length,envs_per_slot,-1)], axis=-1)
         
-        values_std = np.std(self.storage['values'][slot,:self.episode_length], axis=-1)
+        values_std = np.std(np.abs(self.storage['values'][slot,:self.episode_length]), axis=-1)
         all_values = values_std.reshape(T_length, envs_per_slot, -1)
         all_values = np.sum(all_values,axis=-1)
 
