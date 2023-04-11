@@ -48,8 +48,8 @@ class goal_proposal_debug():
 class goal_proposal():
     def __init__(self, device='cuda:0'):
         self.alpha = 1.0
-        self.buffer_capacity = 2000
-        self.proposal_batch = 2000
+        self.buffer_capacity = 10000
+        self.proposal_batch = 10000
         # active: restart_p, easy: restart_easy, unif: 1-restart_p-restart_easy
         self.restart_p = 0.7
         self.buffer = [] # store restart states
