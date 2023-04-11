@@ -302,6 +302,9 @@ class LearnerBuffer(ReplayBuffer):
         self.target_num_slots = self.num_consumers_to_notify = 1
         self.num_slots = cfg.qsize
         self.num_critic = cfg.num_critic
+        # TODO:reset by config
+        self.num_hiders = 2
+        self.num_seekers = 1
 
         # concatenate several slots from workers into a single batch,
         # which will be then sent to GPU for optimziation
@@ -515,13 +518,16 @@ class LearnerBuffer(ReplayBuffer):
         all_tasks = np.concatenate([agents_pos.reshape(T_length,envs_per_slot,-1), box_pos[:,:,0].reshape(T_length,envs_per_slot,-1), \
             ramp_pos[:,:,0].reshape(T_length,envs_per_slot,-1)], axis=-1)
         
-        values_std = np.std(self.storage['values'][slot,:self.episode_length], axis=-1)
-        all_values = values_std.reshape(T_length, envs_per_slot, -1)
-        all_values = np.sum(all_values,axis=-1)
+        # self.storage['values'][slot,:self.episode_length]: [T,  num_agents * self.envs_per_slot, num_critic]
+        all_values = self.storage['values'][slot,:self.episode_length].reshape(T_length, self.envs_per_slot, -1, self.num_critic)
+        # all_values: [T, self.envs_per_slot, num_agents, num_critic]
+        same_values = np.concatenate([all_values[:,:,:self.num_hiders], -all_values[:,:,self.num_hiders:]],axis=2)
+        same_values = same_values.reshape(T_length, self.envs_per_slot, -1)
+        values_std = np.std(same_values, axis=-1)
 
         if self.num_mini_batch == 1:
             # yield output_tensors
-            yield output_tensors, all_tasks, all_values
+            yield output_tensors, all_tasks, values_std
         else:
             rand = torch.randperm(self.batch_size).numpy()
             for i in range(self.num_mini_batch):
