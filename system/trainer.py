@@ -51,7 +51,7 @@ class goal_proposal():
         self.buffer_capacity = 10000
         self.proposal_batch = 10000
         # active: restart_p, easy: restart_easy, unif: 1-restart_p-restart_easy
-        self.restart_p = 0.7
+        self.restart_p = 0.0
         self.buffer = [] # store restart states
         self.buffer_priority = []# store the priority of restart states, means value errors
         self.buffer_dist = [] # for diversified buffer
@@ -773,7 +773,7 @@ class Trainer:
 
     def restore(self):
         """Restore policy's networks from a saved model."""
-        self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model_25000.pt'))
+        self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model_39200.pt'))
 
     def report(self, infos):
         if not infos or self.replicate_rank != 0:
