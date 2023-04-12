@@ -184,6 +184,7 @@ class SelectKeysWrapper(gym.ObservationWrapper):
             # if 'set_door_state' in self.env.metadata:
             #     del self.env.metadata['set_door_state']
             observation = self.env.reset()
+            self.env.metadata['start_timestep'] = self.env.t
         else:
             self.env.metadata['random_reset'] = False
             self.env.metadata['set_agent_state'] = start[0: self.n_agents * 2].reshape(-1,2).astype(np.int16)
@@ -195,7 +196,15 @@ class SelectKeysWrapper(gym.ObservationWrapper):
             # self.env.metadata['set_door_state'] = start[-2:].reshape(-1,2).astype(np.int16)
             self.env.metadata['step_counter'] = start[-1] * (self.prep_time + 1e-5)
             observation = self.env.reset()
+            # reset t =  0 ~ self.prep_time 
+            self.env.t = int(start[-1] * (self.prep_time + 1e-5))
+            self.env.metadata['start_timestep'] = self.env.t
 
         obs = self.observation(observation)
 
         return obs
+
+    def step(self, action):
+        obs, rew, done, info = self.env.step(action)
+        info['start_timestep'] = self.env.metadata['start_timestep']
+        return self.observation(obs), rew, done, info
