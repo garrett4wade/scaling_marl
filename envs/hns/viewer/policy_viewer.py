@@ -5,8 +5,11 @@ import numpy as np
 from operator import itemgetter
 from mujoco_py import const, MjViewer
 from mujoco_worldgen.util.types import store_args
-from ma_policy.util import listdict2dictnp
-
+import sys
+import argparse
+from os.path import abspath, dirname, join
+from mujoco_worldgen.util.envs import examine_env, load_env
+from pyvirtualdisplay.smartdisplay import SmartDisplay
 
 def splitobs(obs, keepdims=True):
     '''
@@ -28,7 +31,7 @@ class PolicyViewer(MjViewer):
         duration - time in seconds to run the policy, run forever if duration=None
     '''
     @store_args
-    def __init__(self, env, policies, display_window=True, seed=None, duration=None):
+    def __init__(self, env, policies, model_dir=None, display_window=False, seed=None, duration=None):
         if seed is None:
             self.seed = env.seed()[0]
         else:
@@ -36,16 +39,23 @@ class PolicyViewer(MjViewer):
             env.seed(seed)
         self.total_rew = 0.0
         self.ob = env.reset()
-        for policy in self.policies:
-            policy.reset()
+        # for policy in self.policies:
+        #     policy.reset()
         assert env.metadata['n_actors'] % len(policies) == 0
         if hasattr(env, "reset_goal"):
             self.goal = env.reset_goal()
         super().__init__(self.env.unwrapped.sim)
         # TO DO: remove circular dependency on viewer object. It looks fishy.
+        logger.info("Initializing virtual display...")
+        display = SmartDisplay()
+        display.start()
+        self.gif = []
+        self.gif_dir = model_dir
         self.env.unwrapped.viewer = self
         if self.render and self.display_window:
             self.env.render()
+            self.gif.append(display.waitgrab())
+            time.sleep(0.02)
 
     def key_callback(self, window, key, scancode, action, mods):
         super().key_callback(window, key, scancode, action, mods)
@@ -61,8 +71,8 @@ class PolicyViewer(MjViewer):
             self.seed = max(self.seed - 1, 0)
             self.env.seed(self.seed)
             self.ob = self.env.reset()
-            for policy in self.policies:
-                policy.reset()
+            # for policy in self.policies:
+            #     policy.reset()
             if hasattr(self.env, "reset_goal"):
                 self.goal = self.env.reset_goal()
             self.update_sim(self.env.unwrapped.sim)
@@ -91,16 +101,19 @@ class PolicyViewer(MjViewer):
 
             if done or env_info.get('discard_episode', False):
                 self.reset_increment()
+                imageio.mimsave(os.path.join(self.gif_dir ,f"episode_{self.n_episodes}.gif"), self.gif, duration=0.1)
 
             if self.display_window:
-                self.add_overlay(const.GRID_TOPRIGHT, "Reset env; (current seed: {})".format(self.seed),
-                                 "N - next / P - previous ")
-                self.add_overlay(const.GRID_TOPRIGHT, "Reward", str(self.total_rew))
-                if hasattr(self.env.unwrapped, "viewer_stats"):
-                    for k, v in self.env.unwrapped.viewer_stats.items():
-                        self.add_overlay(const.GRID_TOPRIGHT, k, str(v))
+                # self.add_overlay(const.GRID_TOPRIGHT, "Reset env; (current seed: {})".format(self.seed),
+                #                  "N - next / P - previous ")
+                # self.add_overlay(const.GRID_TOPRIGHT, "Reward", str(self.total_rew))
+                # if hasattr(self.env.unwrapped, "viewer_stats"):
+                #     for k, v in self.env.unwrapped.viewer_stats.items():
+                #         self.add_overlay(const.GRID_TOPRIGHT, k, str(v))
 
                 self.env.render()
+                self.gif.append(display.waitgrab())
+                time.sleep(0.02)
 
     def reset_increment(self):
         self.total_rew_avg = (self.n_episodes * self.total_rew_avg + self.total_rew) / (self.n_episodes + 1)
@@ -110,8 +123,8 @@ class PolicyViewer(MjViewer):
         self.seed += 1
         self.env.seed(self.seed)
         self.ob = self.env.reset()
-        for policy in self.policies:
-            policy.reset()
+        # for policy in self.policies:
+        #     policy.reset()
         if hasattr(self.env, "reset_goal"):
             self.goal = self.env.reset_goal()
         self.update_sim(self.env.unwrapped.sim)
