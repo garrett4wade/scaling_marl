@@ -189,6 +189,7 @@ class SelectKeysWrapper(gym.ObservationWrapper):
             num_entity = len(start) // 3
             set_states = np.zeros(num_entity * 4)
             set_vel = np.zeros(num_entity * 4)
+            # TODO set time
             for entity_idx in range(num_entity):
                 set_states[entity_idx * 4: (entity_idx + 1) * 4 - 1] = start[entity_idx * 3: (entity_idx + 1) * 3]
 

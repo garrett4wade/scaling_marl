@@ -302,6 +302,9 @@ class LearnerBuffer(ReplayBuffer):
         self.target_num_slots = self.num_consumers_to_notify = 1
         self.num_slots = cfg.qsize
         self.num_critic = cfg.num_critic
+        # TODO: set by config
+        self.num_hiders = 2
+        self.num_seekers = 1
 
         # concatenate several slots from workers into a single batch,
         # which will be then sent to GPU for optimziation
@@ -490,17 +493,21 @@ class LearnerBuffer(ReplayBuffer):
         # get tasks
         # the 3rd axis :  num_agents * self.envs_per_slot
 
-        ramp_pos = self.storage['ramp_obs'][slot, :self.episode_length, :, :, 0:3]
-        box_pos = self.storage['box_obs'][slot, :self.episode_length, :, :, 0:3]
-        agents_pos = self.storage['observation_self'][slot, :self.episode_length, : ,0:3]
+        ramp_pos = np.floor(self.storage['ramp_obs'][slot, :self.episode_length, :, :, 0:2] * 27.5 / 6.0)
+        box_pos = np.floor(self.storage['box_obs'][slot, :self.episode_length, :, :, 0:2] * 27.5 / 6.0)
+        agents_pos = np.floor(self.storage['observation_self'][slot, :self.episode_length, : ,0:2] * 4.75)
+        # door_pos = np.floor((self.storage['observation_self'][slot, :self.episode_length, : ,-6:-4] - 3.1) / 0.2 + 15.0)
+        preb_obs = self.storage['observation_self'][slot, :self.episode_length, : ,-1]
 
         ramp_shape = ramp_pos.shape
         box_shape = box_pos.shape
         agents_shape = agents_pos.shape
+        preb_shape = preb_obs.shape
         # door_shape = door_pos.shape
         ramp_pos = ramp_pos.reshape(ramp_shape[0], self.envs_per_slot, -1, *ramp_shape[2:])
         box_pos = box_pos.reshape(box_shape[0], self.envs_per_slot, -1, *box_shape[2:])
         agents_pos = agents_pos.reshape(agents_shape[0], self.envs_per_slot, -1, *agents_shape[2:])
+        preb_obs = preb_obs.reshape(preb_shape[0], self.envs_per_slot, -1, *preb_shape[2:])
 
         # door_pos = door_pos.reshape(door_shape[0], self.envs_per_slot, -1, *door_shape[2:])
         # ramp, [T, envs_per_slot, num_agents, num_ramps, 2]
@@ -512,15 +519,18 @@ class LearnerBuffer(ReplayBuffer):
         # all_tasks = np.concatenate([agents_pos.reshape(T_length,envs_per_slot,-1), box_pos[:,:,0].reshape(T_length,envs_per_slot,-1), \
         #     ramp_pos[:,:,0].reshape(T_length,envs_per_slot,-1), door_pos[:,:,0].reshape(T_length,envs_per_slot,-1)], axis=-1)
         all_tasks = np.concatenate([agents_pos.reshape(T_length,envs_per_slot,-1), box_pos[:,:,0].reshape(T_length,envs_per_slot,-1), \
-            ramp_pos[:,:,0].reshape(T_length,envs_per_slot,-1)], axis=-1)
+            ramp_pos[:,:,0].reshape(T_length,envs_per_slot,-1), preb_obs[:,:,0].reshape(T_length,envs_per_slot,-1)], axis=-1)
         
-        values_std = np.std(self.storage['values'][slot,:self.episode_length], axis=-1)
-        all_values = values_std.reshape(T_length, envs_per_slot, -1)
-        all_values = np.sum(all_values,axis=-1)
+        # self.storage['values'][slot,:self.episode_length]: [T,  num_agents * self.envs_per_slot, num_critic]
+        all_values = self.storage['values'][slot,:self.episode_length].reshape(T_length, self.envs_per_slot, -1, self.num_critic)
+        # all_values: [T, self.envs_per_slot, num_agents, num_critic]
+        same_values = np.concatenate([all_values[:,:,:self.num_hiders], -all_values[:,:,self.num_hiders:]],axis=2)
+        same_values = same_values.reshape(T_length, self.envs_per_slot, -1)
+        values_std = np.std(same_values, axis=-1)
 
         if self.num_mini_batch == 1:
             # yield output_tensors
-            yield output_tensors, all_tasks, all_values
+            yield output_tensors, all_tasks, values_std
         else:
             rand = torch.randperm(self.batch_size).numpy()
             for i in range(self.num_mini_batch):
