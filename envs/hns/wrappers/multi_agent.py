@@ -184,6 +184,7 @@ class SelectKeysWrapper(gym.ObservationWrapper):
             self.env.metadata['random_reset'] = True
             self.env.metadata['reset_task'] = None
             observation = self.env.reset()
+            self.env.metadata['start_timestep'] = self.env.t
         else:
             self.env.metadata['random_reset'] = False
             num_entity = len(start) // 3
@@ -196,8 +197,17 @@ class SelectKeysWrapper(gym.ObservationWrapper):
             mujoco_states = MjSimState(time=0.0, qpos=set_states,qvel=set_vel, act=None, udd_state={})
             self.env.metadata['reset_task'] = mujoco_states
             # observation = self.env.reset_to_state(mujoco_states)
+            self.env.metadata['step_counter'] = start[-1] * (self.prep_time + 1e-5)
             observation = self.env.reset()
+            # reset t =  0 ~ self.prep_time 
+            self.env.t = int(start[-1] * (self.prep_time + 1e-5))
+            self.env.metadata['start_timestep'] = self.env.t
         
         obs = self.observation(observation)
 
         return obs
+
+    def step(self, action):
+        obs, rew, done, info = self.env.step(action)
+        info['start_timestep'] = self.env.metadata['start_timestep']
+        return self.observation(obs), rew, done, info

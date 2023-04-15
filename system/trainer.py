@@ -15,6 +15,7 @@ import torch.distributed as dist
 from algorithms.registries import ALGORITHM_SUMMARY_KEYS
 import copy
 from pathlib import Path
+from dgl.geometry import farthest_point_sampler
 
 np.set_printoptions(linewidth=1000)
 
@@ -632,9 +633,9 @@ class Trainer:
                     start_tasks = all_tasks[0].tolist()
                     start_values = all_values[0].tolist()
                     start1 = time.time()
-                    self.goals.update_buffer_system(all_tasks_flatten, all_values_flatten)
+                    self.goals.update_buffer(all_tasks_flatten, all_values_flatten)
                     end1 = time.time()
-                    print('buffer length', len(self.goals.buffer), 'all_tasks_flatten', len(all_tasks_flatten), 'time', end1-start1)
+                    print('buffer length', len(self.goals.buffer), 'time', end1-start1)
                     # cl, send new distribution
                     self.send_reset_task()
 
