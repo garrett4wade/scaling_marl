@@ -493,35 +493,60 @@ class LearnerBuffer(ReplayBuffer):
         # get tasks
         # the 3rd axis :  num_agents * self.envs_per_slot
 
-        ramp_pos = np.floor(self.storage['ramp_obs'][slot, :self.episode_length, :, :, 0:2] * 27.5 / 6.0)
-        box_pos = np.floor(self.storage['box_obs'][slot, :self.episode_length, :, :, 0:2] * 27.5 / 6.0)
-        agents_pos = np.floor(self.storage['observation_self'][slot, :self.episode_length, : ,0:2] * 4.75)
-        # door_pos = np.floor((self.storage['observation_self'][slot, :self.episode_length, : ,-6:-4] - 3.1) / 0.2 + 15.0)
-        preb_obs = self.storage['observation_self'][slot, :self.episode_length, : ,-1]
+        ramp_pos = self.storage['ramp_obs'][slot, :self.episode_length]
+        box_pos = self.storage['box_obs'][slot, :self.episode_length]
+        agents_pos = self.storage['observation_self'][slot, :self.episode_length]
+
+        flatten_ramp_shape = ramp_pos.shape
+        flatten_box_shape = box_pos.shape
+        flatten_agents_shape = agents_pos.shape
+        ramp_pos = ramp_pos.reshape(flatten_ramp_shape[0], self.envs_per_slot, -1, *flatten_ramp_shape[2:])
+        box_pos = box_pos.reshape(flatten_box_shape[0], self.envs_per_slot, -1, *flatten_box_shape[2:])
+        agents_pos = agents_pos.reshape(flatten_agents_shape[0], self.envs_per_slot, -1, *flatten_agents_shape[2:])
+        # preb_obs = preb_obs.reshape(preb_shape[0], self.envs_per_slot, -1, *preb_shape[2:])
+        # door_pos = door_pos.reshape(door_shape[0], self.envs_per_slot, -1, *door_shape[2:])
+        
+        # ramp, [T, envs_per_slot, num_agents, num_ramps, dim]
+        # box, [T, envs_per_slot, num_agents, num_boxes, dim]
+        # agent, [T, envs_per_slot, num_agents, dim]
 
         ramp_shape = ramp_pos.shape
         box_shape = box_pos.shape
         agents_shape = agents_pos.shape
-        preb_shape = preb_obs.shape
-        # door_shape = door_pos.shape
-        ramp_pos = ramp_pos.reshape(ramp_shape[0], self.envs_per_slot, -1, *ramp_shape[2:])
-        box_pos = box_pos.reshape(box_shape[0], self.envs_per_slot, -1, *box_shape[2:])
-        agents_pos = agents_pos.reshape(agents_shape[0], self.envs_per_slot, -1, *agents_shape[2:])
-        preb_obs = preb_obs.reshape(preb_shape[0], self.envs_per_slot, -1, *preb_shape[2:])
 
-        # door_pos = door_pos.reshape(door_shape[0], self.envs_per_slot, -1, *door_shape[2:])
-        # ramp, [T, envs_per_slot, num_agents, num_ramps, 2]
-        # agent, [T, envs_per_slot, num_agents, 2]
+        # agent
+        agent_qpos = agents_pos[:,:,:,0:4].reshape(agents_shape[0], agents_shape[1], -1)
+        agent_qvel = agents_pos[:,:,:,4:8].reshape(agents_shape[0], agents_shape[1], -1)
+        prep_time = agents_pos[:,:,0,-7][:,:,None]
+        door = (agents_pos[:,:,0,-6:-4] - 3.1) / 0.2 + 15.0
+
+        # box
+        raw_box_obs = box_pos[:,:,0] # [T, envs_per_slot, num_boxes, dim]
+        box_qpos = raw_box_obs[:,:,:,:3] # [T, envs_per_slot, num_boxes, 3]
+        # angle : cos, sin
+        angle_box = raw_box_obs[:,:,:, 3:5] # [T, envs_per_slot, num_boxes, 2]
+        # only one box
+        box_angle = (np.arccos(angle_box[:,:,:,0]) * (angle_box[:,:,:,1] > 0))[:,:,:,None]
+        box_qpos = np.concatenate([box_qpos, box_angle],axis=3).reshape(box_shape[0], box_shape[1], -1) # [T, envs_per_slot, num_boxes * 4]
+        box_qvel = raw_box_obs[:,:,:,5:9].reshape(box_shape[0], box_shape[1], -1) # [T, envs_per_slot, num_boxes * 4]
+        # get lock obs: you lock, team lock and obj lock
+        lock_box_action = box_pos[:,:,:,:,-3].reshape(box_shape[0], box_shape[1], -1) # [T, envs_per_slot, num_agents]
+        
+        # ramp
+        raw_ramp_obs = ramp_pos[:,:,0]
+        ramp_qpos = raw_ramp_obs[:,:,:,:3]
+        angle_ramp = raw_ramp_obs[:,:,:, 3:5]
+        # only one box
+        ramp_angle = (np.arccos(angle_ramp[:,:,:,0]) * (angle_ramp[:,:,:,1] > 0))[:,:,:,None]
+        ramp_qpos = np.concatenate([ramp_qpos, ramp_angle],axis=3).reshape(ramp_shape[0], ramp_shape[1], -1)
+        ramp_qvel = raw_ramp_obs[:,:,:,5:9].reshape(ramp_shape[0], ramp_shape[1], -1)
+        lock_ramp_action = ramp_pos[:,:,:,:,-3].reshape(ramp_shape[0], ramp_shape[1], -1)
 
         # get values
         T_length = agents_pos.shape[0]
         envs_per_slot = agents_pos.shape[1]
-        # all_tasks = np.concatenate([agents_pos.reshape(T_length,envs_per_slot,-1), box_pos[:,:,0].reshape(T_length,envs_per_slot,-1), \
-        #     ramp_pos[:,:,0].reshape(T_length,envs_per_slot,-1), door_pos[:,:,0].reshape(T_length,envs_per_slot,-1)], axis=-1)
-        all_tasks = np.concatenate([agents_pos.reshape(T_length,envs_per_slot,-1), box_pos[:,:,0].reshape(T_length,envs_per_slot,-1), \
-            ramp_pos[:,:,0].reshape(T_length,envs_per_slot,-1), preb_obs[:,:,0].reshape(T_length,envs_per_slot,-1)], axis=-1)
+        all_tasks = np.concatenate([agent_qpos, box_qpos, ramp_qpos, agent_qvel, box_qvel, ramp_qvel, lock_box_action, lock_ramp_action, prep_time, door], axis=-1)
         
-        # self.storage['values'][slot,:self.episode_length]: [T,  num_agents * self.envs_per_slot, num_critic]
         all_values = self.storage['values'][slot,:self.episode_length].reshape(T_length, self.envs_per_slot, -1, self.num_critic)
         # all_values: [T, self.envs_per_slot, num_agents, num_critic]
         same_values = np.concatenate([all_values[:,:,:self.num_hiders], -all_values[:,:,self.num_hiders:]],axis=2)

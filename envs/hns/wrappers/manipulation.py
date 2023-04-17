@@ -271,6 +271,16 @@ class LockObjWrapper(gym.Wrapper):
         self.obj_locked = np.zeros((self.n_obj, ), dtype=bool)
         self.which_locked = np.zeros((self.n_obj, ), dtype=int)
 
+        # lock obj at the beginning, for CL
+        if 'lock_box_action' in self.env.metadata and self.ac_obs_prefix=='':
+            action_lock_box = self.env.metadata['lock_box_action']
+            self.lock_obj(action_lock_box)
+        if 'lock_ramp_action' in self.env.metadata and self.ac_obs_prefix=='ramp_':
+            action_lock_ramp = self.env.metadata['lock_ramp_action']
+            self.lock_obj(action_lock_ramp)
+        # if 'lock_box_action' in self.env.metadata:
+        #     print('lock_box_action', self.env.metadata['lock_box_action'], 'lock_ramp_action', self.env.metadata['lock_ramp_action'])
+
         if self.agent_allowed_to_lock_keys is not None:
             self.agent_allowed_to_lock_mask = np.concatenate([obs[k] for k in self.agent_allowed_to_lock_keys])
         else:
@@ -370,6 +380,7 @@ class LockObjWrapper(gym.Wrapper):
 
     def step(self, action):
         self.lock_obj(action[f'action_{self.ac_obs_prefix}glue'])
+        # print(f'{self.ac_obs_prefix}lock_action', action[f'action_{self.ac_obs_prefix}glue'])
         obs, rew, done, info = self.env.step(action)
 
         if self.agent_allowed_to_lock_keys is not None:

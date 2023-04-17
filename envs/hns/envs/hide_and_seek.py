@@ -87,7 +87,6 @@ class TrackStatWrapper(gym.Wrapper):
                 info.update({'food_eaten': self.total_food_eaten, 'food_eaten_prep': self.total_food_eaten_prep})
 
         return obs, rew, done, info
-
 class HideAndSeekRewardWrapper(gym.Wrapper):
     '''
         Establishes hide and seek dynamics (see different reward types below). Defaults to first half
@@ -418,7 +417,7 @@ def make_env(n_substeps=15,
              door_size=2,
              n_hiders=2,
              n_seekers=1,
-             max_n_agents=None,
+             max_n_agents=3,
              n_boxes=1,
              n_ramps=1,
              n_elongated_boxes=0,
@@ -435,7 +434,7 @@ def make_env(n_substeps=15,
              lock_grab_radius=0.25,
              lock_out_of_vision=True,
              grab_exclusive=False,
-             grab_out_of_vision=False,
+             grab_out_of_vision=True,
              grab_selective=False,
              box_floor_friction=0.2,
              other_friction=0.01,
@@ -447,8 +446,8 @@ def make_env(n_substeps=15,
              p_door_dropout=1.0,
              n_rooms=4,
              random_room_number=True,
-             prob_outside_walls=1.0,
-             n_lidar_per_agent=0,
+             prob_outside_walls=0.5,
+             n_lidar_per_agent=30,
              visualize_lidar=False,
              compress_lidar_scale=None,
              hiders_together_radius=None,
@@ -456,7 +455,7 @@ def make_env(n_substeps=15,
              prep_fraction=0.4,
              prep_obs=True,
              team_size_obs=False,
-             restrict_rect=None,
+             restrict_rect=[0.1,0.1,5.9,5.9],
              penalize_objects_out=True,
              n_food=0,
              food_radius=None,
@@ -597,9 +596,9 @@ def make_env(n_substeps=15,
         env.add_module(FloorAttributes(friction=box_floor_friction))
     env.add_module(WorldConstants(gravity=gravity))
     env.reset()
-    keys_self = ['agent_qpos_qvel', 'hider', 'prep_obs']
+    # keys_self = ['agent_qpos_qvel', 'hider', 'prep_obs']
     # add walls to observation_self
-    # keys_self = ['agent_qpos_qvel', 'hider', 'prep_obs', 'vector_door_obs']
+    keys_self = ['agent_qpos_qvel', 'hider', 'prep_obs', 'vector_door_obs']
     keys_mask_self = ['mask_aa_obs']
     keys_external = ['agent_qpos_qvel']
     keys_copy = ['you_lock', 'team_lock', 'ramp_you_lock', 'ramp_team_lock']
@@ -722,5 +721,6 @@ def make_env(n_substeps=15,
         })
     env = SelectKeysWrapper(env,
                             keys_self=keys_self,
-                            keys_other=keys_external + keys_mask_self + keys_mask_external)
+                            keys_other=keys_external + keys_mask_self + keys_mask_external,
+                            configuration={'n_hiders':n_hiders, 'n_seekers':n_seekers, 'n_boxes':n_boxes, 'n_ramps':n_ramps})
     return env

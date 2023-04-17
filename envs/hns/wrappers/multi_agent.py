@@ -28,6 +28,9 @@ class SplitMultiAgentActions(gym.ActionWrapper):
         if self.env.metadata['reset_task'] is None:
             obs = self.env.reset()
         else:
+            # reset door
+            obs = self.env.reset()
+            # reset to states
             obs = self.env.reset_to_state(self.env.metadata['reset_task'])
         return obs
 
@@ -144,11 +147,17 @@ class SelectKeysWrapper(gym.ObservationWrapper):
             keys_other (list): observation names that should be passed through
             flatten (bool): if true, internal and external observations
     """
-    def __init__(self, env, keys_self, keys_other, flatten=False):
+    def __init__(self, env, keys_self, keys_other, flatten=False, configuration=None):
         super().__init__(env)
         self.keys_self = sorted([k + '_self' for k in keys_self])
         self.keys_other = sorted(keys_other)
         self.flatten = flatten
+        if configuration is not None:
+            self.n_hiders = configuration['n_hiders']
+            self.n_seekers = configuration['n_seekers']
+            self.n_agents = self.n_hiders + self.n_seekers
+            self.n_boxes = configuration['n_boxes']
+            self.n_ramps = configuration['n_ramps']
 
         # Change observation space to look like a single agent observation space.
         # This makes constructing policies much easier
@@ -183,21 +192,33 @@ class SelectKeysWrapper(gym.ObservationWrapper):
         if start is None:
             self.env.metadata['random_reset'] = True
             self.env.metadata['reset_task'] = None
+            if 'set_door_state' in self.env.metadata:
+                del self.env.metadata['set_door_state']
+            if 'lock_box_action' in self.env.metadata:
+                del self.env.metadata['lock_box_action']
+            if 'lock_ramp_action' in self.env.metadata:
+                del self.env.metadata['lock_ramp_action']
+            self.env.metadata['step_counter'] = 0
             observation = self.env.reset()
             self.env.metadata['start_timestep'] = self.env.t
         else:
             self.env.metadata['random_reset'] = False
-            num_entity = len(start) // 3
+            # start: [agent_qpos, box_qpos, ramp_qpos, agent_qvel, box_qvel, ramp_qvel, lock_box_action, lock_ramp_action, prep_time, door]
+            # lock_box_action : num_agents * num_box, lock_ramp_action : num_agents * num_box, prep_time : 1, door : 2
+            # {}_qpos: 4, {}_qvel : 4
+            num_entity = self.n_hiders + self.n_seekers + self.n_boxes + self.n_ramps
             set_states = np.zeros(num_entity * 4)
             set_vel = np.zeros(num_entity * 4)
-            # TODO set time
             for entity_idx in range(num_entity):
-                set_states[entity_idx * 4: (entity_idx + 1) * 4 - 1] = start[entity_idx * 3: (entity_idx + 1) * 3]
+                set_states[entity_idx * 4: (entity_idx + 1) * 4] = start[entity_idx * 4: (entity_idx + 1) * 4]
+                set_vel[entity_idx * 4: (entity_idx + 1) * 4] = start[num_entity * 4 + entity_idx * 4: num_entity * 4 + (entity_idx + 1) * 4]
 
             mujoco_states = MjSimState(time=0.0, qpos=set_states,qvel=set_vel, act=None, udd_state={})
             self.env.metadata['reset_task'] = mujoco_states
-            # observation = self.env.reset_to_state(mujoco_states)
-            self.env.metadata['step_counter'] = start[-1] * (self.prep_time + 1e-5)
+            self.env.metadata['lock_box_action'] = start[num_entity * 8 : num_entity * 8 + self.n_agents * self.n_boxes].reshape(self.n_agents, -1)
+            self.env.metadata['lock_ramp_action'] = start[num_entity * 8 + self.n_agents * self.n_boxes : num_entity * 8 + self.n_agents * self.n_boxes + self.n_agents * self.n_ramps].reshape(self.n_agents, -1)
+            self.env.metadata['step_counter'] = start[-3] * (self.prep_time + 1e-5)
+            self.env.metadata['set_door_state'] = np.floor(start[-2:]).astype(int)
             observation = self.env.reset()
             # reset t =  0 ~ self.prep_time 
             self.env.t = int(start[-1] * (self.prep_time + 1e-5))
@@ -210,4 +231,5 @@ class SelectKeysWrapper(gym.ObservationWrapper):
     def step(self, action):
         obs, rew, done, info = self.env.step(action)
         info['start_timestep'] = self.env.metadata['start_timestep']
+        info['vector_door_obs'] = obs['vector_door_obs'][0,0]
         return self.observation(obs), rew, done, info

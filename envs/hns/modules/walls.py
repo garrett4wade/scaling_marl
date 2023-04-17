@@ -507,17 +507,9 @@ class WallScenarios(EnvModule):
             walls_to_split = [
                 Wall([self.grid_size - q_size, 0], [self.grid_size - q_size, q_size]),
                 Wall([self.grid_size - q_size, q_size], [self.grid_size - 1, q_size])]
-            doors=env.metadata['set_door_state']
+            door_pos=env.metadata['set_door_state']
             new_walls = []
-            # if doors.shape[0] > 1: # two doors in two walls
-            #     for door_pos in doors:
-            #         if door_pos[0,0] == door_pos[1,0]: # vertical
-            #             new_walls += split_walls_set_door(walls_to_split[0], door_pos)
-            #         else:
-            #             new_walls += split_walls_set_door(walls_to_split[1], door_pos)
-            # else:
-            # only 1 door
-            door_pos = doors[0]
+            # only one door
             if abs(door_pos[0] - 15) < 1e-5: # vertical
                 door_pos = np.concatenate([door_pos, [15, door_pos[1] + 1]]).reshape(2,2)
                 all_doors = door_pos.reshape(-1,2,2)

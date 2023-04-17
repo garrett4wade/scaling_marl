@@ -4,14 +4,14 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: chenjy
-experiment_name: ZACL_xyz_debug_fromscratch
-# experiment_name: debug
+# experiment_name: ZACL_xyz_debug_fromscratch
+experiment_name: debug
 benchmark: false
 cuda: true
 cuda_deterministic: true
 seed: 1
 no_summary: false
-use_wandb: true
+use_wandb: false
 use_eval: false
 use_render: false
 
@@ -97,7 +97,7 @@ huber_delta: 10.0
 ifi: 0.1
 render_episodes: 5
 save_gifs: false
-save_interval: 200
+save_interval: 100
 
 # tricks
 share_policy: true
@@ -119,7 +119,7 @@ no_value_active_masks: true
 no_policy_active_masks: true
 
 # setup configs, use absolute dir
-cwd: "/home/jiayu-ch15/scaling_marl"
+cwd: "/home/yuchao/scaling_marl"
 trainer_dir: "run_learner_node.py"
 worker_dir: "run_worker_node_on_smac.py"
 monitor_dir: "run_monitor.py"

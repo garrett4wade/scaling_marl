@@ -45,6 +45,8 @@ class goal_proposal():
         self.agent_size = 2
         self.box_size = 3
         self.ramp_size = 3
+        # self.update_method = 'fps'
+        self.update_method = 'direct'
 
     def restart_sampling(self):
         starts = []
@@ -86,29 +88,21 @@ class goal_proposal():
 
         start1 = time.time()
         if len(all_states) > self.buffer_capacity:
-            # delete states by novelty
-            all_states = torch.tensor(np.array([all_states])).to(self.device)
-            sample_idx = farthest_point_sampler(all_states, self.buffer_capacity).cpu().numpy()[0]
-            self.buffer = np.array(all_states.cpu())[0, sample_idx]
-            self.buffer_priority = np.array(all_scores)[sample_idx]
+            if self.update_method == 'fps':
+                # delete states by novelty
+                all_states = torch.tensor(np.array([all_states])).to(self.device)
+                sample_idx = farthest_point_sampler(all_states, self.buffer_capacity).cpu().numpy()[0]
+                self.buffer = np.array(all_states.cpu())[0, sample_idx]
+                self.buffer_priority = np.array(all_scores)[sample_idx]
+            elif self.update_method == 'direct':
+                self.buffer = np.array(all_states)
+                self.buffer_priority = np.array(all_scores)
         else:
             self.buffer = np.array(all_states)
             self.buffer_priority = np.array(all_scores)
 
         end1 = time.time()
         print('delete all time', end1 - start1)
-        self.buffer = [np.array(state) for state in self.buffer]
-
-    def uniform_from_buffer(self, buffer, starts_length):
-        sample_length = [starts_length // 2, starts_length - starts_length // 2]
-        choose_index = {}
-        for idx, role in enumerate(self.role):
-            choose_index[role] = np.random.choice(range(len(buffer[role])),size=sample_length[idx],replace=True)
-        starts = []
-        for role in self.role:
-            for index in choose_index[role]:
-                starts.append(buffer[role][index])
-        return starts, choose_index
 
     def priority_sampling(self, starts_length):
         self.buffer_p = []
@@ -150,122 +144,17 @@ class goal_proposal():
         save_path = Path(dir_path) / 'starts'
         if not os.path.exists(save_path):
             os.makedirs(save_path)
-        with open(save_path / ('starts_%i' %(episode)),'w+') as fp:
-            for line in self.buffer:
-                fp.write(str(np.array(line).reshape(-1))+'\n')
-        with open(save_path / ('values_%i' %(episode)),'w+') as fp:
-            for line in self.buffer_priority:
-                fp.write(str(np.array(line).reshape(-1))+'\n')
+        np.save(save_path / ('starts_%i.npy' %(episode)), self.buffer)
+        np.save(save_path / ('values_%i.npy' %(episode)), self.buffer_priority)
 
-    # TODO wo timestep
     def illegal_task(self, task):
-        # task [hider + seeker + box + ramp + prep_obs]
-        def in_quadrant(pos, obj_size):
-            if pos[0] >= self.grid_size // 2 and pos[0] <= self.grid_size - obj_size - 1:
-                if pos[1] >= 1 and pos[1] <= self.grid_size // 2 - obj_size - 1:
-                    return True
+        # task [agent_qpos, box_qpos, ramp_qpos, agent_qvel, box_qvel, ramp_qvel, lock_box_action, lock_ramp_action, prep_time, door]
+        # task [4 * (num_hiders + num_seekers), 4 * num_boxes, 4 * num_ramps]
+        qpos = task[:(self.num_hiders + self.num_seekers + self.num_boxes + self.num_seekers) * 4]
+        if np.max(qpos) < self.floor_size and np.min(qpos) > 0.0:
+            return True
+        else:
             return False
-        
-        def outside_quadrant(pos, obj_size):
-            if pos[0] >= 1 and pos[0] <= self.grid_size // 2 - obj_size - 1:
-                if pos[1] >= 1 and pos[1] <= self.grid_size // 2 - obj_size - 1:
-                    return True
-                elif pos[1] >= self.grid_size // 2 and pos[1] <= self.grid_size - obj_size - 1:
-                    return True
-            elif pos[0] >= self.grid_size // 2 and pos[0] <= self.grid_size - obj_size - 1:
-                if pos[1] >= self.grid_size // 2 and pos[1] <= self.grid_size - obj_size - 1:
-                    return True
-            return False
-
-        def in_map(pos, obj_size):
-            if pos[0] >= 1 and pos[0] <= self.grid_size - obj_size - 1:
-                if pos[1] >= 1 and pos[1] <= self.grid_size - obj_size - 1:
-                    return True
-            return False
-
-        # prep_obs: < 1 in prep_phase and >=1 in other_phase
-        prep_obs = task[-1]
-
-        # hider : outside or inside
-        hider_pos = task[:self.num_hiders * 2]
-        for hider_id in range(self.num_hiders):
-            if in_map(hider_pos[hider_id * 2 : (hider_id + 1) * 2], self.agent_size):
-                continue
-            else:
-                return True
-
-        # seeker : outside in prep_phase, outside or inside in other_phase
-        seeker_pos = task[self.num_hiders * 2: self.num_hiders * 2 + self.num_seekers * 2]
-        for seeker_id in range(self.num_seekers):
-            flag = outside_quadrant(seeker_pos[seeker_id * 2 : (seeker_id + 1) * 2], self.agent_size) if prep_obs < 1 else in_map(seeker_pos[seeker_id * 2 : (seeker_id + 1) * 2], self.agent_size)
-            if flag:
-                continue
-            else:
-                return True
-
-        box_pos = task[(self.num_hiders + self.num_seekers) * 2 : (self.num_hiders + self.num_seekers) * 2 + self.num_boxes * 2]
-        for box_id in range(self.num_boxes):
-            if in_map(box_pos[box_id * 2 : (box_id + 1) * 2], self.box_size):
-                continue
-            else:
-                return True
-        
-        ramp_pos = task[(self.num_hiders + self.num_seekers) * 2 + self.num_boxes * 2 : (self.num_hiders + self.num_seekers) * 2 + self.num_boxes * 2 + self.num_ramps * 2]
-        for ramp_id in range(self.num_ramps):
-            if in_map(ramp_pos[ramp_id * 2 : (ramp_id + 1) * 2], self.ramp_size):
-            # if in_map(ramp_pos[ramp_id * 2 : (ramp_id + 1) * 2], self.ramp_size):
-                continue
-            else:
-                return True
-        return False
-
-    def illegal_task_xyz(self, task):
-        def outside_quadrant(pos, obj_size):
-            if pos[0] > 0.0 and pos[0] <= self.floor_size / 2 - obj_size:
-                if pos[1] > 0.0 and pos[1] <= self.floor_size / 2 - obj_size:
-                    return True
-                elif pos[1] >= self.floor_size / 2 and pos[1] <= self.floor_size - obj_size:
-                    return True
-            elif pos[0] >= self.floor_size / 2 and pos[0] <= self.floor_size - obj_size:
-                if pos[1] >= self.floor_size / 2 and pos[1] <= self.floor_size - obj_size:
-                    return True
-            return False
-
-        def in_map(pos, obj_size):
-            if pos[0] > 0.0 and pos[0] <= self.floor_size - obj_size:
-                if pos[1] > 0.0 and pos[1] <= self.floor_size - obj_size:
-                    return True
-            return False
-
-        hider_pos = task[:self.num_hiders * 3]
-        for hider_id in range(self.num_hiders):
-            if in_map(hider_pos[hider_id * 3 : (hider_id + 1) * 3 - 1], self.agent_size):
-                continue
-            else:
-                return True
-
-        seeker_pos = task[self.num_hiders * 3: self.num_hiders * 3 + self.num_seekers * 3]
-        for seeker_id in range(self.num_seekers):
-            if outside_quadrant(seeker_pos[seeker_id * 3 : (seeker_id + 1) * 3 - 1], self.agent_size):
-                continue
-            else:
-                return True
-
-        box_pos = task[(self.num_hiders + self.num_seekers) * 3 : (self.num_hiders + self.num_seekers) * 3 + self.num_boxes * 3]
-        for box_id in range(self.num_boxes):
-            if in_map(box_pos[box_id * 3 : (box_id + 1) * 3 - 1], self.box_size):
-                continue
-            else:
-                return True
-        
-        ramp_pos = task[(self.num_hiders + self.num_seekers) * 3 + self.num_boxes * 3 : (self.num_hiders + self.num_seekers) * 3 + self.num_boxes * 3 + self.num_ramps * 3]
-        for ramp_id in range(self.num_ramps):
-            if in_map(ramp_pos[ramp_id * 3 : (ramp_id + 1) * 3 - 1], self.ramp_size):
-            # if in_map(ramp_pos[ramp_id * 2 : (ramp_id + 1) * 2], self.ramp_size):
-                continue
-            else:
-                return True
-        return False
 
 class Trainer:
     def __init__(self, cfg, gpu_rank, nodes_ready_events, trainer_ready_event, shm_state_dict):
