@@ -80,9 +80,25 @@ class goal_proposal():
         all_states = states.copy()
         all_scores = scores.copy()
              
+        # TODO, maybe better way to filter bad states
+        hider_qpos = np.array(all_states)[:,:self.num_hiders * 4]
+        seeker_qpos = np.array(all_states)[:,self.num_hiders * 4: self.num_hiders * 4 + self.num_seekers * 4]
+        box_qpos = np.array(all_states)[:,self.num_hiders * 4 + self.num_seekers * 4 : self.num_hiders * 4 + self.num_seekers * 4 + self.num_boxes * 4]
+        ramp_qpos = np.array(all_states)[:,self.num_hiders * 4 + self.num_seekers * 4 + self.num_boxes * 4 : self.num_hiders * 4 + self.num_seekers * 4 + self.num_boxes * 4 + self.num_ramps * 4]
+        check_states = []
+        for idx in range(self.num_hiders):
+            check_states.append(hider_qpos[:,4 * idx : 4 * (idx + 1) - 2])
+        for idx in range(self.num_seekers):
+            check_states.append(seeker_qpos[:,4 * idx : 4 * (idx + 1) - 2])
+        for idx in range(self.num_boxes):
+            check_states.append(box_qpos[:,4 * idx : 4 * (idx + 1) - 2])
+        for idx in range(self.num_ramps):
+            check_states.append(ramp_qpos[:,4 * idx : 4 * (idx + 1) - 2])
+        check_states = np.concatenate(check_states, axis=1).tolist()
         # delete illegal states
-        for state_id in reversed(range(len(all_states))):
-            if self.illegal_task(all_states[state_id]):
+        for state_id in reversed(range(len(check_states))):
+            if self.illegal_task(check_states[state_id]):
+                del check_states[state_id]
                 del all_states[state_id]
                 del all_scores[state_id]
 
@@ -148,13 +164,11 @@ class goal_proposal():
         np.save(save_path / ('values_%i.npy' %(episode)), self.buffer_priority)
 
     def illegal_task(self, task):
-        # task [agent_qpos, box_qpos, ramp_qpos, agent_qvel, box_qvel, ramp_qvel, lock_box_action, lock_ramp_action, prep_time, door]
-        # task [4 * (num_hiders + num_seekers), 4 * num_boxes, 4 * num_ramps]
-        qpos = task[:(self.num_hiders + self.num_seekers + self.num_boxes + self.num_seekers) * 4]
-        if np.max(qpos) < self.floor_size and np.min(qpos) > 0.0:
-            return True
-        else:
+        # only check [x,y]
+        if np.max(task) < self.floor_size and np.min(task) > 0.0:
             return False
+        else:
+            return True
 
 class Trainer:
     def __init__(self, cfg, gpu_rank, nodes_ready_events, trainer_ready_event, shm_state_dict):
