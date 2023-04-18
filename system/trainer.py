@@ -49,15 +49,15 @@ class goal_proposal():
         self.box_size = 0.5
         self.ramp_size = 0.5
 
-        # boundary = floor_size - (grid_size - obj_size_in_cells[0] - 2) / grid_size * floor_size + extra_room
+        # boundary = (grid_size - obj_size_in_cells[0] - 2) / grid_size * floor_size + extra_room
         # extra_room = obj_size_in_cells * cell_size - obj_size
-        self.agent_boundary = self.floor_size - (self.grid_size - \
+        self.agent_boundary = (self.grid_size - \
             self.agent_size_in_cells - 2) / self.grid_size * self.floor_size \
                 + self.agent_size_in_cells * self.cell_size - self.agent_size
-        self.box_boundary = self.floor_size - (self.grid_size - \
+        self.box_boundary = (self.grid_size - \
             self.box_size_in_cells - 2) / self.grid_size * self.floor_size \
                 + self.box_size_in_cells * self.cell_size - self.box_size
-        self.ramp_boundary = self.floor_size - (self.grid_size - \
+        self.ramp_boundary = (self.grid_size - \
             self.ramp_size_in_cells - 2) / self.grid_size * self.floor_size \
                 + self.ramp_size_in_cells * self.cell_size - self.ramp_size
 
@@ -96,42 +96,52 @@ class goal_proposal():
         all_states = states.copy()
         all_scores = scores.copy()
              
-        # TODO, maybe better way to filter bad states
+        # filter bad states
         hider_qpos = np.array(all_states)[:,:self.num_hiders * 4]
         seeker_qpos = np.array(all_states)[:,self.num_hiders * 4: self.num_hiders * 4 + self.num_seekers * 4]
         box_qpos = np.array(all_states)[:,self.num_hiders * 4 + self.num_seekers * 4 : self.num_hiders * 4 + self.num_seekers * 4 + self.num_boxes * 4]
         ramp_qpos = np.array(all_states)[:,self.num_hiders * 4 + self.num_seekers * 4 + self.num_boxes * 4 : self.num_hiders * 4 + self.num_seekers * 4 + self.num_boxes * 4 + self.num_ramps * 4]
-        check_states = []
+        check_agent_states = []
+        check_box_states = []
+        check_ramp_states = []
+        check_all_states = []
         for idx in range(self.num_hiders):
-            check_states.append(hider_qpos[:,4 * idx : 4 * (idx + 1) - 2])
+            check_agent_states.append(hider_qpos[:,4 * idx : 4 * (idx + 1) - 2])
         for idx in range(self.num_seekers):
-            check_states.append(seeker_qpos[:,4 * idx : 4 * (idx + 1) - 2])
+            check_agent_states.append(seeker_qpos[:,4 * idx : 4 * (idx + 1) - 2])
         for idx in range(self.num_boxes):
-            check_states.append(box_qpos[:,4 * idx : 4 * (idx + 1) - 2])
+            check_box_states.append(box_qpos[:,4 * idx : 4 * (idx + 1) - 2])
         for idx in range(self.num_ramps):
-            check_states.append(ramp_qpos[:,4 * idx : 4 * (idx + 1) - 2])
-        check_states = np.concatenate(check_states, axis=1).tolist()
-        # delete illegal states
-        for state_id in reversed(range(len(check_states))):
-            if self.illegal_task(check_states[state_id]):
-                del check_states[state_id]
-                del all_states[state_id]
-                del all_scores[state_id]
+            check_ramp_states.append(ramp_qpos[:,4 * idx : 4 * (idx + 1) - 2])
+        check_all_states += check_agent_states
+        check_all_states += check_box_states
+        check_all_states += check_ramp_states
+        check_agent_states = np.concatenate(check_agent_states, axis=1)
+        check_box_states = np.concatenate(check_box_states, axis=1)
+        check_ramp_states = np.concatenate(check_ramp_states, axis=1)
+        check_all_states = np.concatenate(check_all_states, axis=1)
+        flag = np.all(check_agent_states < self.agent_boundary, axis=1) \
+            * np.all(check_box_states < self.box_boundary, axis=1) \
+                * np.all(check_ramp_states < self.ramp_boundary, axis=1) \
+                    * np.all(check_all_states > 0.0, axis=1)
+        add_states = np.array(all_states)[np.where(flag)]
+        add_scores = np.array(all_scores)[np.where(flag)]
 
+        # update method
         start1 = time.time()
         if len(all_states) > self.buffer_capacity:
             if self.update_method == 'fps':
                 # delete states by novelty
-                all_states = torch.tensor(np.array([all_states])).to(self.device)
-                sample_idx = farthest_point_sampler(all_states, self.buffer_capacity).cpu().numpy()[0]
-                self.buffer = np.array(all_states.cpu())[0, sample_idx]
-                self.buffer_priority = np.array(all_scores)[sample_idx]
+                add_states = torch.tensor(np.array([add_states])).to(self.device)
+                sample_idx = farthest_point_sampler(add_states, self.buffer_capacity).cpu().numpy()[0]
+                self.buffer = np.array(add_states.cpu())[0, sample_idx]
+                self.buffer_priority = np.array(add_scores)[sample_idx]
             elif self.update_method == 'direct':
-                self.buffer = np.array(all_states)
-                self.buffer_priority = np.array(all_scores)
+                self.buffer = np.array(add_states)
+                self.buffer_priority = np.array(add_scores)
         else:
-            self.buffer = np.array(all_states)
-            self.buffer_priority = np.array(all_scores)
+            self.buffer = np.array(add_states)
+            self.buffer_priority = np.array(add_scores)
 
         end1 = time.time()
         print('delete all time', end1 - start1)
