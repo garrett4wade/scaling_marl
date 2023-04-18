@@ -39,12 +39,28 @@ class goal_proposal():
         self.num_seekers = 1
         self.num_boxes = 1
         self.num_ramps = 1
-        self.grid_size = 30
+        self.grid_size = 30.0
         self.floor_size = 6.0
         self.cell_size = self.floor_size / self.grid_size
-        self.agent_size = 2
-        self.box_size = 3
-        self.ramp_size = 3
+        self.agent_size_in_cells = 2.0
+        self.box_size_in_cells = 3.0
+        self.ramp_size_in_cells = 3.0
+        self.agent_size = 0.3
+        self.box_size = 0.5
+        self.ramp_size = 0.5
+
+        # boundary = floor_size - (grid_size - obj_size_in_cells[0] - 2) / grid_size * floor_size + extra_room
+        # extra_room = obj_size_in_cells * cell_size - obj_size
+        self.agent_boundary = self.floor_size - (self.grid_size - \
+            self.agent_size_in_cells - 2) / self.grid_size * self.floor_size \
+                + self.agent_size_in_cells * self.cell_size - self.agent_size
+        self.box_boundary = self.floor_size - (self.grid_size - \
+            self.box_size_in_cells - 2) / self.grid_size * self.floor_size \
+                + self.box_size_in_cells * self.cell_size - self.box_size
+        self.ramp_boundary = self.floor_size - (self.grid_size - \
+            self.ramp_size_in_cells - 2) / self.grid_size * self.floor_size \
+                + self.ramp_size_in_cells * self.cell_size - self.ramp_size
+
         # self.update_method = 'fps'
         self.update_method = 'direct'
 
@@ -165,7 +181,13 @@ class goal_proposal():
 
     def illegal_task(self, task):
         # only check [x,y]
-        if np.max(task) < self.floor_size and np.min(task) > 0.0:
+        agent_pos = task[: (self.num_hiders + self.num_seekers) * 2]
+        box_pos = task[(self.num_hiders + self.num_seekers) * 2: (self.num_hiders + self.num_seekers) * 2 + self.num_boxes * 2]
+        ramp_pos = task[(self.num_hiders + self.num_seekers) * 2 + self.num_boxes * 2:]
+        if np.max(agent_pos) < self.agent_boundary \
+            and np.max(box_pos) < self.box_boundary \
+                and np.max(ramp_pos) < self.box_boundary \
+                    and np.min(task) > 0.0:
             return False
         else:
             return True
