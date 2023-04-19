@@ -221,7 +221,7 @@ class SelectKeysWrapper(gym.ObservationWrapper):
             self.env.metadata['set_door_state'] = np.floor(start[-2:]).astype(int)
             observation = self.env.reset()
             # reset t =  0 ~ self.prep_time 
-            self.env.t = int(start[-1] * (self.prep_time + 1e-5))
+            self.env.t = int(start[-3] * (self.prep_time + 1e-5))
             self.env.metadata['start_timestep'] = self.env.t
         
         obs = self.observation(observation)

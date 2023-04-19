@@ -4,14 +4,14 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: chenjy
-# experiment_name: sacl_{continuous}_{add_door_obs}_{update_direct}
-experiment_name: debug
+experiment_name: sacl_{continuous}_{add_door_obs}_{update_direct}
+# experiment_name: debug
 benchmark: false
 cuda: true
 cuda_deterministic: true
 seed: 1
 no_summary: false
-use_wandb: false
+use_wandb: true
 use_eval: false
 use_render: false
 
