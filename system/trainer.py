@@ -160,27 +160,11 @@ class goal_proposal():
         return starts, self.choose_index
 
     def load_node(self, mode_path, load_episode):
-        data_dir = mode_path + '/starts/starts_' + str(load_episode)
-        value_dir = mode_path + '/starts/values_' + str(load_episode)
+        data_dir = mode_path + '/starts/starts_{}.npy'.format(load_episode)
+        value_dir = mode_path + '/starts/values_{}.npy'.format(load_episode)
 
-        # load task
-        with open(data_dir,'r') as fp:
-            data = fp.readlines()
-        for i in range(len(data)):
-            data[i] = np.array(data[i][1:-2].split(),dtype=int)
-        data_true = []
-        for i in range(len(data)):
-            if data[i].shape[0]>5:
-                data_true.append(data[i])
-
-        # load value
-        with open(value_dir,'r') as fp:
-            values = fp.readlines()
-        for i in range(len(values)):
-            values[i] = np.array(values[i][1:-2].split(),dtype=float)
-
-        self.buffer = copy.deepcopy(data_true)
-        self.buffer_priority = copy.deepcopy(np.array(values).reshape(-1).tolist())
+        self.buffer = np.load(data_dir)
+        self.buffer_priority = np.load(value_dir)
 
     def save_node(self, dir_path, episode):
         save_path = Path(dir_path) / 'starts'

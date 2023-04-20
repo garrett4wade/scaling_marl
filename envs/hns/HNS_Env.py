@@ -82,7 +82,7 @@ class HNSEnv:
         self.elapsed_episodes = 0
         self.summary_keys = [
             'max_box_move_prep', 'max_box_move', 'num_box_lock_prep', 'num_box_lock', 'max_ramp_move_prep',
-            'max_ramp_move', 'num_ramp_lock_prep', 'num_ramp_lock'
+            'max_ramp_move', 'num_ramp_lock_prep', 'num_ramp_lock', 'start_timestep'
         ]
         self.accumulated_summaries = {k: 0.0 for k in self.summary_keys}
 
