@@ -406,10 +406,10 @@ class ActorWorker:
                             self._collect_reset_tasks(timing)
                             # maintain an archive with num_actor * envs_per_actor
                             reset_tasks = self._get_new_reset_tasks()
-                            # if reset_tasks is None:
-                            #     print('reset_tasks', reset_tasks)
-                            # else:
-                            #     print('reset_tasks', reset_tasks.shape)
+                            if reset_tasks is None:
+                                print('reset_tasks', reset_tasks)
+                            else:
+                                print('reset_tasks', reset_tasks.shape)
                             # reset_tasks = None
                             if np.all(self.is_policy_act_semaphores_ready):
                                 self._advance_rollouts(cur_split, timing, reset_tasks)
