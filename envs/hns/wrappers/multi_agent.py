@@ -194,10 +194,10 @@ class SelectKeysWrapper(gym.ObservationWrapper):
             self.env.metadata['reset_task'] = None
             if 'set_door_state' in self.env.metadata:
                 del self.env.metadata['set_door_state']
-            if 'lock_box_action' in self.env.metadata:
-                del self.env.metadata['lock_box_action']
-            if 'lock_ramp_action' in self.env.metadata:
-                del self.env.metadata['lock_ramp_action']
+            if 'box_lock_state' in self.env.metadata:
+                del self.env.metadata['box_lock_state']
+            if 'ramp_lock_state' in self.env.metadata:
+                del self.env.metadata['ramp_lock_state']
             self.env.metadata['step_counter'] = 0
             observation = self.env.reset()
             self.env.metadata['start_timestep'] = self.env.t
