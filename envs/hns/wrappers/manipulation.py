@@ -271,15 +271,8 @@ class LockObjWrapper(gym.Wrapper):
         self.obj_locked = np.zeros((self.n_obj, ), dtype=bool)
         self.which_locked = np.zeros((self.n_obj, ), dtype=int)
 
-        # lock obj at the beginning, for CL
-        if 'lock_box_action' in self.env.metadata and self.ac_obs_prefix=='':
-            action_lock_box = self.env.metadata['lock_box_action']
-            self.lock_obj(action_lock_box)
-        if 'lock_ramp_action' in self.env.metadata and self.ac_obs_prefix=='ramp_':
-            action_lock_ramp = self.env.metadata['lock_ramp_action']
-            self.lock_obj(action_lock_ramp)
-        # if 'lock_box_action' in self.env.metadata:
-        #     print('lock_box_action', self.env.metadata['lock_box_action'], 'lock_ramp_action', self.env.metadata['lock_ramp_action'])
+        # lock obj in the beginning
+        self.reset_lock_obj()
 
         if self.agent_allowed_to_lock_keys is not None:
             self.agent_allowed_to_lock_mask = np.concatenate([obs[k] for k in self.agent_allowed_to_lock_keys])
@@ -287,6 +280,51 @@ class LockObjWrapper(gym.Wrapper):
             self.agent_allowed_to_lock_mask = np.ones((self.n_agents, self.n_obj))
 
         return self.observation(obs)
+
+    # additional interface for CL
+    def reset_lock_obj(self):
+        '''
+            reset : can lock obj in the beginning
+        '''
+        sim = self.unwrapped.sim
+        lock_obj = np.zeros(len(self.body_names),dtype=bool)
+        self.which_locked = np.zeros((self.n_obj,), dtype=int)
+        for idx, obj_name in enumerate(self.body_names):
+            # box_lock_state : num_agents * num_box
+            if 'box_lock_state' in self.env.metadata and self.ac_obs_prefix=='':
+                lock_obj[idx] = np.any(self.env.metadata['box_lock_state'][:,idx])
+                self.which_locked[idx] = np.where(self.env.metadata['box_lock_state'][:,idx] == 1)[0]
+            if 'ramp_lock_state' in self.env.metadata and self.ac_obs_prefix=='ramp_':
+                lock_obj[idx] = np.any(self.env.metadata['ramp_lock_state'][:,idx])
+                self.which_locked[idx] = np.where(self.env.metadata['ramp_lock_state'][:,idx] == 1)[0]
+
+            if 'box' in obj_name and 'box_lock_state' in self.env.metadata:
+                new_objs_to_lock = lock_obj
+                break
+            elif 'ramp' in obj_name and 'ramp_lock_state' in self.env.metadata:
+                new_objs_to_lock = lock_obj
+            else:
+                new_objs_to_lock = None
+
+        if new_objs_to_lock is not None:
+            joints_to_lock = np.isin(sim.model.jnt_bodyid, self.obj_body_idxs[new_objs_to_lock])
+            # Turn on/off emission and joint limit
+            matids_to_lighten = sim.model.geom_matid[np.isin(sim.model.geom_bodyid, self.obj_body_idxs[new_objs_to_lock])]
+            matids_to_lighten = matids_to_lighten[matids_to_lighten != -1]
+            # emission : dark or light, jnt_limited : fixed or free
+            sim.model.mat_emission[matids_to_lighten] = 1
+            sim.model.jnt_limited[joints_to_lock] = 1
+
+            # For objs we need to newly lock, set the joint ranges to the current qpos of the obj.
+            for obj in np.argwhere(new_objs_to_lock)[:, 0]:
+                sim.model.jnt_range[self.obj_jnt_idxs[obj], :] = sim.data.qpos[self.obj_jnt_idxs[obj], None]
+                
+        # reset which_locked and obj_locked
+        if new_objs_to_lock is None:
+            self.obj_locked = np.zeros((self.n_obj, ), dtype=bool)
+        else:
+            self.obj_locked = np.logical_or(np.zeros((self.n_obj,), dtype=bool), new_objs_to_lock)
+
 
     def lock_obj(self, action_lock):
         '''

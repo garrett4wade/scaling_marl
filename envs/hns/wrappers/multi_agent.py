@@ -204,7 +204,7 @@ class SelectKeysWrapper(gym.ObservationWrapper):
         else:
             self.env.metadata['random_reset'] = False
             # start: [agent_qpos, box_qpos, ramp_qpos, agent_qvel, box_qvel, ramp_qvel, lock_box_action, lock_ramp_action, prep_time, door]
-            # lock_box_action : num_agents * num_box, lock_ramp_action : num_agents * num_box, prep_time : 1, door : 2
+            # box_lock_state : num_agents * num_box, box_ramp_state : num_agents * num_box, prep_time : 1, door : 2
             # {}_qpos: 4, {}_qvel : 4
             num_entity = self.n_hiders + self.n_seekers + self.n_boxes + self.n_ramps
             set_states = np.zeros(num_entity * 4)
@@ -215,8 +215,8 @@ class SelectKeysWrapper(gym.ObservationWrapper):
 
             mujoco_states = MjSimState(time=0.0, qpos=set_states,qvel=set_vel, act=None, udd_state={})
             self.env.metadata['reset_task'] = mujoco_states
-            self.env.metadata['lock_box_action'] = start[num_entity * 8 : num_entity * 8 + self.n_agents * self.n_boxes].reshape(self.n_agents, -1)
-            self.env.metadata['lock_ramp_action'] = start[num_entity * 8 + self.n_agents * self.n_boxes : num_entity * 8 + self.n_agents * self.n_boxes + self.n_agents * self.n_ramps].reshape(self.n_agents, -1)
+            self.env.metadata['box_lock_state'] = start[num_entity * 8 : num_entity * 8 + self.n_agents * self.n_boxes].reshape(self.n_agents, -1)
+            self.env.metadata['ramp_lock_state'] = start[num_entity * 8 + self.n_agents * self.n_boxes : num_entity * 8 + self.n_agents * self.n_boxes + self.n_agents * self.n_ramps].reshape(self.n_agents, -1)
             self.env.metadata['step_counter'] = start[-3] * (self.prep_time + 1e-5)
             self.env.metadata['set_door_state'] = np.floor(start[-2:]).astype(int)
             observation = self.env.reset()
