@@ -65,31 +65,8 @@ class goal_proposal():
         self.update_method = 'direct'
 
     def restart_sampling(self):
-        starts = []
-        restart_index = []
-        if len(self.buffer) > 0:
-            num_restart = 0
-            for index in range(self.proposal_batch):
-                # 0:unif, 1:restart states, 2:easy
-                choose_flag = np.random.choice([0,1],size=1,replace=True,
-                                    p=[1 - self.restart_p, self.restart_p])[0]
-                if choose_flag == 1:
-                    num_restart += 1
-        else:
-            num_restart = 0
-        
-        if num_restart == 0:
-            starts += [None] * self.proposal_batch
-            # starts = self.uniform_sampling(self.proposal_batch)
-            unif_start_idx = 0
-        else:
-            # restart and priority_sampling
-            new_starts, restart_index = self.priority_sampling(starts_length=num_restart)
-            starts += new_starts
-            starts += [None] * (self.proposal_batch - num_restart)
-            # starts += self.uniform_sampling(self.proposal_batch - num_restart)
-            unif_start_idx = num_restart
-        return starts, unif_start_idx
+        new_starts, restart_index = self.priority_sampling(starts_length=self.proposal_batch)
+        return new_starts, restart_index
 
     def update_buffer(self, states, scores):
         # states : list, scores : list, returns : dict, {role: list}
@@ -124,24 +101,32 @@ class goal_proposal():
             * np.all(check_box_states < self.box_boundary, axis=1) \
                 * np.all(check_ramp_states < self.ramp_boundary, axis=1) \
                     * np.all(check_all_states > 0.0, axis=1)
+    
+        # # filter seeker in the room
+        # check_seeker_states = []
+        # for idx in range(self.num_seekers):
+        #     check_seeker_states.append(seeker_qpos[:,4 * idx : 4 * (idx + 1) - 2])
+        # check_seeker_states = np.array(check_seeker_states).squeeze(0)
+        # flag = flag * (1 - ((check_seeker_states[:,0] >= 3.0) * (check_seeker_states[:,1] <= 2.7)))
+
         add_states = np.array(all_states)[np.where(flag)]
         add_scores = np.array(all_scores)[np.where(flag)]
 
         # update method
-        start1 = time.time()
-        if len(all_states) > self.buffer_capacity:
-            if self.update_method == 'fps':
-                # delete states by novelty
-                add_states = torch.tensor(np.array([add_states])).to(self.device)
-                sample_idx = farthest_point_sampler(add_states, self.buffer_capacity).cpu().numpy()[0]
-                self.buffer = np.array(add_states.cpu())[0, sample_idx]
-                self.buffer_priority = np.array(add_scores)[sample_idx]
-            elif self.update_method == 'direct':
-                self.buffer = np.array(add_states)
-                self.buffer_priority = np.array(add_scores)
-        else:
-            self.buffer = np.array(add_states)
-            self.buffer_priority = np.array(add_scores)
+        # start1 = time.time()
+        # if len(all_states) > self.buffer_capacity:
+        #     if self.update_method == 'fps':
+        #         # delete states by novelty
+        #         add_states = torch.tensor(np.array([add_states])).to(self.device)
+        #         sample_idx = farthest_point_sampler(add_states, self.buffer_capacity).cpu().numpy()[0]
+        #         self.buffer = np.array(add_states.cpu())[0, sample_idx]
+        #         self.buffer_priority = np.array(add_scores)[sample_idx]
+        #     elif self.update_method == 'direct':
+        #         self.buffer = np.array(add_states)
+        #         self.buffer_priority = np.array(add_scores)
+        # else:
+        #     self.buffer = np.array(add_states)
+        #     self.buffer_priority = np.array(add_scores)
 
         end1 = time.time()
         print('delete all time', end1 - start1)
@@ -165,6 +150,11 @@ class goal_proposal():
 
         self.buffer = np.load(data_dir)
         self.buffer_priority = np.load(value_dir)
+
+    def load_node_debug(self):
+        data_dir = '/home/yuchao/scaling_marl/starts_all.npy'
+        self.buffer = np.load(data_dir)
+        self.buffer_priority = np.ones(len(self.buffer)) / len(self.buffer)
 
     def save_node(self, dir_path, episode):
         save_path = Path(dir_path) / 'starts'
@@ -355,6 +345,7 @@ class Trainer:
             # cl, goal_proposal
             self.goals = goal_proposal()
             self.goals.init_env_config()
+            self.goals.load_node_debug()
 
         log.debug('Trainer {} initializing process group!'.format(self.trainer_idx))
 
@@ -547,14 +538,15 @@ class Trainer:
             for sample, all_tasks, all_values in data_generator:
                 # all_tasks: episode_length * envs * dim, all_values: episode_length * envs
                 if update_cl_archive:
-                    all_tasks_flatten = all_tasks.reshape(-1, all_tasks.shape[-1]).tolist()
-                    all_values_flatten = all_values.reshape(-1).tolist()
-                    start_tasks = all_tasks[0].tolist()
-                    start_values = all_values[0].tolist()
-                    start1 = time.time()
-                    self.goals.update_buffer(all_tasks_flatten, all_values_flatten)
-                    end1 = time.time()
-                    print('buffer length', len(self.goals.buffer), 'time', end1-start1)
+                    # all_tasks_flatten = all_tasks.reshape(-1, all_tasks.shape[-1]).tolist()
+                    # all_values_flatten = all_values.reshape(-1).tolist()
+                    # start_tasks = all_tasks[0].tolist()
+                    # start_values = all_values[0].tolist()
+                    # start1 = time.time()
+                    # self.goals.update_buffer(all_tasks_flatten, all_values_flatten)
+                    # end1 = time.time()
+                    # print('buffer length', len(self.goals.buffer), 'time', end1-start1)
+                    
                     # cl, send new distribution
                     self.send_reset_task()
 
@@ -713,7 +705,7 @@ class Trainer:
 
     def restore(self):
         """Restore policy's networks from a saved model."""
-        self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model_25000.pt'))
+        self.policy.actor_critic.load_state_dict(torch.load(str(self.model_dir) + '/model_18200.pt'))
 
     def report(self, infos):
         if not infos or self.replicate_rank != 0:

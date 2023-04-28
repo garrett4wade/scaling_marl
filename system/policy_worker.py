@@ -211,9 +211,12 @@ class PolicyWorker:
                 recurrent_apply(policy_inputs, lambda x: check(x).to(**self.tpdv, non_blocking=True))
 
             with timing.add_time('inference/inference_step'):
+                # TODO
                 policy_outputs = self.rollout_policy.get_actions(**policy_inputs,
-                                                                 deterministic=(
-                                                                     self.phase == PolicyWorkerPhase.EVALUATION))
+                                                                 deterministic=True)
+                # policy_outputs = self.rollout_policy.get_actions(**policy_inputs,
+                #                                                  deterministic=(
+                #                                                      self.phase == PolicyWorkerPhase.EVALUATION))
 
             with timing.add_time('inference/to_cpu_and_postprosessing'):
                 if shared:

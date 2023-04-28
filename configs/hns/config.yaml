@@ -4,7 +4,7 @@ algorithm_name: rmappo
 env_name: HideAndSeek
 map_name: HideAndSeek
 user_name: chenjy
-experiment_name: sacl_continuous_add_door_obs_direct_update
+experiment_name: unif_add_door_from_start_phase
 # experiment_name: debug
 benchmark: false
 cuda: true
@@ -16,12 +16,12 @@ use_eval: false
 use_render: false
 
 # cl
-num_critic: 3
+num_critic: 1
 
 num_env_steps: 200.0e+9
 train_for_env_steps: 200.0e+9
 train_for_seconds: 10000000000000000
-model_dir: null
+model_dir: '/home/yuchao/scaling_marl/models/HideAndSeek/rmappo/unif_reuse4_add_door_obs/policy_0'
 save_dir: './models'
 summary_dir: './logs'
 
@@ -119,7 +119,7 @@ no_value_active_masks: true
 no_policy_active_masks: true
 
 # setup configs, use absolute dir
-cwd: "/home/jiayu-ch15/scaling_marl"
+cwd: "/home/yuchao/scaling_marl"
 trainer_dir: "run_learner_node.py"
 worker_dir: "run_worker_node_on_smac.py"
 monitor_dir: "run_monitor.py"
