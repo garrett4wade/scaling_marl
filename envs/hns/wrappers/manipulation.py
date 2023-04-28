@@ -293,10 +293,16 @@ class LockObjWrapper(gym.Wrapper):
             # box_lock_state : num_agents * num_box
             if 'box_lock_state' in self.env.metadata and self.ac_obs_prefix=='':
                 lock_obj[idx] = np.any(self.env.metadata['box_lock_state'][:,idx])
-                self.which_locked[idx] = np.where(self.env.metadata['box_lock_state'][:,idx] == 1)[0]
+                # print('box_lock_state', np.where(self.env.metadata['box_lock_state'][:,idx] == 1))
+                lock_index = np.where(self.env.metadata['box_lock_state'][:,idx] == 1)[0]
+                if len(lock_index) > 0:
+                    self.which_locked[idx] = lock_index
             if 'ramp_lock_state' in self.env.metadata and self.ac_obs_prefix=='ramp_':
                 lock_obj[idx] = np.any(self.env.metadata['ramp_lock_state'][:,idx])
-                self.which_locked[idx] = np.where(self.env.metadata['ramp_lock_state'][:,idx] == 1)[0]
+                lock_index = np.where(self.env.metadata['ramp_lock_state'][:,idx] == 1)[0]
+                if len(lock_index) > 0:
+                    self.which_locked[idx] = lock_index
+                # print('ramp_lock_state', np.where(self.env.metadata['ramp_lock_state'][:,idx] == 1))
 
             if 'box' in obj_name and 'box_lock_state' in self.env.metadata:
                 new_objs_to_lock = lock_obj
